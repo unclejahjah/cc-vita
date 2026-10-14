@@ -135,7 +135,7 @@ static void draw_text(AsMc *tf, Mat m, CXform cx, DrawList *out) {
     char buf[2048];
     if (et->html) strip_html(field_text(tf), buf, sizeof buf);
     else snprintf(buf, sizeof buf, "%s", field_text(tf));
-    if (getenv("AS_TEXTDBG"))
+    if (AS_ENV("AS_TEXTDBG"))
         printf("  [text] %s.%s '%s' font %d '%s', height %d, var %s\n",
                tf->parent && tf->parent->name ? tf->parent->name->s : "?", tf->name ? tf->name->s : "(unnamed)", buf,
                et->font, f ? f->name : "-", et->height, et->var ? et->var : "-");

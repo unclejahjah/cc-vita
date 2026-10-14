@@ -73,7 +73,7 @@ static void run_clip_events(AsVm *vm, AsMc *mc, int mask) {
 
 static void run_frame_scripts(AsVm *vm, AsMc *mc, int frame) {
     if (mc->removed || !mc->def) return;
-    if (getenv("AS_DEBUG") && !mc->parent) as_warn(vm, "root frame %d scripts", frame + 1);
+    if (AS_ENV("AS_DEBUG") && !mc->parent) as_warn(vm, "root frame %d scripts", frame + 1);
     for (int i = 0; i < mc->def->nactions; i++) {
         const ActionBlock *ab = &mc->def->actions[i];
         if (ab->frame == frame) as_run_block(vm, mc->movie, ab->off, ab->len, mc);
@@ -248,7 +248,7 @@ void as_mc_goto(AsVm *vm, AsMc *mc, int frame, int play) {
     if (!mc->def || !mc->def->nframes || mc->removed) return;
     if (frame < 0) frame = 0;
     if (frame >= mc->def->nframes) frame = mc->def->nframes - 1;
-    if (getenv("AS_GOTO") && mc->name && !strcasecmp(mc->name->s, getenv("AS_GOTO")))
+    if (AS_ENV("AS_GOTO") && mc->name && !strcasecmp(mc->name->s, AS_ENV("AS_GOTO")))
         as_warn(vm, "tick %u: %s goto frame %d (%s) from %d%s", vm->tick, mc->name->s, frame + 1,
                 play ? "play" : "stop", mc->frame + 1,
                 vm->cur_fn && vm->cur_fn->fname ? vm->cur_fn->fname->s : "");
@@ -521,7 +521,7 @@ static void do_loads(AsVm *vm) {
     while (vm->loads) {
         AsLoad *l = vm->loads;
         vm->loads = l->next;
-        if (getenv("AS_LOADS"))
+        if (AS_ENV("AS_LOADS"))
             as_warn(vm, "load '%s' into %s%s", l->url, as_mc_target_path(vm, l->target)->s, l->target->removed ? " (removed)" : "");
         if (!l->target->removed) {
             if (!l->url[0]) {   // unloadMovie
@@ -654,7 +654,7 @@ static void advance(AsVm *vm, AsMc *mc) {
     // a clip placed during this pass shows its first frame (and runs its stop()) before moving on
     if (mc->playing && mc->def && mc->def->nframes > 1 && mc->born != vm->tick) {
         int next = mc->frame + 1 >= mc->def->nframes ? 0 : mc->frame + 1;
-        if (getenv("AS_GOTO") && mc->name && !strcasecmp(mc->name->s, getenv("AS_GOTO")))
+        if (AS_ENV("AS_GOTO") && mc->name && !strcasecmp(mc->name->s, AS_ENV("AS_GOTO")))
             as_warn(vm, "tick %u: %s plays on to frame %d", vm->tick, mc->name->s, next + 1);
         mc->frame = next;
         enqueue(mc, Q_FRAME, next);
