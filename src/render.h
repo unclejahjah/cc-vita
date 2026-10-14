@@ -30,22 +30,25 @@ typedef struct {
     float u, v;
 } TexVertex;
 
+// A shape draw: positions from vp (the uploaded mesh) or, if NULL, mesh->xy; colours
+// from col or DrawList.cv[cv..] when a colour transform applies, else the mesh's own.
 typedef struct {
     const Mesh *mesh;
     Mat m;                     // mesh twips -> screen pixels
-    const Vertex *vp;          // vertices to draw (mesh->gpu or a cached recolour), or NULL:
-    int cv;                    // then the first of mesh->nverts recoloured vertices in DrawList.cv
+    const Vertex *vp;          // uploaded vertices, or NULL
+    int cv;                    // first of mesh->nverts recoloured colours in DrawList.cv, or -1
     const BitmapFill *bf;      // a bitmap fill (mesh is bf->mesh): drawn textured, multiplied by tint
     float tint[4];
+    const uint32_t *col;       // cached recoloured colours (GPU-visible), or NULL
 } DrawItem;
 
-// Recoloured copies of meshes, kept across frames. Colour transforms are usually
+// Recoloured vertex colours, kept across frames. Colour transforms are usually
 // constant, so each (mesh, transform) pair is recoloured once. The memory comes
 // from the caller (GPU-visible on the Vita); when it fills up, new pairs are
 // recoloured every frame instead.
 typedef struct {
-    Vertex *mem;
-    int cap, used;             // vertices
+    uint32_t *mem;
+    int cap, used;             // colours
     struct RecolourEntry *table;
     int table_size, entries;
 } RecolourCache;
@@ -56,7 +59,7 @@ void recolour_cache_free(RecolourCache *rc);   // frees the table, not mem
 typedef struct {
     DrawItem *items;
     int n, cap;
-    Vertex *cv;                // recoloured copies for colour transforms and masks
+    uint32_t *cv;              // this frame's recoloured colours (colour transforms, masks) the cache missed
     int ncv, cvcap;
     DrawCmd *cmd;
     int ncmd, cmdcap;

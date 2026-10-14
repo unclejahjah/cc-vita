@@ -241,10 +241,8 @@ static void release_cb(Shape *s, void *ctx) {
     s->fills = NULL;
     s->lines = NULL;
     s->nfills = s->nlines = 0;
-    free(s->mesh.xy);
-    free(s->mesh.rgba);
+    free(s->mesh.xy);   // the colours stay: colour transforms recolour from them
     s->mesh.xy = NULL;
-    s->mesh.rgba = NULL;
 }
 
 void render_release_cpu(Movie *m) { each_shape(m, release_cb, NULL); }
@@ -288,10 +286,10 @@ static void add_item(DrawList *dl, const DrawItem *it) {
     render_stats.triangles += it->mesh->nverts / 3;
 }
 
-static Vertex *reserve_cv(DrawList *dl, int n) {
+static uint32_t *reserve_cv(DrawList *dl, int n) {
     if (dl->ncv + n > dl->cvcap) {
         while (dl->cvcap < dl->ncv + n) dl->cvcap = dl->cvcap ? dl->cvcap * 2 : 4096;
-        dl->cv = realloc(dl->cv, sizeof(Vertex) * dl->cvcap);
+        dl->cv = realloc(dl->cv, sizeof(uint32_t) * dl->cvcap);
     }
     return dl->cv + dl->ncv;
 }
@@ -317,24 +315,13 @@ static int offscreen(const float bb[4], Mat m, const float view[4]) {
     return maxx < view[0] || maxy < view[1] || minx > view[2] || miny > view[3];
 }
 
-// A copy of the mesh with cx applied; positions stay in mesh space for the GPU.
-// Reads the uploaded vertices when the CPU copy was released (render_release_cpu).
-static void recolour(const Mesh *mesh, const CXform *cx, Vertex *v) {
+// The mesh's vertex colours with cx applied (positions are untouched: they stay where
+// they were uploaded and only this colour array changes).
+static void recolour(const Mesh *mesh, const CXform *cx, uint32_t *out) {
     uint32_t last_in = 0xffffffffu, last_out = 0;
-    const Vertex *gv = mesh->xy ? NULL : mesh->gpu;
     for (int i = 0; i < mesh->nverts; i++) {
         uint32_t in;
-        if (gv) {
-            Vertex s = gv[i];
-            v[i].x = s.x;
-            v[i].y = s.y;
-            in = s.color;   // same byte order as rgba
-        } else {
-            v[i].x = mesh->xy[i * 2];
-            v[i].y = mesh->xy[i * 2 + 1];
-            memcpy(&in, mesh->rgba + i * 4, 4);
-        }
-        v[i].z = 0.5f;
+        memcpy(&in, mesh->rgba + i * 4, 4);
         if (in != last_in) {   // most shapes are a handful of flat colours
             const uint8_t *p = (const uint8_t *)&in;
             uint8_t c[4] = {clamp8(p[0] * cx->mul[0] + cx->add[0]), clamp8(p[1] * cx->mul[1] + cx->add[1]),
@@ -342,7 +329,7 @@ static void recolour(const Mesh *mesh, const CXform *cx, Vertex *v) {
             last_out = pack(c);
             last_in = in;
         }
-        v[i].color = last_out;
+        out[i] = last_out;
     }
 }
 
@@ -351,12 +338,12 @@ static void recolour(const Mesh *mesh, const CXform *cx, Vertex *v) {
 struct RecolourEntry {
     const Mesh *mesh;
     CXform cx;
-    Vertex *v;
+    uint32_t *v;
 };
 
 void recolour_cache_init(RecolourCache *rc, void *mem, size_t bytes) {
     rc->mem = mem;
-    rc->cap = mem ? (int)(bytes / sizeof(Vertex)) : 0;
+    rc->cap = mem ? (int)(bytes / sizeof(uint32_t)) : 0;
     rc->used = 0;
     rc->table_size = 8192;
     rc->table = calloc(rc->table_size, sizeof(struct RecolourEntry));
@@ -377,7 +364,7 @@ static uint32_t cache_hash(const Mesh *mesh, const CXform *cx) {
 }
 
 // The cached recolour of mesh under cx, made on first use; NULL if the cache is full.
-static const Vertex *cache_get(RecolourCache *rc, const Mesh *mesh, const CXform *cx) {
+static const uint32_t *cache_get(RecolourCache *rc, const Mesh *mesh, const CXform *cx) {
     if (!rc || !rc->table) return NULL;
     uint32_t i = cache_hash(mesh, cx) & (rc->table_size - 1);
     for (;;) {
@@ -424,21 +411,18 @@ static void emit_shape(Shape *s, Mat m, CXform cx, DrawList *out) {
         return;
     }
     if (!n) { emit_bitmaps(s, m, cx, out); return; }
+    // positions: the uploaded copy (or mesh->xy); colours: the mesh's own, or recoloured
     DrawItem it = {mesh, m, mesh->gpu, -1, NULL, {0, 0, 0, 0}};
-    if (out->masking) {
-        // all-zero colour transform: alpha 0, so only the stencil changes
-        memset(&cx, 0, sizeof cx);
-        it.vp = NULL;
-    } else if (!is_identity(&cx)) {
-        it.vp = NULL;
-    }
-    if (!it.vp) {
-        it.vp = cache_get(out->cache, mesh, &cx);
-        if (it.vp) {
+    int recoloured = out->masking || !is_identity(&cx);
+    // masks: all-zero colour transform, alpha 0, so only the stencil changes
+    if (out->masking) memset(&cx, 0, sizeof cx);
+    if (recoloured) {
+        it.col = cache_get(out->cache, mesh, &cx);
+        if (it.col) {
             render_stats.cached_tris += n / 3;
         } else {
-            Vertex *v = reserve_cv(out, n);
-            recolour(mesh, &cx, v);
+            uint32_t *c = reserve_cv(out, n);
+            recolour(mesh, &cx, c);
             it.cv = out->ncv;
             out->ncv += n;
             render_stats.cx_tris += n / 3;
@@ -574,7 +558,11 @@ Vertex render_item_vertex(const DrawList *dl, const DrawItem *it, int i) {
         for (int k = 0; k < 4; k++) c[k] = (uint8_t)(it->tint[k] * 255);
         v.color = pack(c);
     } else {
-        v = it->vp ? it->vp[i] : dl->cv[it->cv + i];
+        const Mesh *m = it->mesh;
+        if (it->vp) v = it->vp[i];
+        else { v.x = m->xy[i * 2]; v.y = m->xy[i * 2 + 1]; v.z = 0.5f; memcpy(&v.color, m->rgba + i * 4, 4); }
+        if (it->col) v.color = it->col[i];
+        else if (it->cv >= 0) v.color = dl->cv[it->cv + i];
     }
     float x = v.x, y = v.y;
     v.x = it->m.a * x + it->m.c * y + it->m.tx;

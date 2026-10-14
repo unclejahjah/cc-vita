@@ -23,6 +23,32 @@ static void *gc_alloc(AsVm *vm, size_t size, int kind) {
     return g;
 }
 
+// A call's activation object and scope live only as long as the call unless a function
+// defined inside it keeps them (a closure). They're taken from these free lists, outside
+// the collected heap, and given to the heap only when captured. (Collection never runs
+// while a script does, so nothing else can be looking at them.)
+static AsGc *g_free_acts, *g_free_scopes;
+
+static void *call_alloc(AsGc **pool, size_t size, int kind) {
+    AsGc *g = *pool;
+    if (g) { *pool = g->next; memset(g, 0, size); }
+    else g = calloc(1, size);
+    g->kind = kind;
+    return g;
+}
+
+static void call_keep(AsVm *vm, AsGc *g) {   // captured: from now on the collector owns it
+    g->next = vm->heap;
+    vm->heap = g;
+    vm->heap_count++;
+}
+
+static void call_release(AsGc **pool, AsGc *g) {
+    if (g->kind == GC_OBJ) free(((AsObj *)g)->props.slots);
+    g->next = *pool;
+    *pool = g;
+}
+
 void as_warn(AsVm *vm, const char *fmt, ...) {
     if (!vm->warn) return;
     char buf[512];
@@ -391,6 +417,7 @@ typedef struct {
     AsObj *callee;
     AsVal ret;
     int returned;
+    int captured;              // a function was defined here: its scope chain must outlive the call
 } Ctx;
 
 static void run(AsVm *vm, Ctx *c);
@@ -417,14 +444,103 @@ static AsMc *mc_of(AsVal v) {
     return v.t == V_OBJ && v.o->type == OBJ_MC ? (AsMc *)v.o : NULL;
 }
 
+static AsVal as_call_body(AsVm *vm, AsVal fv, AsVal this_, int argc, AsVal *argv);
+
+void as_override(AsVm *vm, const char *name, AsNative fn) {
+    if (vm->noverrides < (int)(sizeof vm->overrides / sizeof vm->overrides[0])) {
+        vm->overrides[vm->noverrides].name = as_atom(vm, name);
+        vm->overrides[vm->noverrides++].fn = fn;
+    }
+}
+
+// ---- profiler (as_prof_enable): time and actions per script function -----------------
+
+typedef struct {
+    const AsObj *f;
+    long long calls, ops_excl;
+    double ms_incl, ms_excl;
+} ProfEnt;
+
+#define PROF_SIZE 8192
+static ProfEnt *g_prof;
+static double g_prof_child;     // time spent in callees of the running function
+static long long g_prof_child_ops;
+
+void as_prof_enable(int on) {
+    if (on && !g_prof) g_prof = calloc(PROF_SIZE, sizeof(ProfEnt));
+    if (!on) { free(g_prof); g_prof = NULL; }
+}
+
+static ProfEnt *prof_slot(const AsObj *f) {
+    uint32_t h = (uint32_t)((uintptr_t)f >> 4) * 2654435761u;
+    for (int n = 0; n < PROF_SIZE; n++) {
+        ProfEnt *e = &g_prof[(h + n) & (PROF_SIZE - 1)];
+        if (!e->f || e->f == f) { e->f = f; return e; }
+    }
+    return NULL;
+}
+
+static int cmp_prof(const void *a, const void *b) {
+    double x = ((const ProfEnt *)a)->ms_excl, y = ((const ProfEnt *)b)->ms_excl;
+    return x < y ? 1 : x > y ? -1 : 0;
+}
+
+void as_prof_report(int top, void (*out)(const char *line)) {
+    if (!g_prof) return;
+    ProfEnt *all = malloc(sizeof(ProfEnt) * PROF_SIZE);
+    int n = 0;
+    double total = 0;
+    for (int i = 0; i < PROF_SIZE; i++)
+        if (g_prof[i].f) { all[n++] = g_prof[i]; total += g_prof[i].ms_excl; }
+    qsort(all, n, sizeof(ProfEnt), cmp_prof);
+    char line[256];
+    for (int i = 0; i < n && i < top; i++) {
+        const AsObj *f = all[i].f;
+        snprintf(line, sizeof line, "%8.1f ms excl %5.1f%%  %8.1f incl  %8lld calls  %10lld ops  %s",
+                 all[i].ms_excl, total ? 100 * all[i].ms_excl / total : 0, all[i].ms_incl, all[i].calls, all[i].ops_excl,
+                 f->fname ? f->fname->s : f->native ? "(native)" : "(anonymous)");
+        out(line);
+    }
+    free(all);
+}
+
 AsVal as_call(AsVm *vm, AsVal fv, AsVal this_, int argc, AsVal *argv) {
     if (fv.t != V_OBJ || fv.o->type != OBJ_FUNC) return as_undef();
+    AsObj *f = fv.o;
+    if (g_prof) {   // time it, minus what its callees took
+        extern double as_time_ms(void);
+        ProfEnt *e = prof_slot(f);
+        double t0 = as_time_ms(), child0 = g_prof_child;
+        long long ops0 = vm->ops, cops0 = g_prof_child_ops;
+        g_prof_child = 0;
+        g_prof_child_ops = 0;
+        AsVal r = as_call_body(vm, fv, this_, argc, argv);
+        double dt = as_time_ms() - t0;
+        long long dops = vm->ops - ops0;
+        if (e) {
+            e->calls++;
+            e->ms_incl += dt;
+            e->ms_excl += dt - g_prof_child;
+            e->ops_excl += dops - g_prof_child_ops;
+        }
+        g_prof_child = child0 + dt;
+        g_prof_child_ops = cops0 + dops;
+        return r;
+    }
+    return as_call_body(vm, fv, this_, argc, argv);
+}
+
+static AsVal as_call_body(AsVm *vm, AsVal fv, AsVal this_, int argc, AsVal *argv) {
     AsObj *f = fv.o;
     if (f->native) return f->native(vm, this_, argc, argv);
     if (vm->depth > 200) { as_warn(vm, "call depth limit"); return as_undef(); }
     vm->depth++;
 
-    AsObj *act = as_obj_new(vm, OBJ_ACTIVATION, NULL);
+    AsObj *act = call_alloc(&g_free_acts, sizeof(AsObj), GC_OBJ);
+    act->type = OBJ_ACTIVATION;
+    AsScope *scope = call_alloc(&g_free_scopes, sizeof(AsScope), GC_SCOPE);
+    scope->obj = act;
+    scope->parent = f->scope;
     Ctx c;
     memset(&c, 0, sizeof c);
     c.code = f->code_movie->data;
@@ -432,7 +548,7 @@ AsVal as_call(AsVm *vm, AsVal fv, AsVal this_, int argc, AsVal *argv) {
     c.pc = f->code_off;
     c.end = f->code_off + f->code_len;
     c.pool = f->pool;
-    c.scope = scope_new(vm, act, f->scope);
+    c.scope = scope;
     c.this_ = this_;
     c.target = f->target;
     c.activation = act;
@@ -477,6 +593,13 @@ AsVal as_call(AsVm *vm, AsVal fv, AsVal this_, int argc, AsVal *argv) {
     vm->cur_fn = prev_fn;
     vm->sp = sp0;
     vm->depth--;
+    if (c.captured) {
+        call_keep(vm, &act->gc);
+        call_keep(vm, &scope->gc);
+    } else {
+        call_release(&g_free_acts, &act->gc);
+        call_release(&g_free_scopes, &scope->gc);
+    }
     return c.ret;
 }
 
@@ -693,8 +816,12 @@ static AsObj *define_function(AsVm *vm, Ctx *c, const uint8_t *body, uint32_t le
     f->code_len = size;
     f->pool = c->pool;
     f->scope = c->scope;
+    c->captured = 1;   // the new function holds this call's scope chain
     f->target = c->target;
     f->fname = *name_out;
+    // a native stand-in the host registered for this script function (same results, faster)
+    for (int i = 0; f->fname && i < vm->noverrides; i++)
+        if (vm->overrides[i].name == f->fname) f->native = vm->overrides[i].fn;
     AsObj *proto = as_obj_new(vm, OBJ_PLAIN, vm->object_proto);
     AsProp *cp = props_insert(&proto->props, A_constructor);
     cp->v = as_objv(f);
@@ -1086,8 +1213,37 @@ static void free_gc(AsGc *g) {
     free(g);
 }
 
+// Sweeping is spread over frames: after a mark, the heap list is set aside and up to
+// SWEEP_STEP of its objects are freed or kept each frame; new objects go on a fresh list.
+#define SWEEP_STEP 1000
+static AsGc *g_sweep;            // objects still to sweep (marked = live)
+static size_t g_sweep_live;
+
+static void sweep_some(AsVm *vm, size_t n) {
+    while (g_sweep && n--) {
+        AsGc *g = g_sweep;
+        g_sweep = g->next;
+        if (g->mark || g->permanent) {
+            g->mark = 0;
+            g->next = vm->heap;
+            vm->heap = g;
+            g_sweep_live++;
+            vm->heap_count++;
+        } else {
+            free_gc(g);
+        }
+    }
+    if (!g_sweep && g_sweep_live) {   // done: the next collection is due when the heap has doubled
+        vm->gc_threshold = g_sweep_live * 2 > 20000 ? g_sweep_live * 2 : 20000;
+        g_sweep_live = 0;
+    }
+}
+
 void as_gc(AsVm *vm) {
+    if (g_sweep) { sweep_some(vm, SWEEP_STEP); return; }
     if (vm->heap_count < vm->gc_threshold) return;
+    extern double as_time_ms(void);
+    double t0 = getenv("AS_GCTIME") ? as_time_ms() : 0;
     as_mark_obj(vm, vm->global);
     if (vm->root) as_mark_obj(vm, &vm->root->obj);
     AsObj *protos[] = {vm->object_proto, vm->function_proto, vm->array_proto, vm->string_proto, vm->number_proto,
@@ -1098,21 +1254,14 @@ void as_gc(AsVm *vm) {
     for (AsLoad *l = vm->loads; l; l = l->next) as_mark_obj(vm, &l->target->obj);
     for (int i = 0; i < vm->nqueue; i++) as_mark_obj(vm, &vm->queue[i]->obj);
     mark_gc(&vm->empty->gc);
-    size_t live = 0;
-    AsGc **link = &vm->heap;
-    while (*link) {
-        AsGc *g = *link;
-        if (g->mark || g->permanent) {
-            g->mark = 0;
-            live++;
-            link = &g->next;
-        } else {
-            *link = g->next;
-            free_gc(g);
-        }
-    }
-    vm->heap_count = live;
-    vm->gc_threshold = live * 2 > 20000 ? live * 2 : 20000;
+    if (t0) as_warn(vm, "gc mark %.2f ms", as_time_ms() - t0);
+    // survivors are counted back in as the sweep keeps them
+    g_sweep = vm->heap;
+    vm->heap = NULL;
+    vm->heap_count = 0;
+    vm->gc_threshold = (size_t)-1;   // no new collection until this sweep is done
+    g_sweep_live = 0;
+    sweep_some(vm, SWEEP_STEP);
 }
 
 // ---- setup ------------------------------------------------------------------------
@@ -1143,6 +1292,11 @@ AsVm *as_new(AsLoader loader) {
 }
 
 void as_free(AsVm *vm) {
+    while (g_sweep) {
+        AsGc *g = g_sweep;
+        g_sweep = g->next;
+        if (!g->permanent) free_gc(g);
+    }
     while (vm->heap) {
         AsGc *g = vm->heap;
         vm->heap = g->next;

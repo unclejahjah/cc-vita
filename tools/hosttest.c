@@ -458,6 +458,13 @@ static void host_trace(AsVm *vm, const char *msg) {
     printf("  [trace] %s\n", msg);
 }
 
+static void host_music(const char *name, int loop) { printf("  [music] %s%s\n", name, loop ? " (loop)" : ""); }
+static void host_music_stop(void) { printf("  [music] stop\n"); }
+static void host_sound(AsVm *vm, const char *linkage, float vol, float pan, int loops, const void *owner) {
+    (void)vm; (void)owner;
+    if (getenv("AS_SOUNDS")) printf("  [sound] %s vol %.2f pan %.2f loops %d\n", linkage, vol, pan, loops);
+}
+
 static int as_mode(int argc, char **argv) {
     if (argc < 5) { fprintf(stderr, "usage: %s --as GAME_DIR START.swf out_prefix [frames] [snap_every]\n", argv[0]); return 1; }
     snprintf(game_dir, sizeof game_dir, "%s", argv[2]);
@@ -475,6 +482,9 @@ static int as_mode(int argc, char **argv) {
     extern void cc_host_init(AsVm *vm);
     cc_host_init(vm);
     as_render_init(vm);
+    cc_music_play = host_music;
+    cc_music_stop = host_music_stop;
+    vm->sound_start = host_sound;
     if (getenv("CC_FONT_DIR")) {   // the PC copy's data/fonts
         char fnt[600], dds[600], err[256];
         snprintf(fnt, sizeof fnt, "%s/synjUnicode_20.fnt", getenv("CC_FONT_DIR"));
@@ -524,11 +534,46 @@ static int as_mode(int argc, char **argv) {
             p = strchr(p, ',');
             if (p) p++;
         }
-        clock_t t0 = clock();
+        static int prof_from = -1;
+        static double prof_ms, prof_max;
+        static long long prof_ops;
+        if (getenv("AS_PROF") && f == atoi(getenv("AS_PROF"))) { as_prof_enable(1); prof_from = f; }
+        extern double as_time_ms(void);
+        double t0 = as_time_ms();
         long long ops0 = vm->ops;
         as_tick(vm);
+        double tg = as_time_ms();
+        size_t heap0 = vm->heap_count;
         as_gc(vm);
-        double ms = (double)(clock() - t0) * 1000 / CLOCKS_PER_SEC;
+        double gms = as_time_ms() - tg;
+        double ms = as_time_ms() - t0;
+        if (getenv("AS_SLOW") && ms > atof(getenv("AS_SLOW")))
+            printf("  [slow] tick %d: %.2f ms (gc %.2f), %lld actions\n", f, ms, gms, vm->ops - ops0);
+        static double gc_total, gc_worst;
+        static int gc_runs;
+        if (prof_from >= 0 && vm->heap_count != heap0) { gc_total += gms; gc_runs++; if (gms > gc_worst) gc_worst = gms; }
+        if (prof_from >= 0 && f == frames - 1)
+            printf("gc: %d collections in %d ticks, %.3f ms each on average, worst %.3f, live after %u\n", gc_runs,
+                   f - prof_from + 1, gc_runs ? gc_total / gc_runs : 0, gc_worst, (unsigned)vm->heap_count);
+        if (getenv("AS_TRACE_EVERY") && getenv("AS_PRINT") && f % atoi(getenv("AS_TRACE_EVERY")) == 0) {
+            char buf[1024];   // AS_PRINT's values every N frames, on one line
+            snprintf(buf, sizeof buf, "%s", getenv("AS_PRINT"));
+            printf("  [trace %d]", f);
+            for (char *t = strtok(buf, ","); t; t = strtok(NULL, ",")) {
+                int found;
+                AsVal v = as_resolve_path(vm, vm->root, t, &found);
+                printf(" %s", found ? as_tostr(vm, v)->s : "-");
+            }
+            printf("\n");
+        }
+        if (prof_from >= 0) {
+            prof_ms += ms;
+            prof_ops += vm->ops - ops0;
+            if (ms > prof_max) prof_max = ms;
+            if (f == frames - 1)
+                printf("ticks %d..%d: average %.2f ms (worst %.2f), %lld actions a tick\n", prof_from, f,
+                       prof_ms / (f - prof_from + 1), prof_max, prof_ops / (f - prof_from + 1));
+        }
         if (f % every == 0 || f == frames - 1) {
             if (getenv("AS_HIDE")) {   // AS_HIDE="path,path": hide clips in the snapshots (finding what draws what)
                 char buf[1024];
@@ -600,6 +645,11 @@ static int as_mode(int argc, char **argv) {
                    top->def ? top->def->nframes : 0, top->playing ? " playing" : "");
         }
         dump(top, 0);
+    }
+    if (getenv("AS_PROF")) {
+        void line(const char *s) { printf("  %s\n", s); }
+        printf("\nprofile (from frame %s):\n", getenv("AS_PROF"));
+        as_prof_report(40, line);
     }
     printf("\n%d loadMovie calls, %d files parsed\n", load_count, nmovie_cache);
     printf("\n%d distinct warnings:\n", nwarn);
