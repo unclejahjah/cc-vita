@@ -25,6 +25,7 @@
 #include "cc_host.h"
 #include "hostfont.h"
 #include "render.h"
+#include "strtab.h"
 
 // parsed SWFs and the script heap (meshes live in GPU memory blocks outside it)
 int _newlib_heap_size_user = 160 * 1024 * 1024;
@@ -390,6 +391,9 @@ int main(void) {
     }
 
     cc_storage_load(SAVE_PATH);
+    // the game's words (from the user's castle.exe by extract_strings.py), then Vita wording
+    strtab_load(DATA_DIR "strings_en.txt");
+    strtab_load(DATA_DIR "strings_vita_en.txt");
     audio_init(DATA_DIR);
     cc_music_play = audio_music_play;
     cc_music_stop = audio_music_stop;

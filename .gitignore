@@ -11,3 +11,4 @@ build/
 *.dds
 *.fnt
 *.exe
+strings_*.txt

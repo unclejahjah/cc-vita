@@ -205,6 +205,8 @@ struct AsVm {
     // each tick, after the frame scripts ran and before onEnterFrame (host work that needs
     // freshly placed clips to have run their first frame)
     void (*after_frame_scripts)(AsVm *vm);
+    // the executable's text by number (TextField.ntext = N), or NULL
+    const char *(*text_for_number)(AsVm *vm, int n);
     // native versions of hot script functions, by name (as_override)
     struct { AsStr *name; AsNative fn; } overrides[32];
     int noverrides;
