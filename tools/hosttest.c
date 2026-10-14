@@ -517,6 +517,24 @@ static int as_mode(int argc, char **argv) {
             p = strchr(p, ',');
             if (p) p++;
         }
+        // CC_SET="frame:object_path.name=number,...": set a script variable (e.g. move a player)
+        for (const char *p = getenv("CC_SET"); p && *p;) {
+            char lhs[160] = "";
+            double val = 0;
+            int sf = -1;
+            if (sscanf(p, "%d:%159[^=]=%lf", &sf, lhs, &val) == 3 && sf == f) {
+                char *dot = strrchr(lhs, '.');
+                if (dot) {
+                    *dot = 0;
+                    int found;
+                    AsVal o = as_resolve_path(vm, vm->root, lhs, &found);
+                    if (found) as_set(vm, o, as_atom(vm, dot + 1), as_num(val));
+                    printf("  [set] %s.%s = %g at frame %d%s\n", lhs, dot + 1, val, f, found ? "" : " (no such object)");
+                }
+            }
+            p = strchr(p, ',');
+            if (p) p++;
+        }
         // CC_CALL="frame:function_path[:arg_path],...": call a script function (e.g. a portal's exit)
         for (const char *p = getenv("CC_CALL"); p && *p;) {
             char fn[128] = "", arg[128] = "";
@@ -525,11 +543,14 @@ static int as_mode(int argc, char **argv) {
             if (cf == f) {
                 int found;
                 AsVal fv = as_resolve_path(vm, vm->root, fn, &found);
-                // an argument starting with ' is a string; else a path
-                AsVal av = arg[0] == '\'' ? as_strv(as_str(vm, arg + 1))
-                         : arg[0] ? as_resolve_path(vm, vm->root, arg, &found) : as_undef();
-                printf("  [call] %s(%s) at frame %d%s\n", fn, arg, f, fv.t == V_OBJ ? "" : " - not a function");
-                if (fv.t == V_OBJ) as_call(vm, fv, as_objv(&vm->root->obj), arg[0] ? 1 : 0, &av);
+                // arguments separated by |: 'text is a string, #12.5 a number, anything else a path
+                AsVal av[8];
+                int nav = 0;
+                for (char *a = strtok(arg, "|"); a && nav < 8; a = strtok(NULL, "|"))
+                    av[nav++] = a[0] == '\'' ? as_strv(as_str(vm, a + 1))
+                              : a[0] == '#' ? as_num(atof(a + 1)) : as_resolve_path(vm, vm->root, a, &found);
+                printf("  [call] %s (%d args) at frame %d%s\n", fn, nav, f, fv.t == V_OBJ ? "" : " - not a function");
+                if (fv.t == V_OBJ) as_call(vm, fv, as_objv(&vm->root->obj), nav, av);
             }
             p = strchr(p, ',');
             if (p) p++;

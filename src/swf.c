@@ -704,7 +704,8 @@ static void parse_timeline(Movie *mv, const uint8_t *d, size_t len, size_t pos, 
     size_t body, l;
     int pending = 0;   // tags since the last ShowFrame
     while (next_tag(&it, &code, &body, &l)) {
-        if (code != 1 && code != 0) pending = 1;
+        // a frame being built: something placed, removed, labelled or scripted since the last ShowFrame
+        if (code == 26 || code == 70 || code == 28 || code == 5 || code == 43 || code == 12) pending = 1;
         if (code == 26 || code == 70) {
             parse_place(mv, d, len, body, body + l, code, &dl);
         } else if (code == 28 || code == 5) {
@@ -728,11 +729,9 @@ static void parse_timeline(Movie *mv, const uint8_t *d, size_t len, size_t pos, 
             pending = 0;
         }
     }
-    // Level files place their layers on the root but never show a frame, and
-    // truncated files (MAIN.swf, PLAYER.swf) lose their last ShowFrame: close it.
-    if ((frames.n == 0 && dl.n) || (pending && (actions.n && actions.v[actions.n - 1].frame == frames.n)))
-        push_frame(&frames, &dl);
-    else if (frames.n == 0 && dl.n) push_frame(&frames, &dl);
+    // Level files place their layers on the root but never show a frame, and files cut
+    // short (MAIN, PLAYER, EBARBOSS...) lose their last ShowFrame: close that frame.
+    if ((frames.n == 0 && dl.n) || pending) push_frame(&frames, &dl);
     free(dl.v);
     s->nframes = frames.n;
     s->frames = frames.v;
