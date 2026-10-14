@@ -39,6 +39,24 @@ static AsVal set_flash_global(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
     return as_undef();
 }
 
+AsVal cc_flash_global(AsVm *vm, const char *name) {
+    return as_get(vm, as_objv(flash_globals), as_atom(vm, name));
+}
+
+void cc_set_flash_global(AsVm *vm, const char *name, AsVal v) {
+    as_set(vm, as_objv(flash_globals), as_atom(vm, name), v);
+}
+
+// SetPortState(port, state): a player's state as the pause menu sets it (g_nPort<n>State:
+// 1 playing, 2 paused, 0 dropped out, 3 quitting to the map)
+static AsVal set_port_state(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
+    (void)this_;
+    char name[32];
+    snprintf(name, sizeof name, "g_nPort%dState", as_toint32(vm, ARG(0)));
+    cc_set_flash_global(vm, name, as_num(as_tonum(vm, ARG(1))));
+    return as_undef();
+}
+
 // ---- console settings -------------------------------------------------------------
 
 static AsVal ret_true(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
@@ -332,6 +350,12 @@ void cc_host_init(AsVm *vm) {
     as_def(vm, g, "__flash_globals", as_objv(flash_globals));   // keeps it alive for the GC
     as_def_fn(vm, g, "GetFlashGlobal", get_flash_global);
     as_def_fn(vm, g, "SetFlashGlobal", set_flash_global);
+    as_def_fn(vm, g, "SetPortState", set_port_state);
+    for (int p = 1; p <= 4; p++) {   // everyone starts out playing
+        char name[32];
+        snprintf(name, sizeof name, "g_nPort%dState", p);
+        cc_set_flash_global(vm, name, as_num(1));
+    }
     as_def_fn(vm, g, "GetGameMode", ret_zero);
     as_def_fn(vm, g, "GetWidescreen", ret_true);   // the Vita screen is 16:9
     as_def_fn(vm, g, "IsPalMode", ret_false);
