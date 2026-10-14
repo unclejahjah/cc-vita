@@ -8,6 +8,10 @@
 extern uint8_t cc_keys[256];
 
 void cc_host_init(AsVm *vm);
+
+// The executable-side settings the scripts read with GetFlashGlobal.
+AsVal cc_flash_global(AsVm *vm, const char *name);
+void cc_set_flash_global(AsVm *vm, const char *name, AsVal v);
 void cc_native_init(AsVm *vm);   // native versions of hot game functions (cc_native.c); called by cc_host_init
 
 // Save data per controller port (ReadStorage/WriteStorage); dirty when the game wrote to it.

@@ -349,6 +349,116 @@ static void map_pad(const SceCtrlData *pad, int debug) {
     if (b & SCE_CTRL_START) cc_keys[K_START] = 1;
 }
 
+// ---- pause menu ----------------------------------------------------------------------
+// The original draws its pause menu in castle.exe (PAUSE.swf only holds the art) and
+// tells the scripts through g_nPort<n>State: 2 paused, 1 playing, 3 quit to the map.
+
+typedef struct {
+    int open, sel, page;       // page 0: the menu, 1: controls
+    DrawList art;              // the pause book, drawn over the frozen game
+    int have_art;
+    float book[4];             // where the book is on screen
+} Pause;
+
+static const char *PAUSE_ITEMS[] = {"Resume", "Controls", "Quit to Map"};
+#define NPAUSE_ITEMS 3
+
+static int in_level(AsVm *vm) {
+    int found;
+    AsVal g = as_resolve_path(vm, vm->root, "loader.game.game", &found);
+    return found && g.t == V_OBJ && g.o->type == OBJ_MC;
+}
+
+// the pause book from PAUSE.swf, centred, about 60% of the screen wide
+static void pause_build_art(Pause *ps) {
+    Movie *pm = vita_loader(NULL, "PAUSE.swf");
+    ps->have_art = 0;
+    if (!pm) return;
+    int cid = -1;
+    for (int c = 0; c < 65536 && cid < 0; c++)
+        if (pm->chars[c].type == CHAR_SPRITE && pm->chars[c].export && !strcmp(pm->names[pm->chars[c].export], "bookbg"))
+            cid = c;
+    if (cid < 0) return;
+    Mat id = {1, 0, 0, 1, 0, 0};
+    render_begin(&ps->art);
+    ps->art.view[2] = 0;   // no culling while measuring
+    render_char(pm, cid, id, CX_IDENTITY, 0, &ps->art);
+    float b[4] = {1e30f, 1e30f, -1e30f, -1e30f};
+    for (int k = 0; k < ps->art.n; k++) {
+        const float *mb = ps->art.items[k].mesh->bounds;
+        Mat mm = ps->art.items[k].m;
+        for (int q = 0; q < 4; q++) {
+            float x = mb[q & 1 ? 2 : 0], y = mb[q & 2 ? 3 : 1];
+            float px = mm.a * x + mm.c * y + mm.tx, py = mm.b * x + mm.d * y + mm.ty;
+            if (px < b[0]) b[0] = px;
+            if (px > b[2]) b[2] = px;
+            if (py < b[1]) b[1] = py;
+            if (py > b[3]) b[3] = py;
+        }
+    }
+    if (b[2] <= b[0]) return;
+    float s = SCREEN_W * 0.6f / (b[2] - b[0]);
+    if ((b[3] - b[1]) * s > SCREEN_H * 0.8f) s = SCREEN_H * 0.8f / (b[3] - b[1]);
+    float w = (b[2] - b[0]) * s, h = (b[3] - b[1]) * s;
+    Mat m = {s, 0, 0, s, (SCREEN_W - w) / 2 - b[0] * s, (SCREEN_H - h) / 2 - b[1] * s};
+    render_begin(&ps->art);
+    ps->art.view[2] = 0;
+    render_char(pm, cid, m, CX_IDENTITY, 0, &ps->art);
+    ps->book[0] = (SCREEN_W - w) / 2;
+    ps->book[1] = (SCREEN_H - h) / 2;
+    ps->book[2] = ps->book[0] + w;
+    ps->book[3] = ps->book[1] + h;
+    ps->have_art = 1;
+}
+
+static void pause_set_state(AsVm *vm, int state) { cc_set_flash_global(vm, "g_nPort1State", as_num(state)); }
+
+// one frame of the open menu: returns 1 while it stays open
+static int pause_input(Pause *ps, AsVm *vm, unsigned pressed) {
+    if (ps->page == 1) {   // controls page: any of these goes back
+        if (pressed & (SCE_CTRL_CIRCLE | SCE_CTRL_CROSS | SCE_CTRL_START)) ps->page = 0;
+        return 1;
+    }
+    if (pressed & SCE_CTRL_UP) ps->sel = (ps->sel + NPAUSE_ITEMS - 1) % NPAUSE_ITEMS;
+    if (pressed & SCE_CTRL_DOWN) ps->sel = (ps->sel + 1) % NPAUSE_ITEMS;
+    if (pressed & (SCE_CTRL_CIRCLE | SCE_CTRL_START)) { pause_set_state(vm, 1); return 0; }
+    if (pressed & SCE_CTRL_CROSS) {
+        if (ps->sel == 0) { pause_set_state(vm, 1); return 0; }
+        if (ps->sel == 1) { ps->page = 1; return 1; }
+        pause_set_state(vm, 3);   // the scripts take the party back to the map
+        return 0;
+    }
+    return 1;
+}
+
+static void pause_draw(Pause *ps) {
+    vita2d_draw_rectangle(0, 0, SCREEN_W, SCREEN_H, RGBA8(0, 0, 0, 140));
+    float x0 = SCREEN_W * 0.3f, y0 = SCREEN_H * 0.3f, x1 = SCREEN_W * 0.7f;
+    if (ps->have_art) {
+        draw_list(&ps->art);
+        x0 = ps->book[0] + (ps->book[2] - ps->book[0]) * 0.18f;
+        x1 = ps->book[2] - (ps->book[2] - ps->book[0]) * 0.18f;
+        y0 = ps->book[1] + (ps->book[3] - ps->book[1]) * 0.25f;
+    } else {
+        vita2d_draw_rectangle(x0 - 20, y0 - 60, x1 - x0 + 40, 260, RGBA8(237, 222, 180, 255));
+    }
+    unsigned ink = RGBA8(70, 45, 20, 255), hi = RGBA8(190, 40, 30, 255);
+    if (ps->page == 1) {
+        static const char *lines[] = {
+            "Stick / D-pad: move",       "Square: light attack",  "Triangle: heavy attack",
+            "Cross: jump",               "Circle: bow / item",    "R: block",
+            "L (hold) + attack: magic",  "Rear touchpad: switch item", "Start: pause",
+        };
+        for (int i = 0; i < 9; i++) vita2d_pgf_draw_text(g_font, x0, y0 + i * 26, ink, 0.9f, lines[i]);
+        vita2d_pgf_draw_text(g_font, x0, y0 + 9 * 26 + 14, hi, 0.9f, "Circle: back");
+        return;
+    }
+    vita2d_pgf_draw_text(g_font, x0, y0, ink, 1.2f, "Paused");
+    for (int i = 0; i < NPAUSE_ITEMS; i++)
+        vita2d_pgf_draw_textf(g_font, x0 + 10, y0 + 50 + i * 40, i == ps->sel ? hi : ink, 1.1f, "%s%s",
+                              i == ps->sel ? "> " : "  ", PAUSE_ITEMS[i]);
+}
+
 static void vita_sound_start(AsVm *vm, const char *linkage, float volume, float pan, int loops, const void *owner) {
     (void)vm;
     audio_sfx_play(linkage, volume, pan, loops, owner);
@@ -437,6 +547,7 @@ int main(void) {
 
     SceCtrlData pad, old = {0};
     int overlay = 0;
+    static Pause pause;
     SceUInt64 last = sceKernelGetProcessTimeWide(), acc = 0, prev = last;
     float fps = 0, tick_ms = 0, build_ms = 0, shown_tick = 0, shown_build = 0;
     int frames = 0, ticks = 0;
@@ -450,12 +561,26 @@ int main(void) {
         if (debug && (pressed & SCE_CTRL_START)) break;
         if (debug && (pressed & SCE_CTRL_UP)) overlay = !overlay;
         map_pad(&pad, debug);
+        // in a level, Start is the pause menu's (the executable's in the original)
+        int level = in_level(vm);
+        if (level) cc_keys[K_START] = 0;
+        if (pause.open) {
+            pause.open = pause_input(&pause, vm, pressed);
+            memset(cc_keys, 0, sizeof cc_keys);
+        } else if (level && !debug && (pressed & SCE_CTRL_START) &&
+                   !as_tobool(vm, cc_flash_global(vm, "g_bNoPause"))) {
+            pause.open = 1;
+            pause.sel = pause.page = 0;
+            pause_set_state(vm, 2);
+            if (!pause.have_art) pause_build_art(&pause);
+        }
 
         // run the game's frames that are due (at most two, so a slow frame doesn't snowball)
         SceUInt64 now = sceKernelGetProcessTimeWide();
         acc += now - prev;
         prev = now;
         if (acc > 2 * tick_us) acc = 2 * tick_us;
+        if (pause.open) acc = 0;   // the game stands still under the menu
         int ticked = 0;
         while (acc >= tick_us) {
             SceUInt64 t0 = sceKernelGetProcessTimeWide();
@@ -490,6 +615,7 @@ int main(void) {
         vita2d_start_drawing();
         vita2d_clear_screen();
         draw_list(&vb);
+        if (pause.open) pause_draw(&pause);
         if (overlay) {
             unsigned ink = RGBA8(255, 255, 255, 255);
             vita2d_draw_rectangle(0, 0, SCREEN_W, 64, RGBA8(0, 0, 0, 150));
