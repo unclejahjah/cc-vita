@@ -426,7 +426,10 @@ static Movie *host_loader(AsVm *vm, const char *url) {
                 snprintf(path, sizeof path, "%s/%s", dirpath, de->d_name);
                 closedir(d);
                 Movie *m = swf_load(path, err, sizeof err);
-                printf("  [load] %s%s\n", base, m ? "" : " FAILED");
+                int fixed = m ? cc_repair_level(m) : 0;
+                printf("  [load] %s%s", base, m ? "" : " FAILED");
+                if (fixed) printf(" (put back %d layer%s the file lost)", fixed, fixed > 1 ? "s" : "");
+                printf("\n");
                 if (m && nmovie_cache < 128) {
                     snprintf(movie_cache[nmovie_cache].name, sizeof movie_cache[0].name, "%s", base);
                     movie_cache[nmovie_cache++].m = m;
@@ -501,6 +504,23 @@ static int as_mode(int argc, char **argv) {
             int kf = 0, code = 0, hold = 2;
             int n = sscanf(p, "%d:%d:%d", &kf, &code, &hold);
             if (n >= 2 && f >= kf && f < kf + (n == 3 ? hold : 2) && code > 0 && code < 256) cc_keys[code] = 1;
+            p = strchr(p, ',');
+            if (p) p++;
+        }
+        // CC_CALL="frame:function_path[:arg_path],...": call a script function (e.g. a portal's exit)
+        for (const char *p = getenv("CC_CALL"); p && *p;) {
+            char fn[128] = "", arg[128] = "";
+            int cf = -1;
+            sscanf(p, "%d:%127[^:,]:%127[^,]", &cf, fn, arg);
+            if (cf == f) {
+                int found;
+                AsVal fv = as_resolve_path(vm, vm->root, fn, &found);
+                // an argument starting with ' is a string; else a path
+                AsVal av = arg[0] == '\'' ? as_strv(as_str(vm, arg + 1))
+                         : arg[0] ? as_resolve_path(vm, vm->root, arg, &found) : as_undef();
+                printf("  [call] %s(%s) at frame %d%s\n", fn, arg, f, fv.t == V_OBJ ? "" : " - not a function");
+                if (fv.t == V_OBJ) as_call(vm, fv, as_objv(&vm->root->obj), arg[0] ? 1 : 0, &av);
+            }
             p = strchr(p, ',');
             if (p) p++;
         }

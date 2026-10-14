@@ -486,6 +486,7 @@ AsVal as_resolve_path(AsVm *vm, AsMc *from, const char *path, int *found) {
 
 AsMc *as_mc_resolve_target(AsVm *vm, AsMc *base, AsVal t) {
     if (t.t == V_OBJ && t.o->type == OBJ_MC) return (AsMc *)t.o;
+    if (t.t == V_UNDEF || t.t == V_NULL) return NULL;   // a missing clip is no target (not "this one")
     if (!base) base = vm->root;
     AsStr *s = as_tostr(vm, t);
     if (!s->len) return base;
@@ -516,6 +517,8 @@ static void do_loads(AsVm *vm) {
     while (vm->loads) {
         AsLoad *l = vm->loads;
         vm->loads = l->next;
+        if (getenv("AS_LOADS"))
+            as_warn(vm, "load '%s' into %s%s", l->url, as_mc_target_path(vm, l->target)->s, l->target->removed ? " (removed)" : "");
         if (!l->target->removed) {
             if (!l->url[0]) {   // unloadMovie
                 for (int i = 0; i < l->target->ndisp; i++)

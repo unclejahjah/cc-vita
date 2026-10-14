@@ -197,6 +197,64 @@ static AsVal clear_all_music(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
     return stop_music(vm, this_, argc, argv);
 }
 
+// ---- level files cut short --------------------------------------------------------
+// Some extracted level files lose their last bytes, and with them the root placements of
+// the last parallax layers. The layer sprites themselves are still there: a container
+// whose first frame holds the inner layer (bg0_c holds bg0, game holds game). Put back
+// any container the root is missing, on top, positioned like the others.
+
+static int sprite_holds(const Movie *m, const Sprite *s, const char *inner) {
+    if (!s->nframes) return 0;
+    const Frame *f = &s->frames[0];
+    for (int i = 0; i < f->count; i++)
+        if (f->places[i].name && !strcmp(m->names[f->places[i].name], inner)) return 1;
+    return 0;
+}
+
+int cc_repair_level(Movie *m) {
+    static const char *layers[][2] = {{"bg3_c", "bg3"}, {"bg2_c", "bg2"}, {"bg1_c", "bg1"}, {"game", "game"}, {"bg0_c", "bg0"}};
+    if (!m->root.nframes) return 0;
+    Frame *f = &m->root.frames[0];
+    const Place *model = NULL;   // an existing layer placement to copy the position from
+    int maxdepth = 0, added = 0;
+    for (int i = 0; i < f->count; i++) {
+        if (f->places[i].depth > maxdepth) maxdepth = f->places[i].depth;
+        for (int k = 0; k < 5; k++)
+            if (f->places[i].name && !strcmp(m->names[f->places[i].name], layers[k][0])) model = &f->places[i];
+    }
+    if (!model) return 0;   // not a level, or nothing to copy from
+    Place tmpl = *model;
+    for (int k = 0; k < 5; k++) {
+        int present = 0;
+        for (int i = 0; i < f->count; i++)
+            present |= f->places[i].name && !strcmp(m->names[f->places[i].name], layers[k][0]);
+        if (present) continue;
+        int cid = -1;   // the last sprite holding the inner layer
+        for (int c = 0; c < 65536; c++)
+            if (m->chars[c].type == CHAR_SPRITE && sprite_holds(m, m->chars[c].ptr, layers[k][1])) cid = c;
+        if (cid < 0) continue;
+        m->names = realloc(m->names, sizeof(char *) * (m->nnames + 1));
+        m->names[m->nnames] = strdup(layers[k][0]);
+        Place p = tmpl;
+        p.cid = cid;
+        p.name = m->nnames++;
+        p.depth = maxdepth += 2;
+        p.clip = 0;
+        p.uid = 0x7f000000u + k;
+        p.events_off = p.events_len = 0;
+        p.cx = CX_IDENTITY;
+        // every frame of the root shows it (places stay sorted by depth: these go last)
+        for (int fr = 0; fr < m->root.nframes; fr++) {
+            Frame *ff = &m->root.frames[fr];
+            ff->places = realloc(ff->places, sizeof(Place) * (ff->count + 1));
+            ff->places[ff->count++] = p;
+        }
+        f = &m->root.frames[0];
+        added++;
+    }
+    return added;
+}
+
 // f_LoadNewLevel waits for loader.b_loaded after a loadMovie. Menus set it from
 // their own frame script, but level files never do: the executable sets it
 // once the file is in.
