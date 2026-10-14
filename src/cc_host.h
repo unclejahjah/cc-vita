@@ -16,6 +16,9 @@ extern int cc_save_requested;           // WriteSaveGame was called: write the s
 int cc_storage_save(const char *path);  // 1 on success
 int cc_storage_load(const char *path);  // 1 if a save was read
 
+// Puts back layer placements a cut-short level file lost; returns how many. Call after swf_load.
+int cc_repair_level(Movie *m);
+
 // Music the platform plays (name: the file's base name without extension, e.g. "MUDHOLES").
 extern void (*cc_music_play)(const char *name, int loop);
 extern void (*cc_music_stop)(void);

@@ -142,7 +142,8 @@ static int next_tag(TagIter *it, int *code, size_t *body, size_t *len) {
             ((size_t)it->d[it->pos + 3] << 24);
         it->pos += 4;
     }
-    if (it->pos + l > it->end) return 0;
+    // a tag running past the end (a file cut short): keep what's there, the parsers check bounds
+    if (it->pos + l > it->end) l = it->end - it->pos;
     *body = it->pos;
     *len = l;
     it->pos += l;

@@ -237,6 +237,7 @@ static Movie *vita_loader(AsVm *vm, const char *url) {
             snprintf(g_last_error, sizeof g_last_error, "%s: %s", base, err);
             return NULL;
         }
+        cc_repair_level(m);
         // bitmaps become textures; the pixels are then only on the GPU side
         for (int c = 0; c < 65536; c++) {
             if (m->chars[c].type != CHAR_BITMAP) continue;
@@ -428,9 +429,9 @@ int main(void) {
             unsigned ink = RGBA8(255, 255, 255, 255);
             vita2d_draw_rectangle(0, 0, SCREEN_W, 64, RGBA8(0, 0, 0, 150));
             vita2d_pgf_draw_textf(g_font, 12, 24, ink, 0.8f,
-                                  "%.0f fps   script %.1f ms   build %.1f ms   %d tris  %d draws  cpu-coloured %d   heap %zu objs",
+                                  "%.0f fps   script %.1f ms   build %.1f ms   %d tris  %d draws  cpu-coloured %d   heap %u objs",
                                   fps, shown_tick, shown_build, render_stats.triangles, render_stats.draws,
-                                  render_stats.cx_tris, vm->heap_count);
+                                  render_stats.cx_tris, (unsigned)vm->heap_count);
             vita2d_pgf_draw_textf(g_font, 12, 50, ink, 0.8f, "%d files, %.1f MB GPU   %s", g_nmovies,
                                   g_gpu_bytes / 1048576.0, g_last_error);
         }
