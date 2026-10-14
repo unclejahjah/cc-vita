@@ -4,7 +4,7 @@
 // GPU shape renderer.
 //
 // Controls (player 1): stick/D-pad move, SQUARE light attack, TRIANGLE heavy,
-// CROSS jump/accept, CIRCLE projectile/item/back, R block, L magic, START pause,
+// CROSS jump/accept, CIRCLE projectile/item/back, L block, R magic, START pause,
 // rear touchpad left/right half: previous/next item.
 // SELECT+UP shows the stats overlay, SELECT+START quits.
 #include <psp2/ctrl.h>
@@ -344,8 +344,9 @@ static void map_pad(const SceCtrlData *pad, int debug) {
     if (b & SCE_CTRL_CIRCLE) cc_keys[K_BACK] = cc_keys[K_PROJECTILE] = 1;
     if (b & SCE_CTRL_SQUARE) cc_keys[K_PUNCH1] = 1;
     if (b & SCE_CTRL_TRIANGLE) cc_keys[K_PUNCH2] = 1;
-    if (b & SCE_CTRL_RTRIGGER) cc_keys[K_SHIELD] = 1;
-    if (b & SCE_CTRL_LTRIGGER) cc_keys[K_MAGIC] = 1;
+    // the PlayStation layout's sides: block on the left (L2), magic on the right (R2)
+    if (b & SCE_CTRL_LTRIGGER) cc_keys[K_SHIELD] = 1;
+    if (b & SCE_CTRL_RTRIGGER) cc_keys[K_MAGIC] = 1;
     if (b & SCE_CTRL_START) cc_keys[K_START] = 1;
 }
 
@@ -446,8 +447,8 @@ static void pause_draw(Pause *ps) {
     if (ps->page == 1) {
         static const char *lines[] = {
             "Stick / D-pad: move",       "Square: light attack",  "Triangle: heavy attack",
-            "Cross: jump",               "Circle: bow / item",    "R: block",
-            "L (hold) + attack: magic",  "Rear touchpad: switch item", "Start: pause",
+            "Cross: jump",               "Circle: use item",      "L: block",
+            "R (hold) + attack: magic",  "Rear touchpad: switch item", "Start: pause",
         };
         for (int i = 0; i < 9; i++) vita2d_pgf_draw_text(g_font, x0, y0 + i * 26, ink, 0.9f, lines[i]);
         vita2d_pgf_draw_text(g_font, x0, y0 + 9 * 26 + 14, hi, 0.9f, "Circle: back");
