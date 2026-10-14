@@ -64,30 +64,41 @@ static AsVal log_push(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
     return as_undef();
 }
 
-// ---- save data: ReadStorage(port, address) / WriteStorage(port, address, value) ----
-// Each controller port's profile is a block of numbered values (stats, unlocks, items).
+// ---- save data ----------------------------------------------------------------------
+// Each controller port's profile is a block of numbered values (stats, unlocks, items)
+// with a cursor, like a file:
+//   ReadStorage(port, address)         the value at address; the cursor moves past it
+//   ReadStorage(port)                  the value at the cursor; the cursor moves on
+//   WriteStorage(port, address, value) / WriteStorage(port, value): the same for writing
 
 #define STORAGE_SIZE 65536
 static double storage[4][STORAGE_SIZE];
+static int cursor[4];
 int cc_storage_dirty;
 
-static int storage_slot(AsVm *vm, AsVal port, AsVal addr, int *p) {
+// the slot this call reads or writes (and the cursor moves past it); -1 if out of range
+static int storage_slot(AsVm *vm, AsVal port, int has_addr, AsVal addr, int *p) {
     *p = as_toint32(vm, port);
-    int a = as_toint32(vm, addr);
-    if (*p < 0 || *p > 3 || a < 0 || a >= STORAGE_SIZE) return -1;
+    if (*p < 0 || *p > 3) return -1;
+    int a = has_addr ? as_toint32(vm, addr) : cursor[*p];
+    if (a < 0 || a >= STORAGE_SIZE) return -1;
+    cursor[*p] = a + 1;
     return a;
 }
 
 static AsVal read_storage(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
     (void)this_;
-    int p, a = storage_slot(vm, ARG(0), ARG(1), &p);
+    int p, a = storage_slot(vm, ARG(0), argc >= 2, ARG(1), &p);
     return a < 0 ? as_num(0) : as_num(storage[p][a]);
 }
 
 static AsVal write_storage(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
     (void)this_;
-    int p, a = storage_slot(vm, ARG(0), ARG(1), &p);
-    if (a >= 0) { storage[p][a] = as_tonum(vm, ARG(2)); cc_storage_dirty = 1; }
+    int p, a = storage_slot(vm, ARG(0), argc >= 3, ARG(1), &p);
+    if (a >= 0) { storage[p][a] = as_tonum(vm, argc >= 3 ? argv[2] : ARG(1)); cc_storage_dirty = 1; }
+    if (a >= 0 && getenv("CC_STORAGE_TRACE"))
+        as_warn(vm, "storage write [%d][%d] = %g (in %s)", p, a, storage[p][a],
+                vm->cur_fn && vm->cur_fn->fname ? vm->cur_fn->fname->s : "?");
     return as_undef();
 }
 
@@ -103,14 +114,15 @@ static AsVal write_save_game(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
     return as_bool(1);
 }
 
-// Save file: "CCSV", count, then (port, address, value) for each non-zero slot.
+// Save file: "CCS2", count, then (port, address, value) for each non-zero slot.
+// ("CCSV" files came from a build that put values in the wrong slots: they're ignored.)
 int cc_storage_save(const char *path) {
     FILE *f = fopen(path, "wb");
     if (!f) return 0;
     uint32_t n = 0;
     for (int p = 0; p < 4; p++)
         for (int a = 0; a < STORAGE_SIZE; a++) n += storage[p][a] != 0;
-    fwrite("CCSV", 1, 4, f);
+    fwrite("CCS2", 1, 4, f);
     fwrite(&n, 4, 1, f);
     for (int p = 0; p < 4; p++)
         for (int a = 0; a < STORAGE_SIZE; a++)
@@ -130,7 +142,7 @@ int cc_storage_load(const char *path) {
     if (!f) return 0;
     char magic[4];
     uint32_t n = 0;
-    int ok = fread(magic, 1, 4, f) == 4 && !memcmp(magic, "CCSV", 4) && fread(&n, 4, 1, f) == 1;
+    int ok = fread(magic, 1, 4, f) == 4 && !memcmp(magic, "CCS2", 4) && fread(&n, 4, 1, f) == 1;
     for (uint32_t i = 0; ok && i < n; i++) {
         uint32_t key;
         double v;
@@ -255,6 +267,32 @@ int cc_repair_level(Movie *m) {
     return added;
 }
 
+// ---- collision for the shipping ("console") path ---------------------------------------
+// With console_version on, a level calls f_BSPLoadLevel("bspN") and the executable loads a
+// precomputed tree (bsps/BSPn.PDAG). The scripts' developer path builds the same tree from
+// the level's own edge clips instead: show the game clip's frame 2 (the edges), and once
+// their first-frame scripts have run, f_InitLevelBSP(), then frame 3. Do that here.
+
+static int bsp_pending;
+
+static AsVal bsp_load_level(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
+    (void)this_; (void)argc; (void)argv;
+    AsVal pg = as_get(vm, as_objv(&vm->root->obj), as_atom(vm, "p_game"));
+    if (pg.t == V_OBJ && pg.o->type == OBJ_MC) {
+        as_mc_goto(vm, (AsMc *)pg.o, 1, 0);
+        bsp_pending = 1;
+    }
+    return as_undef();
+}
+
+static void after_frame_scripts(AsVm *vm) {
+    if (!bsp_pending) return;
+    bsp_pending = 0;
+    as_call_method(vm, as_objv(&vm->root->obj), "f_InitLevelBSP", 0, NULL);
+    AsVal pg = as_get(vm, as_objv(&vm->root->obj), as_atom(vm, "p_game"));
+    if (pg.t == V_OBJ && pg.o->type == OBJ_MC) as_mc_goto(vm, (AsMc *)pg.o, 2, 0);
+}
+
 // f_LoadNewLevel waits for loader.b_loaded after a loadMovie. Menus set it from
 // their own frame script, but level files never do: the executable sets it
 // once the file is in.
@@ -264,7 +302,21 @@ static void on_loaded(AsVm *vm, AsMc *target) {
 
 void cc_host_init(AsVm *vm) {
     vm->loaded = on_loaded;
+    vm->after_frame_scripts = after_frame_scripts;
     cc_native_init(vm);
+    // console_version: the shipping executable's value is true. All the way, that hands the
+    // front end (menus, profiles, QuitTo between files) to the executable, which isn't
+    // reproduced yet; so the scripts' own front end runs, and the shipping behaviour is
+    // switched on where the developer one is wrong for players:
+    static const char *console_fns[] = {
+        "f_LoadCharacterData",   // your saved character, not a level-40 test one
+        "f_HudWaitEnd",          // "press START" on the empty player slots
+        "f_Depth",               // no debug trace
+    };
+    if (!getenv("CC_DEV_PATHS"))
+        for (size_t i = 0; i < sizeof console_fns / sizeof *console_fns; i++)
+            as_pin(vm, "console_version", as_bool(1), console_fns[i]);
+    as_def_fn(vm, vm->global, "f_BSPLoadLevel", bsp_load_level);
     AsObj *g = vm->global;
     AsObj *key = as_obj_new(vm, OBJ_PLAIN, vm->object_proto);
     as_def(vm, g, "Key", as_objv(key));

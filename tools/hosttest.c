@@ -646,6 +646,14 @@ static int as_mode(int argc, char **argv) {
         }
         dump(top, 0);
     }
+    if (getenv("CC_STORAGE_DUMP")) {   // the non-zero save slots of port 1
+        double *s = cc_storage(0);
+        int shown = 0;
+        printf("storage port 0:");
+        for (int a = 0; a < 65536 && shown < 120; a++)
+            if (s[a] != 0) { printf(" [%d]=%g", a, s[a]); shown++; }
+        printf("\n");
+    }
     if (getenv("AS_PROF")) {
         void line(const char *s) { printf("  %s\n", s); }
         printf("\nprofile (from frame %s):\n", getenv("AS_PROF"));
