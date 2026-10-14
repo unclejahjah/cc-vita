@@ -196,9 +196,15 @@ struct AsVm {
     // Sound objects: play an attached sound (linkage name), stop what one object started
     void (*sound_start)(AsVm *vm, const char *linkage, float volume, float pan, int loops, const void *owner);
     void (*sound_stop)(AsVm *vm, const void *owner);
+    // each tick, after the frame scripts ran and before onEnterFrame (host work that needs
+    // freshly placed clips to have run their first frame)
+    void (*after_frame_scripts)(AsVm *vm);
     // native versions of hot script functions, by name (as_override)
     struct { AsStr *name; AsNative fn; } overrides[32];
     int noverrides;
+    // variables whose value the host fixes (as_pin): scripts read it, their writes are ignored
+    struct { AsStr *name, *only_in; AsVal v; } pinned[16];
+    int npinned;
     // queued frame scripts for this tick: (clip, frame) in order
     AsMc **queue;
     int nqueue, capqueue;
@@ -245,6 +251,9 @@ void as_run_block(AsVm *vm, const Movie *m, uint32_t off, uint32_t len, AsMc *ta
 
 // From now on, script functions defined with this name run fn instead of their bytecode.
 void as_override(AsVm *vm, const char *name, AsNative fn);
+// A variable that always reads v by name (only primitive values: they aren't GC roots).
+// With only_in, just inside the script function of that name (and writes still happen).
+void as_pin(AsVm *vm, const char *name, AsVal v, const char *only_in);
 
 // profiling: time and actions per function, worst first (exclusive of callees)
 void as_prof_enable(int on);

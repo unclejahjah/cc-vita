@@ -248,6 +248,10 @@ void as_mc_goto(AsVm *vm, AsMc *mc, int frame, int play) {
     if (!mc->def || !mc->def->nframes || mc->removed) return;
     if (frame < 0) frame = 0;
     if (frame >= mc->def->nframes) frame = mc->def->nframes - 1;
+    if (getenv("AS_GOTO") && mc->name && !strcasecmp(mc->name->s, getenv("AS_GOTO")))
+        as_warn(vm, "tick %u: %s goto frame %d (%s) from %d%s", vm->tick, mc->name->s, frame + 1,
+                play ? "play" : "stop", mc->frame + 1,
+                vm->cur_fn && vm->cur_fn->fname ? vm->cur_fn->fname->s : "");
     mc->playing = play;
     if (frame == mc->frame) return;
     mc->frame = frame;
@@ -650,6 +654,8 @@ static void advance(AsVm *vm, AsMc *mc) {
     // a clip placed during this pass shows its first frame (and runs its stop()) before moving on
     if (mc->playing && mc->def && mc->def->nframes > 1 && mc->born != vm->tick) {
         int next = mc->frame + 1 >= mc->def->nframes ? 0 : mc->frame + 1;
+        if (getenv("AS_GOTO") && mc->name && !strcasecmp(mc->name->s, getenv("AS_GOTO")))
+            as_warn(vm, "tick %u: %s plays on to frame %d", vm->tick, mc->name->s, next + 1);
         mc->frame = next;
         enqueue(mc, Q_FRAME, next);
         apply_frame(vm, mc, next);
@@ -686,6 +692,7 @@ void as_tick(AsVm *vm) {
         advance(vm, vm->root);
     }
     drain_queue(vm);
+    if (vm->after_frame_scripts) vm->after_frame_scripts(vm);
     enter_frame(vm, vm->root);
     drain_queue(vm);
     do_loads(vm);

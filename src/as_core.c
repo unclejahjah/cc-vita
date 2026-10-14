@@ -446,6 +446,14 @@ static AsMc *mc_of(AsVal v) {
 
 static AsVal as_call_body(AsVm *vm, AsVal fv, AsVal this_, int argc, AsVal *argv);
 
+void as_pin(AsVm *vm, const char *name, AsVal v, const char *only_in) {
+    if (vm->npinned < (int)(sizeof vm->pinned / sizeof vm->pinned[0])) {
+        vm->pinned[vm->npinned].name = as_atom(vm, name);
+        vm->pinned[vm->npinned].only_in = only_in ? as_atom(vm, only_in) : NULL;
+        vm->pinned[vm->npinned++].v = v;
+    }
+}
+
 void as_override(AsVm *vm, const char *name, AsNative fn) {
     if (vm->noverrides < (int)(sizeof vm->overrides / sizeof vm->overrides[0])) {
         vm->overrides[vm->noverrides].name = as_atom(vm, name);
@@ -636,6 +644,10 @@ static AsVal get_variable(AsVm *vm, Ctx *c, AsStr *name) {
     }
     if (atom == A_root || atom == A_level0) return as_objv(&vm->root->obj);
     if (atom == A_global) return as_objv(vm->global);
+    for (int i = 0; i < vm->npinned; i++)
+        if (vm->pinned[i].name == atom &&
+            (!vm->pinned[i].only_in || (vm->cur_fn && vm->cur_fn->fname == vm->pinned[i].only_in)))
+            return vm->pinned[i].v;
     if (atom == A_parent) {
         AsVal v;
         if (c->target && as_mc_get_member(vm, c->target, atom, &v)) return v;
@@ -677,6 +689,8 @@ static void set_variable(AsVm *vm, Ctx *c, AsStr *name, AsVal val) {
         }
     }
     AsStr *atom = as_intern(vm, name);
+    for (int i = 0; i < vm->npinned; i++)
+        if (vm->pinned[i].name == atom && !vm->pinned[i].only_in) return;   // the host decides this one
     for (AsScope *s = c->scope; s; s = s->parent) {
         if (!s->obj) continue;
         if (props_find(&s->obj->props, atom) ||
@@ -1017,9 +1031,9 @@ static void run(AsVm *vm, Ctx *c) {
             AsVal o = pop(vm);
             static const char *watch;   // AS_WATCH=name: report undefined being stored there
             if (!watch) watch = getenv("AS_WATCH") ? getenv("AS_WATCH") : "";
-            if (*watch && v.t == V_UNDEF && !strcasecmp(k->s, watch))
-                as_warn(vm, "%s set to undefined at @%u (in %s)", watch, (unsigned)c->pc,
-                        vm->cur_fn && vm->cur_fn->fname ? vm->cur_fn->fname->s : "timeline");
+            if (*watch && (v.t == V_UNDEF || getenv("AS_WATCH_ALL")) && !strcasecmp(k->s, watch))
+                as_warn(vm, "%s set to %s at @%u (in %s)", watch, v.t == V_UNDEF ? "undefined" : as_tostr(vm, v)->s,
+                        (unsigned)c->pc, vm->cur_fn && vm->cur_fn->fname ? vm->cur_fn->fname->s : "timeline");
             as_set(vm, o, k, v);
             break;
         }
