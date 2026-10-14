@@ -13,6 +13,7 @@
 
 #include "../src/as_render.h"
 #include "../src/hostfont.h"
+#include "../src/cc_buttons.h"
 #include "../src/cc_host.h"
 #include "../src/enemy.h"
 
@@ -364,6 +365,56 @@ static int sprite_mode(int argc, char **argv) {
     return 0;
 }
 
+// Several clips' first frames in a row: --clips file.swf cid,cid,... out_prefix [cell_px] [art_px]
+static int clips_mode(int argc, char **argv) {
+    if (argc < 5) { fprintf(stderr, "usage: %s --clips file.swf cid,cid,... out_prefix [cell_px] [art_px]\n", argv[0]); return 1; }
+    char err[256];
+    Movie *m = swf_load(argv[2], err, sizeof err);
+    if (!m) { fprintf(stderr, "%s\n", err); return 1; }
+    int cell = argc > 5 ? atoi(argv[5]) : 150;
+    float art = argc > 6 ? (float)atof(argv[6]) : 60;
+    if (getenv("CC_PS_BUTTONS"))   // "coloured" or "dark"
+        printf("PlayStation buttons: %d clips\n",
+               cc_buttons_playstation(m, !strcmp(getenv("CC_PS_BUTTONS"), "dark") ? CC_BTN_STYLE_DARK : CC_BTN_STYLE_COLOURED));
+    W = MAX_W; H = cell;
+    static const uint8_t paper[3] = {60, 60, 70};
+    clear(paper);
+    DrawList vb = {0};
+    char list[256];
+    snprintf(list, sizeof list, "%s", argv[3]);
+    int i = 0;
+    for (char *t = strtok(list, ","); t; t = strtok(NULL, ","), i++) {
+        int cid = atoi(t);
+        render_begin(&vb);
+        float b[4];
+        Character *c = &m->chars[cid];
+        if (c->type != CHAR_SPRITE) { printf("%d: not a sprite\n", cid); continue; }
+        // fit the clip's first frame into art pixels
+        Mat id = {1, 0, 0, 1, 0, 0};
+        render_begin(&vb);
+        render_char(m, cid, id, CX_IDENTITY, 0, &vb);
+        b[0] = b[1] = 1e30f; b[2] = b[3] = -1e30f;
+        for (int k = 0; k < vb.n; k++) {
+            const float *mb = vb.items[k].mesh->bounds;
+            for (int q = 0; q < 4; q++) {
+                float x = mb[q & 1 ? 2 : 0], y = mb[q & 2 ? 3 : 1];
+                Mat mm = vb.items[k].m;
+                float px = mm.a * x + mm.c * y + mm.tx, py = mm.b * x + mm.d * y + mm.ty;
+                if (px < b[0]) b[0] = px; if (px > b[2]) b[2] = px;
+                if (py < b[1]) b[1] = py; if (py > b[3]) b[3] = py;
+            }
+        }
+        float w = b[2] - b[0], h = b[3] - b[1], s = art / (w > h ? w : h);
+        Mat mt = {s, 0, 0, s, i * cell + cell / 2.0f - (b[0] + w / 2) * s, cell / 2.0f - (b[1] + h / 2) * s};
+        render_begin(&vb);
+        render_char(m, cid, mt, CX_IDENTITY, 0, &vb);
+        rasterise(&vb);
+        printf("%d: %.0f x %.0f twips\n", cid, w, h);
+    }
+    write_frame(argv[4], 0);
+    return 0;
+}
+
 // One character dressed as `who` in every root animation (to spot undressed parts).
 static int dress_mode(int argc, char **argv) {
     if (argc < 6) { fprintf(stderr, "usage: %s --dress PLAYER.swf who weapon out_prefix\n", argv[0]); return 1; }
@@ -694,6 +745,7 @@ int main(int argc, char **argv) {
     if (argc > 1 && !strcmp(argv[1], "--as")) return as_mode(argc, argv);
     if (argc > 1 && !strcmp(argv[1], "--dress")) return dress_mode(argc, argv);
     if (argc > 1 && !strcmp(argv[1], "--sprite")) return sprite_mode(argc, argv);
+    if (argc > 1 && !strcmp(argv[1], "--clips")) return clips_mode(argc, argv);
     if (argc > 1 && !strcmp(argv[1], "--level")) return level_mode(argc, argv);
     if (argc > 1 && !strcmp(argv[1], "--player")) return player_mode(argc, argv);
     if (argc < 4) { fprintf(stderr, "usage: %s file.swf label out_prefix [frames]\n", argv[0]); return 1; }
