@@ -14,8 +14,14 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <stdlib.h>
 
 #include "swf.h"
+
+// A debug switch from the environment (PC test runs), looked up once per place it's used:
+// these sit in hot paths, and the answer never changes during a run.
+#define AS_ENV(name) ({ static const char *as_env_v_; static int as_env_got_; \
+    if (!as_env_got_) { as_env_v_ = getenv(name); as_env_got_ = 1; } as_env_v_; })
 
 typedef struct AsGc AsGc;
 typedef struct AsStr AsStr;

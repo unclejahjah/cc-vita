@@ -939,7 +939,7 @@ static void run(AsVm *vm, Ctx *c) {
             if (argc > 64) argc = 64;
             for (int i = 0; i < argc; i++) args[i] = pop(vm);
             AsVal f = get_variable(vm, c, n);
-            if (getenv("AS_CALLS"))
+            if (AS_ENV("AS_CALLS"))
                 as_warn(vm, "call %s()", f.t == V_OBJ && f.o->type == OBJ_FUNC && f.o->fname ? f.o->fname->s : n->s);
             if (f.t != V_OBJ || f.o->type != OBJ_FUNC) {
                 as_warn(vm, "call to undefined function %s()", n->s);
@@ -1030,8 +1030,8 @@ static void run(AsVm *vm, Ctx *c) {
             AsStr *k = as_tostr(vm, pop(vm));
             AsVal o = pop(vm);
             static const char *watch;   // AS_WATCH=name: report undefined being stored there
-            if (!watch) watch = getenv("AS_WATCH") ? getenv("AS_WATCH") : "";
-            if (*watch && (v.t == V_UNDEF || getenv("AS_WATCH_ALL")) && !strcasecmp(k->s, watch))
+            if (!watch) watch = AS_ENV("AS_WATCH") ? AS_ENV("AS_WATCH") : "";
+            if (*watch && (v.t == V_UNDEF || AS_ENV("AS_WATCH_ALL")) && !strcasecmp(k->s, watch))
                 as_warn(vm, "%s set to %s at @%u (in %s)", watch, v.t == V_UNDEF ? "undefined" : as_tostr(vm, v)->s,
                         (unsigned)c->pc, vm->cur_fn && vm->cur_fn->fname ? vm->cur_fn->fname->s : "timeline");
             as_set(vm, o, k, v);
@@ -1050,7 +1050,7 @@ static void run(AsVm *vm, Ctx *c) {
             AsVal f, self = obj;
             if (name.t == V_UNDEF || (name.t == V_STR && !name.s->len)) { f = obj; self = as_undef(); }
             else f = as_get(vm, obj, as_tostr(vm, name));
-            if (getenv("AS_CALLS") && f.t == V_OBJ && f.o->type == OBJ_FUNC)
+            if (AS_ENV("AS_CALLS") && f.t == V_OBJ && f.o->type == OBJ_FUNC)
                 as_warn(vm, "call %s()", f.o->fname ? f.o->fname->s : as_tostr(vm, name)->s);
             if (f.t != V_OBJ || f.o->type != OBJ_FUNC) {
                 AsStr *ns = as_tostr(vm, name);
@@ -1176,7 +1176,7 @@ void as_run_block(AsVm *vm, const Movie *m, uint32_t off, uint32_t len, AsMc *ta
     int sp0 = vm->sp;
     long long ops0 = vm->ops;
     run(vm, &c);
-    if (getenv("AS_DEBUG") && len < 64)
+    if (AS_ENV("AS_DEBUG") && len < 64)
         as_warn(vm, "block @%u len %u: %lld ops, first op 0x%02x, sp %d", off, len, vm->ops - ops0, m->data[off], vm->sp);
     vm->sp = sp0;
 }
@@ -1257,7 +1257,7 @@ void as_gc(AsVm *vm) {
     if (g_sweep) { sweep_some(vm, SWEEP_STEP); return; }
     if (vm->heap_count < vm->gc_threshold) return;
     extern double as_time_ms(void);
-    double t0 = getenv("AS_GCTIME") ? as_time_ms() : 0;
+    double t0 = AS_ENV("AS_GCTIME") ? as_time_ms() : 0;
     as_mark_obj(vm, vm->global);
     if (vm->root) as_mark_obj(vm, &vm->root->obj);
     AsObj *protos[] = {vm->object_proto, vm->function_proto, vm->array_proto, vm->string_proto, vm->number_proto,

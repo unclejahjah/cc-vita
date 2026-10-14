@@ -60,7 +60,7 @@ static AsVal ret_undef(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
 // LOGPush(value, level): the game's debug log
 static AsVal log_push(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
     (void)this_;
-    if (getenv("CC_LOG")) printf("  [log] %s\n", as_tostr(vm, ARG(0))->s);
+    if (AS_ENV("CC_LOG")) printf("  [log] %s\n", as_tostr(vm, ARG(0))->s);
     return as_undef();
 }
 
@@ -96,7 +96,7 @@ static AsVal write_storage(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
     (void)this_;
     int p, a = storage_slot(vm, ARG(0), argc >= 3, ARG(1), &p);
     if (a >= 0) { storage[p][a] = as_tonum(vm, argc >= 3 ? argv[2] : ARG(1)); cc_storage_dirty = 1; }
-    if (a >= 0 && getenv("CC_STORAGE_TRACE"))
+    if (a >= 0 && AS_ENV("CC_STORAGE_TRACE"))
         as_warn(vm, "storage write [%d][%d] = %g (in %s)", p, a, storage[p][a],
                 vm->cur_fn && vm->cur_fn->fname ? vm->cur_fn->fname->s : "?");
     return as_undef();
