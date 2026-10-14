@@ -22,6 +22,7 @@
 #include "as.h"
 #include "as_render.h"
 #include "audio.h"
+#include "cc_buttons.h"
 #include "cc_host.h"
 #include "hostfont.h"
 #include "render.h"
@@ -289,6 +290,7 @@ static Movie *vita_loader(AsVm *vm, const char *url) {
             return NULL;
         }
         cc_repair_level(m);
+        cc_buttons_playstation(m, CC_BTN_STYLE_COLOURED);   // the game's button art as PlayStation buttons
         // bitmaps become textures; the pixels are then only on the GPU side
         for (int c = 0; c < 65536; c++) {
             if (m->chars[c].type != CHAR_BITMAP) continue;
