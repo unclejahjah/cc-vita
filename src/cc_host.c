@@ -396,5 +396,10 @@ void cc_host_init(AsVm *vm) {
     as_def_fn(vm, g, "UnlockAchievement", ret_undef);  // no achievements on the Vita (yet)
     as_def_fn(vm, g, "VibrateController", ret_undef);  // the Vita has no rumble
     as_def_fn(vm, g, "HiFps_SetEnabled", ret_undef);
+    as_def_fn(vm, g, "HiFps_Loop", ret_undef);
+    as_def_fn(vm, g, "AddShader", ret_undef);   // PC screen effects (heat haze, skies): not drawn yet
+    as_def_fn(vm, g, "SetScores", ret_undef);   // arena scoreboards (online stats)
+    as_def_fn(vm, g, "Error", ret_undef);       // the executable's error log
+    as_def_fn(vm, g, "FadeIn", ret_undef);      // screen fades (the scripts draw their own)
     as_def_fn(vm, g, "FadeOut", ret_undef);
 }
