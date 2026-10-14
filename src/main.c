@@ -4,10 +4,12 @@
 // GPU shape renderer.
 //
 // Controls (player 1): stick/D-pad move, SQUARE light attack, TRIANGLE heavy,
-// CROSS jump/accept, CIRCLE projectile/back, R block, L magic, START pause.
+// CROSS jump/accept, CIRCLE projectile/item/back, R block, L magic, START pause,
+// rear touchpad left/right half: previous/next item.
 // SELECT+UP shows the stats overlay, SELECT+START quits.
 #include <psp2/ctrl.h>
 #include <psp2/io/fcntl.h>
+#include <psp2/touch.h>
 #include <psp2/kernel/processmgr.h>
 #include <psp2/kernel/sysmem.h>
 #include <psp2/power.h>
@@ -322,6 +324,13 @@ enum {
 static void map_pad(const SceCtrlData *pad, int debug) {
     memset(cc_keys, 0, sizeof cc_keys);
     if (debug) return;
+    // the rear touchpad stands in for L2/R2 (switching items): left half / right half
+    SceTouchData touch;
+    if (sceTouchPeek(SCE_TOUCH_PORT_BACK, &touch, 1) > 0)
+        for (unsigned i = 0; i < touch.reportNum; i++) {
+            if (touch.report[i].x < 960) cc_keys[K_L2] = 1;
+            else cc_keys[K_R2] = 1;
+        }
     unsigned b = pad->buttons;
     int lx = pad->lx - 128, ly = pad->ly - 128;
     if ((b & SCE_CTRL_LEFT) || lx < -48) cc_keys[K_LEFT] = 1;
@@ -364,6 +373,7 @@ int main(void) {
     g_indices = gpu_alloc(sizeof(uint16_t) * MAX_BATCH, &g_index_block);
     for (int i = 0; g_indices && i < MAX_BATCH; i++) g_indices[i] = i;
     sceCtrlSetSamplingMode(SCE_CTRL_MODE_ANALOG);
+    sceTouchSetSamplingState(SCE_TOUCH_PORT_BACK, SCE_TOUCH_SAMPLING_STATE_START);
 
     Movie *start = vita_loader(NULL, "MAIN.swf");
     if (!start) {
