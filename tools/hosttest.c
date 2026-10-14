@@ -482,6 +482,10 @@ static int as_mode(int argc, char **argv) {
     extern void cc_host_init(AsVm *vm);
     cc_host_init(vm);
     as_render_init(vm);
+    if (getenv("CC_STRINGS")) {   // strings_en.txt from extract_strings.py
+        extern int strtab_load(const char *path);
+        printf("strings: %d loaded\n", strtab_load(getenv("CC_STRINGS")));
+    }
     cc_music_play = host_music;
     cc_music_stop = host_music_stop;
     vm->sound_start = host_sound;

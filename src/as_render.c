@@ -136,9 +136,10 @@ static void draw_text(AsMc *tf, Mat m, CXform cx, DrawList *out) {
     if (et->html) strip_html(field_text(tf), buf, sizeof buf);
     else snprintf(buf, sizeof buf, "%s", field_text(tf));
     if (AS_ENV("AS_TEXTDBG"))
-        printf("  [text] %s.%s '%s' font %d '%s', height %d, var %s\n",
+        printf("  [text] %s.%s '%s' font %d '%s', height %d, var %s, at %.0f,%.0f scale %.2f colour %d,%d,%d,%d alpha x%.2f\n",
                tf->parent && tf->parent->name ? tf->parent->name->s : "?", tf->name ? tf->name->s : "(unnamed)", buf,
-               et->font, f ? f->name : "-", et->height, et->var ? et->var : "-");
+               et->font, f ? f->name : "-", et->height, et->var ? et->var : "-", m.tx, m.ty, m.a * 20,
+               et->color[0], et->color[1], et->color[2], et->color[3], cx.mul[3]);
     // "fixme": the executable fills these in from its string table (by the field's ntext number)
     if (!buf[0] || !strcmp(buf, "fixme")) return;
 

@@ -2,6 +2,7 @@
 // They are found by running the scripts and logging what's missing; each one is
 // worked out from how the scripts use it.
 #include "cc_host.h"
+#include "strtab.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -300,8 +301,14 @@ static void on_loaded(AsVm *vm, AsMc *target) {
     as_set(vm, as_objv(&target->obj), as_atom(vm, "b_loaded"), as_bool(1));
 }
 
+static const char *text_for_number(AsVm *vm, int n) {
+    (void)vm;
+    return strtab_number(n);
+}
+
 void cc_host_init(AsVm *vm) {
     vm->loaded = on_loaded;
+    vm->text_for_number = text_for_number;
     vm->after_frame_scripts = after_frame_scripts;
     cc_native_init(vm);
     // console_version: the shipping executable's value is true. All the way, that hands the
