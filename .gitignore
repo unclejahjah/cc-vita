@@ -1,0 +1,13 @@
+build/
+*.vpk
+*.self
+*.ppm
+*.png
+# game files are the user's own copy: never commit them
+*.swf
+*.SWF
+*.mp3
+*.xma
+*.dds
+*.fnt
+*.exe
