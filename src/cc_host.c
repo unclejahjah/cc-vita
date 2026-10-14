@@ -358,5 +358,12 @@ void cc_host_init(AsVm *vm) {
     as_def_fn(vm, g, "ReadStorage", read_storage);
     as_def_fn(vm, g, "WriteStorage", write_storage);
     as_def_fn(vm, g, "IsPortTalking", ret_false);   // voice chat
+    // MAIN defines its own IsFullGame on _root, but level scripts call the executable's
+    // (they can't see _root's functions): this is the full game
+    as_def_fn(vm, g, "IsFullGame", ret_true);
+    as_def_fn(vm, g, "RichPresence", ret_undef);       // platform presence text
+    as_def_fn(vm, g, "UnlockAchievement", ret_undef);  // no achievements on the Vita (yet)
+    as_def_fn(vm, g, "VibrateController", ret_undef);  // the Vita has no rumble
+    as_def_fn(vm, g, "HiFps_SetEnabled", ret_undef);
     as_def_fn(vm, g, "FadeOut", ret_undef);
 }
