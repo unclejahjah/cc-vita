@@ -101,12 +101,6 @@ static void draw_list(const DrawList *dl) {
     static const SceGxmStencilOp ops[] = {SCE_GXM_STENCIL_OP_KEEP, SCE_GXM_STENCIL_OP_INCR, SCE_GXM_STENCIL_OP_DECR};
     if (!g_indices) return;
     SceGxmContext *ctx = vita2d_get_context();
-    Vertex *cv = NULL;
-    if (dl->ncv) {
-        cv = vita2d_pool_memalign(dl->ncv * sizeof(Vertex), sizeof(Vertex));
-        if (!cv) return;   // temp pool exhausted; skip rather than crash
-        memcpy(cv, dl->cv, dl->ncv * sizeof(Vertex));
-    }
     sceGxmSetVertexProgram(ctx, _vita2d_colorVertexProgram);
     sceGxmSetFragmentProgram(ctx, _vita2d_colorFragmentProgram);
     for (int c = 0; c < dl->ncmd; c++) {
@@ -116,7 +110,16 @@ static void draw_list(const DrawList *dl) {
         for (int k = cmd->start; k < cmd->start + cmd->count; k++) {
             const DrawItem *it = &dl->items[k];
             if (it->bf) continue;   // bitmap fills: only the game build draws them
-            const Vertex *v = it->vp ? it->vp : cv + it->cv;
+            const Vertex *v = it->vp;
+            if (!v || it->col || it->cv >= 0) {   // recoloured: this frame's whole vertices (mesh-space positions)
+                Vertex *t = vita2d_pool_memalign(it->mesh->nverts * sizeof(Vertex), sizeof(Vertex));
+                if (!t) continue;
+                for (int i = 0; i < it->mesh->nverts; i++) {
+                    Vertex s = render_item_vertex(dl, it, i);   // for its colour
+                    t[i] = (Vertex){it->mesh->xy[i * 2], it->mesh->xy[i * 2 + 1], 0.5f, s.color};
+                }
+                v = t;
+            }
             float wvp[16];
             item_wvp(&it->m, wvp);
             for (int off = 0; off < it->mesh->nverts; off += MAX_BATCH) {

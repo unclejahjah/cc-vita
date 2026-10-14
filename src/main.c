@@ -119,17 +119,47 @@ static void item_wvp(const Mat *m, float out[16]) {
     out[t ? 13 : 7] = oy * m->ty + oty;
 }
 
+// vita2d's colour shader again, but reading colours from a second stream: positions come
+// from the uploaded mesh (stream 0) and colours from a recoloured array (stream 1), so a
+// colour transform only rewrites 4 bytes a vertex and never reads video memory back.
+extern const SceGxmProgram color_v_gxp_start;
+static SceGxmVertexProgram *g_split_vp;
+
+static void make_split_program(void) {
+    SceGxmShaderPatcher *sp = vita2d_get_shader_patcher();
+    const SceGxmProgram *prog = &color_v_gxp_start;
+    SceGxmShaderPatcherId id;
+    if (sceGxmShaderPatcherRegisterProgram(sp, prog, &id) < 0) return;
+    const SceGxmProgramParameter *pos = sceGxmProgramFindParameterByName(prog, "aPosition");
+    const SceGxmProgramParameter *col = sceGxmProgramFindParameterByName(prog, "aColor");
+    if (!pos || !col) return;
+    SceGxmVertexAttribute attr[2];
+    attr[0].streamIndex = 0;
+    attr[0].offset = 0;
+    attr[0].format = SCE_GXM_ATTRIBUTE_FORMAT_F32;
+    attr[0].componentCount = 3;
+    attr[0].regIndex = sceGxmProgramParameterGetResourceIndex(pos);
+    attr[1].streamIndex = 1;
+    attr[1].offset = 0;
+    attr[1].format = SCE_GXM_ATTRIBUTE_FORMAT_U8N;
+    attr[1].componentCount = 4;
+    attr[1].regIndex = sceGxmProgramParameterGetResourceIndex(col);
+    SceGxmVertexStream st[2] = {{sizeof(Vertex), SCE_GXM_INDEX_SOURCE_INDEX_16BIT},
+                                {sizeof(uint32_t), SCE_GXM_INDEX_SOURCE_INDEX_16BIT}};
+    if (sceGxmShaderPatcherCreateVertexProgram(sp, id, attr, 2, st, 2, &g_split_vp) < 0) g_split_vp = NULL;
+}
+
 static void draw_list(const DrawList *dl) {
     static const SceGxmStencilOp ops[] = {SCE_GXM_STENCIL_OP_KEEP, SCE_GXM_STENCIL_OP_INCR, SCE_GXM_STENCIL_OP_DECR};
     if (!g_indices) return;
     SceGxmContext *ctx = vita2d_get_context();
-    Vertex *cv = NULL;
+    uint32_t *cv = NULL;   // this frame's recoloured colours, where the GPU can read them
     if (dl->ncv) {
-        cv = vita2d_pool_memalign(dl->ncv * sizeof(Vertex), sizeof(Vertex));
+        cv = vita2d_pool_memalign(dl->ncv * sizeof(uint32_t), sizeof(uint32_t));
         if (!cv) return;   // temp pool exhausted; skip rather than crash
-        memcpy(cv, dl->cv, dl->ncv * sizeof(Vertex));
+        memcpy(cv, dl->cv, dl->ncv * sizeof(uint32_t));
     }
-    int textured = -1;   // which program pair is set
+    int textured = -1;   // which program pair is set: 0 colour, 1 texture, 2 colour with its own colour stream
     for (int c = 0; c < dl->ncmd; c++) {
         const DrawCmd *cmd = &dl->cmd[c];
         if (!cmd->count) continue;
@@ -174,18 +204,36 @@ static void draw_list(const DrawList *dl) {
                 }
                 continue;
             }
-            if (textured != 0) {
-                sceGxmSetVertexProgram(ctx, _vita2d_colorVertexProgram);
-                sceGxmSetFragmentProgram(ctx, _vita2d_colorFragmentProgram);
-                textured = 0;
+            const Mesh *mesh = it->mesh;
+            const uint32_t *colours = it->col ? it->col : it->cv >= 0 && cv ? cv + it->cv : NULL;
+            const Vertex *v = it->vp;
+            if (!v || (colours && !g_split_vp)) {
+                // not uploaded (or no split program): whole vertices for this frame
+                Vertex *t = vita2d_pool_memalign(mesh->nverts * sizeof(Vertex), sizeof(Vertex));
+                if (!t) continue;
+                for (int i = 0; i < mesh->nverts; i++) {
+                    if (mesh->xy) { t[i].x = mesh->xy[i * 2]; t[i].y = mesh->xy[i * 2 + 1]; }
+                    else { t[i].x = it->vp[i].x; t[i].y = it->vp[i].y; }
+                    t[i].z = 0.5f;
+                    if (colours) t[i].color = colours[i];
+                    else memcpy(&t[i].color, mesh->rgba + i * 4, 4);
+                }
+                v = t;
+                colours = NULL;
             }
-            const Vertex *v = it->vp ? it->vp : cv + it->cv;
-            for (int off = 0; off < it->mesh->nverts; off += MAX_BATCH) {
-                int count = it->mesh->nverts - off < MAX_BATCH ? it->mesh->nverts - off : MAX_BATCH;
+            int want = colours ? 2 : 0;
+            if (textured != want) {
+                sceGxmSetVertexProgram(ctx, want == 2 ? g_split_vp : _vita2d_colorVertexProgram);
+                sceGxmSetFragmentProgram(ctx, _vita2d_colorFragmentProgram);
+                textured = want;
+            }
+            for (int off = 0; off < mesh->nverts; off += MAX_BATCH) {
+                int count = mesh->nverts - off < MAX_BATCH ? mesh->nverts - off : MAX_BATCH;
                 void *ub;
                 sceGxmReserveVertexDefaultUniformBuffer(ctx, &ub);
                 sceGxmSetUniformDataF(ub, _vita2d_colorWvpParam, 0, 16, wvp);
                 sceGxmSetVertexStream(ctx, 0, v + off);
+                if (colours) sceGxmSetVertexStream(ctx, 1, colours + off);
                 sceGxmDraw(ctx, SCE_GXM_PRIMITIVE_TRIANGLES, SCE_GXM_INDEX_FORMAT_U16, g_indices, count);
             }
         }
@@ -312,6 +360,7 @@ int main(void) {
     vita2d_init_advanced_with_msaa(16 * 1024 * 1024, SCE_GXM_MULTISAMPLE_4X);
     vita2d_set_vblank_wait(1);
     g_font = vita2d_load_default_pgf();
+    make_split_program();
     g_indices = gpu_alloc(sizeof(uint16_t) * MAX_BATCH, &g_index_block);
     for (int i = 0; g_indices && i < MAX_BATCH; i++) g_indices[i] = i;
     sceCtrlSetSamplingMode(SCE_CTRL_MODE_ANALOG);

@@ -149,7 +149,7 @@ static AsVal set_text_numeric(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
     return as_undef();
 }
 
-// ---- music: RegisterMusic("music/NAME.wav", id), PlayMusic(id, loop), StopMusic() ------
+// ---- music: RegisterMusic(id, "music/NAME.wav"), PlayMusic(id, loop), StopMusic() ------
 
 void (*cc_music_play)(const char *name, int loop);
 void (*cc_music_stop)(void);
@@ -160,9 +160,9 @@ static int nmusic;
 
 static AsVal register_music(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
     (void)this_;
-    const char *path = as_tostr(vm, ARG(0))->s, *base = strrchr(path, '/');
+    const char *path = as_tostr(vm, ARG(1))->s, *base = strrchr(path, '/');
     base = base ? base + 1 : path;
-    int id = as_toint32(vm, ARG(1)), i;
+    int id = as_toint32(vm, ARG(0)), i;
     for (i = 0; i < nmusic && music[i].id != id; i++) {}
     if (i == nmusic) {
         if (nmusic == MAX_MUSIC) return as_undef();
@@ -264,6 +264,7 @@ static void on_loaded(AsVm *vm, AsMc *target) {
 
 void cc_host_init(AsVm *vm) {
     vm->loaded = on_loaded;
+    cc_native_init(vm);
     AsObj *g = vm->global;
     AsObj *key = as_obj_new(vm, OBJ_PLAIN, vm->object_proto);
     as_def(vm, g, "Key", as_objv(key));

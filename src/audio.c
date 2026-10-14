@@ -89,7 +89,7 @@ static void decode_sfx(Sfx *s) {
         size_t got = 0;
         int r = mpg123_read(h, (unsigned char *)(pcm + n * 2), 4096 * 4, &got);
         n += got / 4;
-        if (r != MPG123_OK) break;
+        if (r != MPG123_OK && r != MPG123_NEW_FORMAT) break;
     }
     mpg123_close(h);
     mpg123_delete(h);
@@ -153,6 +153,7 @@ static void mix_music(int32_t *mix, int n) {
             size_t got = 0;
             int r = mpg123_read(g_music, (unsigned char *)(buf + have * 2), (OUT_FRAMES * 2 - have) * 4, &got);
             have += got / 4;
+            if (r == MPG123_NEW_FORMAT) continue;
             if (r == MPG123_DONE || (r != MPG123_OK && !got)) {
                 if (g_music_loop && mpg123_seek(g_music, 0, SEEK_SET) >= 0) continue;
                 mpg123_close(g_music);

@@ -8,6 +8,7 @@
 extern uint8_t cc_keys[256];
 
 void cc_host_init(AsVm *vm);
+void cc_native_init(AsVm *vm);   // native versions of hot game functions (cc_native.c); called by cc_host_init
 
 // Save data per controller port (ReadStorage/WriteStorage); dirty when the game wrote to it.
 double *cc_storage(int port);

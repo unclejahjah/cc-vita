@@ -25,7 +25,7 @@ option(CC_VIEWER "build the level and animation viewer" OFF)
 if(CC_VIEWER)
   set(APP_SOURCES src/viewer.c src/level.c src/player.c src/enemy.c)
 else()
-  set(APP_SOURCES src/main.c src/as_core.c src/as_mc.c src/as_lib.c src/as_render.c src/cc_host.c src/hostfont.c src/audio.c)
+  set(APP_SOURCES src/main.c src/as_core.c src/as_mc.c src/as_lib.c src/as_render.c src/cc_host.c src/cc_native.c src/hostfont.c src/audio.c)
 endif()
 
 add_executable(${PROJECT_NAME}
