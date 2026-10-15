@@ -56,10 +56,19 @@ levels x3, potions, bombs, sandwiches, relics, gold x4, insane flag, insane leve
 Global: 7 arenas, 8-11 animals, 12-27 items, 28-35 expansion items. p_type 1 green, 2 red,
 3 blue, 4 orange.
 
+## Done on 2026-10-15 (later)
+Title + main menu (MENU.swf panel, 3 items, cc_menu_attach), "Vita Edition" badge
+(cc_menu_vita_badge), prompt icons by action code (native f_GetButtonArt), map names and stat
+numbers (console pins f_Goal, f_GuyInit, f_InitStatScreen, f_StatScreen), character select
+levels, DLC characters 29-31 owned (cc_own_dlc_characters), general cut-short death-frame
+repair (EWIZARD, enemies), heat shimmer (AddShader "Heat" -> render target wobble, Vita only),
+no "Loading X.swf" text. 63 .pak files to re-extract are in
+Desktop\Castle Mod Tool\castlecrashers-main\pak (pak_list.txt); outputs go to pakoutput.
+
 ## Next (in order)
-1. Title screen and main menu (the exe draws them in the original; MENU.swf has the art).
-2. Heat shimmer (AddShader "Heat", LEVEL30 sprite 7 etc.): distorts the screen behind a haze
-   layer; needs a framebuffer copy. "RasterHack" (skies) is a seam fix, nothing to draw.
-3. Remaining blank lobby text (476, 581, 805, 806, 815-825) - lobby is online-only.
-4. Cut-short files: patch case by case (user parked a full re-extraction).
-5. Performance (needs the Vita overlay numbers), then Wi-Fi co-op.
+1. Parity sweep with the 100% Blue Knight save: shops, animal orbs, Insane Mode, Arena,
+   mini-games, items (bombs, horn, boomerang, shovel), HUD, relics.
+2. Endless ice magic in the final battle: not reproduced on the PC; waiting for details.
+3. When the user extracts the paks: swap in complete files, drop patches no longer needed.
+4. Remaining blank lobby text (online-only screens).
+5. Performance (needs Vita overlay numbers), then Wi-Fi co-op.
