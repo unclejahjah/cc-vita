@@ -223,6 +223,9 @@ struct AsVm {
 AsVm *as_new(AsLoader loader);
 void as_free(AsVm *vm);
 void as_gc(AsVm *vm);           // only between frames
+// which of movies[0..n) anything in the heap belongs to (used[i]); 0 if it can't tell yet
+int as_movies_used(AsVm *vm, Movie *const *movies, int n, uint8_t *used);
+void as_forget_movie(const Movie *m);   // before freeing a movie
 
 // values
 static inline AsVal as_undef(void) { AsVal v; v.t = V_UNDEF; v.n = 0; return v; }

@@ -631,6 +631,22 @@ static int as_mode(int argc, char **argv) {
         double tg = as_time_ms();
         size_t heap0 = vm->heap_count;
         as_gc(vm);
+        // CC_FREE_UNUSED=1: free the files nothing uses, as the Vita build does every 90 ticks
+        if (getenv("CC_FREE_UNUSED") && f % 90 == 89) {
+            Movie *ms[128];
+            uint8_t used[128];
+            for (int i = 0; i < nmovie_cache; i++) ms[i] = movie_cache[i].m;
+            if (as_movies_used(vm, ms, nmovie_cache, used)) {
+                int n = 0;
+                for (int i = 0; i < nmovie_cache; i++) {
+                    if (used[i] || ms[i] == start) { movie_cache[n++] = movie_cache[i]; continue; }
+                    printf("  [free] %s\n", movie_cache[i].name);
+                    as_forget_movie(ms[i]);
+                    swf_free(ms[i]);
+                }
+                nmovie_cache = n;
+            }
+        }
         double gms = as_time_ms() - tg;
         double ms = as_time_ms() - t0;
         if (getenv("AS_SLOW") && ms > atof(getenv("AS_SLOW")))

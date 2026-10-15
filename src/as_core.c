@@ -1291,6 +1291,37 @@ void as_gc(AsVm *vm) {
     sweep_some(vm, SWEEP_STEP);
 }
 
+// Which of these movies the heap still belongs to: a clip showing one, or a function whose
+// code is in one (dead objects not yet swept count too). 0 while a sweep is under way.
+int as_movies_used(AsVm *vm, Movie *const *movies, int n, uint8_t *used) {
+    if (g_sweep) return 0;
+    memset(used, 0, n);
+    for (AsGc *g = vm->heap; g; g = g->next) {
+        if (g->kind != GC_OBJ) continue;
+        AsObj *o = (AsObj *)g;
+        const Movie *m = o->type == OBJ_MC ? ((AsMc *)o)->movie : o->type == OBJ_FUNC ? o->code_movie : NULL;
+        if (!m) continue;
+        for (int i = 0; i < n; i++)
+            if (movies[i] == m) { used[i] = 1; break; }
+    }
+    return 1;
+}
+
+// A movie is about to be freed: drop the constant pools cached by their place in it.
+void as_forget_movie(const Movie *m) {
+    for (int h = 0; h < 1024; h++)
+        for (PoolEntry **pe = &pool_cache[h]; *pe;) {
+            PoolEntry *e = *pe;
+            if (e->at >= m->data && e->at < m->data + m->len) {
+                *pe = e->next;
+                free(e->pool.s);
+                free(e);
+            } else {
+                pe = &e->next;
+            }
+        }
+}
+
 // ---- setup ------------------------------------------------------------------------
 
 AsVm *as_new(AsLoader loader) {
