@@ -747,6 +747,20 @@ static inline void push(AsVm *vm, AsVal v) {
 
 static inline AsVal pop(AsVm *vm) { return vm->sp > 0 ? vm->stack[--vm->sp] : as_undef(); }
 
+// Pops a call's arguments (first argument first) into small, or into a malloc'd block
+// when there are more than 16 (the caller frees it if it isn't small). Every argument is
+// popped: the weapon frog builds its 87-entry weapon table with new Array(...).
+static AsVal *pop_args(AsVm *vm, int *argc, AsVal small[16]) {
+    AsVal *args = *argc <= 16 ? small : malloc(sizeof(AsVal) * *argc);
+    if (!args) {   // out of memory: drop them, keep the stack balanced
+        for (int i = 0; i < *argc; i++) pop(vm);
+        *argc = 0;
+        return small;
+    }
+    for (int i = 0; i < *argc; i++) args[i] = pop(vm);
+    return args;
+}
+
 static inline uint16_t rd16(const uint8_t *p) { return p[0] | (p[1] << 8); }
 
 // Constant pools are cached by position: the same block always builds the same pool.
@@ -935,19 +949,18 @@ static void run(AsVm *vm, Ctx *c) {
             int argc = as_toint32(vm, pop(vm));
             if (argc < 0) argc = 0;
             if (argc > vm->sp) argc = vm->sp;
-            AsVal args[64];
-            if (argc > 64) argc = 64;
-            for (int i = 0; i < argc; i++) args[i] = pop(vm);
+            AsVal small[16], *args = pop_args(vm, &argc, small);
             AsVal f = get_variable(vm, c, n);
             if (AS_ENV("AS_CALLS"))
                 as_warn(vm, "call %s()", f.t == V_OBJ && f.o->type == OBJ_FUNC && f.o->fname ? f.o->fname->s : n->s);
             if (f.t != V_OBJ || f.o->type != OBJ_FUNC) {
                 as_warn(vm, "call to undefined function %s()", n->s);
                 push(vm, as_undef());
-                break;
+            } else {
+                AsVal self = c->target ? as_objv(&c->target->obj) : as_undef();
+                push(vm, as_call(vm, f, self, argc, args));
             }
-            AsVal self = c->target ? as_objv(&c->target->obj) : as_undef();
-            push(vm, as_call(vm, f, self, argc, args));
+            if (args != small) free(args);
             break;
         }
         case 0x3E: c->ret = pop(vm); c->returned = 1; break;
@@ -956,19 +969,19 @@ static void run(AsVm *vm, Ctx *c) {
             AsStr *n = as_tostr(vm, pop(vm));
             int argc = as_toint32(vm, pop(vm));
             if (argc < 0) argc = 0;
-            if (argc > 64) argc = 64;
-            AsVal args[64];
-            for (int i = 0; i < argc; i++) args[i] = pop(vm);
+            if (argc > vm->sp) argc = vm->sp;
+            AsVal small[16], *args = pop_args(vm, &argc, small);
             AsVal ctor = get_variable(vm, c, n);
             if (ctor.t != V_OBJ || ctor.o->type != OBJ_FUNC) {
                 as_warn(vm, "new of unknown class %s", n->s);
                 push(vm, as_undef());
-                break;
+            } else {
+                AsVal proto = as_get(vm, ctor, A_prototype);
+                AsObj *o = as_obj_new(vm, OBJ_PLAIN, proto.t == V_OBJ ? proto.o : vm->object_proto);
+                AsVal r = as_call(vm, ctor, as_objv(o), argc, args);
+                push(vm, r.t == V_OBJ ? r : as_objv(o));
             }
-            AsVal proto = as_get(vm, ctor, A_prototype);
-            AsObj *o = as_obj_new(vm, OBJ_PLAIN, proto.t == V_OBJ ? proto.o : vm->object_proto);
-            AsVal r = as_call(vm, ctor, as_objv(o), argc, args);
-            push(vm, r.t == V_OBJ ? r : as_objv(o));
+            if (args != small) free(args);
             break;
         }
         case 0x42: {   // InitArray
@@ -1044,9 +1057,8 @@ static void run(AsVm *vm, Ctx *c) {
             AsVal obj = pop(vm);
             int argc = as_toint32(vm, pop(vm));
             if (argc < 0) argc = 0;
-            if (argc > 64) argc = 64;
-            AsVal args[64];
-            for (int i = 0; i < argc; i++) args[i] = pop(vm);
+            if (argc > vm->sp) argc = vm->sp;
+            AsVal small[16], *args = pop_args(vm, &argc, small);
             AsVal f, self = obj;
             if (name.t == V_UNDEF || (name.t == V_STR && !name.s->len)) { f = obj; self = as_undef(); }
             else f = as_get(vm, obj, as_tostr(vm, name));
@@ -1060,23 +1072,24 @@ static void run(AsVm *vm, Ctx *c) {
                         vm->cur_fn && vm->cur_fn->fname ? vm->cur_fn->fname->s
                         : c->target ? as_mc_target_path(vm, c->target)->s : "?");
                 push(vm, as_undef());
-                break;
+            } else {
+                push(vm, as_call(vm, f, self, argc, args));
             }
-            push(vm, as_call(vm, f, self, argc, args));
+            if (args != small) free(args);
             break;
         }
         case 0x53: {   // NewMethod
             AsVal name = pop(vm), obj = pop(vm);
             int argc = as_toint32(vm, pop(vm));
             if (argc < 0) argc = 0;
-            if (argc > 64) argc = 64;
-            AsVal args[64];
-            for (int i = 0; i < argc; i++) args[i] = pop(vm);
+            if (argc > vm->sp) argc = vm->sp;
+            AsVal small[16], *args = pop_args(vm, &argc, small);
             AsVal ctor = (name.t == V_UNDEF || (name.t == V_STR && !name.s->len)) ? obj : as_get(vm, obj, as_tostr(vm, name));
             AsVal proto = as_get(vm, ctor, A_prototype);
             AsObj *o = as_obj_new(vm, OBJ_PLAIN, proto.t == V_OBJ ? proto.o : vm->object_proto);
             AsVal r = as_call(vm, ctor, as_objv(o), argc, args);
             push(vm, r.t == V_OBJ ? r : as_objv(o));
+            if (args != small) free(args);
             break;
         }
         case 0x46: case 0x55: {   // Enumerate / Enumerate2
