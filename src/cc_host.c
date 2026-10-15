@@ -180,6 +180,15 @@ static AsVal set_text_numeric(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
     return as_undef();
 }
 
+// GetLocalGamerTag(port): the player's name, shown on unlock banners ("... found a new weapon")
+// and the stat screen. The Vita has one local profile per port, so "Player N".
+static AsVal gamer_tag(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
+    (void)this_;
+    char s[16];
+    snprintf(s, sizeof s, "Player %d", (int)as_tonum(vm, ARG(0)) + 1);
+    return as_strv(as_str(vm, s));
+}
+
 // ---- music: RegisterMusic(id, "music/NAME.wav"), PlayMusic(id, loop), StopMusic() ------
 
 void (*cc_music_play)(const char *name, int loop);
@@ -389,6 +398,7 @@ void cc_host_init(AsVm *vm) {
     as_def_fn(vm, g, "ReadStorage", read_storage);
     as_def_fn(vm, g, "WriteStorage", write_storage);
     as_def_fn(vm, g, "IsPortTalking", ret_false);   // voice chat
+    as_def_fn(vm, g, "GetLocalGamerTag", gamer_tag);
     // MAIN defines its own IsFullGame on _root, but level scripts call the executable's
     // (they can't see _root's functions): this is the full game
     as_def_fn(vm, g, "IsFullGame", ret_true);
