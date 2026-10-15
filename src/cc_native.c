@@ -121,7 +121,30 @@ static AsVal native_check_line_hit(AsVm *vm, AsVal this_, int argc, AsVal *argv)
     return as_num(check_line_hit(&b, as_tonum(vm, ARG(0))));
 }
 
+// ---- f_GetDefaultWeapon(hud): the weapon each character starts with --------------------
+// Same table as the script. One addition: f_LoadCharacterData calls it right after
+// reading the saved weapon, and a character that was never played has weapon 0 there
+// (the executable seeds new saves with the default weapon; our storage starts empty).
+// With weapon 0 the player's old weapon drops as an empty pickup when swapping, which
+// never shows its stats bubble and can't be picked back up.
+static const uint8_t default_weapon[32] = {
+    0, 3, 25, 39, 56, 2, 19, 10, 18, 34, 27, 47, 36, 12, 33, 15,
+    15, 6, 45, 26, 57, 43, 20, 2, 35, 31, 48, 50, 68, 63, 85, 84,
+};
+
+static AsVal native_get_default_weapon(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
+    (void)this_;
+    AsVal zone = ARG(0);
+    double t = as_tonum(vm, as_get(vm, zone, as_atom(vm, "p_type")));
+    int w = t >= 1 && t <= 31 && t == (int)t ? default_weapon[(int)t] : 0;
+    AsStr *A_weapon = as_atom(vm, "weapon");
+    if (w && zone.t == V_OBJ && as_tonum(vm, as_get(vm, zone, A_weapon)) == 0)
+        as_set(vm, zone, A_weapon, as_num(w));
+    return as_num(w);
+}
+
 void cc_native_init(AsVm *vm) {
+    as_override(vm, "f_GetDefaultWeapon", native_get_default_weapon);
     A_aBSP = as_atom(vm, "a_BSP");
     A_wl = as_atom(vm, "bsp_working_line");
     A_x1 = as_atom(vm, "x1");
