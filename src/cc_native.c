@@ -123,10 +123,25 @@ static AsVal native_check_line_hit(AsVm *vm, AsVal this_, int argc, AsVal *argv)
 
 // ---- f_GetDefaultWeapon(hud): the weapon each character starts with --------------------
 // Same table as the script. One addition: f_LoadCharacterData calls it right after
-// reading the saved weapon, and a character that was never played has weapon 0 there
-// (the executable seeds new saves with the default weapon; our storage starts empty).
-// With weapon 0 the player's old weapon drops as an empty pickup when swapping, which
-// never shows its stats bubble and can't be picked back up.
+// reading the saved weapon and just before the four stats, and a character that was
+// never played reads all zeros there. The executable seeds a new character with its
+// default weapon and 1 in each stat (2 * level + 2 = 4 points at level 1); our storage
+// starts empty, so a fresh character here is seeded the same way before the stats are
+// read. (With weapon 0 a swapped-out weapon dropped as an empty pickup that never showed
+// its stats bubble; with stats 0 the stat screen offered 4 unspent points at level 1.)
+// Character data: 64 + 48 * (p_type - 1): level - 1, 4 exp bytes, weapon, animal,
+// strength, defense, magic, agility.
+static void seed_new_character(AsVm *vm, AsVal hud, int p_type, int weapon) {
+    double *s = cc_storage(as_toint32(vm, as_get(vm, hud, as_atom(vm, "port"))) - 1);
+    if (!s) return;
+    double *c = s + 64 + 48 * (p_type - 1);
+    for (int i = 0; i <= 10; i++)
+        if (i != 6 && c[i] != 0) return;   // played before (the animal can be set alone)
+    c[5] = weapon;
+    c[7] = c[8] = c[9] = c[10] = 1;
+    cc_storage_dirty = 1;
+}
+
 static const uint8_t default_weapon[32] = {
     0, 3, 25, 39, 56, 2, 19, 10, 18, 34, 27, 47, 36, 12, 33, 15,
     15, 6, 45, 26, 57, 43, 20, 2, 35, 31, 48, 50, 68, 63, 85, 84,
@@ -138,8 +153,10 @@ static AsVal native_get_default_weapon(AsVm *vm, AsVal this_, int argc, AsVal *a
     double t = as_tonum(vm, as_get(vm, zone, as_atom(vm, "p_type")));
     int w = t >= 1 && t <= 31 && t == (int)t ? default_weapon[(int)t] : 0;
     AsStr *A_weapon = as_atom(vm, "weapon");
-    if (w && zone.t == V_OBJ && as_tonum(vm, as_get(vm, zone, A_weapon)) == 0)
+    if (w && zone.t == V_OBJ && as_tonum(vm, as_get(vm, zone, A_weapon)) == 0) {
         as_set(vm, zone, A_weapon, as_num(w));
+        seed_new_character(vm, zone, (int)t, w);
+    }
     return as_num(w);
 }
 
