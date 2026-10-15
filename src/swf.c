@@ -800,6 +800,25 @@ Movie *swf_load(const char *path, char *err, int errlen) {
             Shape *s = parse_shape(d, body + l, body, code);
             m->chars[s->id].type = CHAR_SHAPE;
             m->chars[s->id].ptr = s;
+        } else if (code == 148 && l >= 20) {
+            // The game's own tag for the invisible boxes levels use as trigger and hit
+            // areas (hitzone, zone, ripoff): u32 id, then xmin, xmax, ymin, ymax as s32
+            // twips, then pixel data we don't need. Scripts read the box via _width,
+            // _height and hitTest, so it must count toward a clip's bounds.
+            const uint8_t *q = d + body;
+            uint16_t id = q[0] | (q[1] << 8);
+            int32_t r[4];
+            for (int k = 0; k < 4; k++)
+                r[k] = (int32_t)(q[4 + 4 * k] | (q[5 + 4 * k] << 8) | (q[6 + 4 * k] << 16) | ((uint32_t)q[7 + 4 * k] << 24));
+            if (m->chars[id].type == CHAR_NONE && r[0] <= r[1] && r[2] <= r[3]) {
+                Shape *s = calloc(1, sizeof(Shape));
+                s->id = id;
+                s->has_box = 1;
+                s->box[0] = (float)r[0]; s->box[1] = (float)r[2];
+                s->box[2] = (float)r[1]; s->box[3] = (float)r[3];
+                m->chars[id].type = CHAR_SHAPE;
+                m->chars[id].ptr = s;
+            }
         } else if (code == 39) {
             Sprite *s = calloc(1, sizeof(Sprite));
             s->id = d[body] | (d[body + 1] << 8);

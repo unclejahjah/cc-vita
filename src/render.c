@@ -161,6 +161,10 @@ static void tessellate_shape(Shape *s) {
     bb[2] = bb[3] = -1e30f;
     grow_bounds(bb, mb.xy, mb.n);
     for (int i = 0; i < s->nbfills; i++) grow_bounds(bb, s->bfills[i].mesh.xy, s->bfills[i].mesh.nverts);
+    if (s->has_box) {
+        float corners[4] = {s->box[0], s->box[1], s->box[2], s->box[3]};
+        grow_bounds(bb, corners, 2);
+    }
     s->tessellated = 1;
     render_stats.shapes_tessellated++;
 }
