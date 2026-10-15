@@ -478,6 +478,8 @@ static Movie *host_loader(AsVm *vm, const char *url) {
                 closedir(d);
                 Movie *m = swf_load(path, err, sizeof err);
                 int fixed = m ? cc_repair_level(m) : 0;
+    if (m && getenv("CC_PS_BUTTONS"))   // as the Vita does for every file it loads
+        cc_buttons_playstation(m, !strcmp(getenv("CC_PS_BUTTONS"), "dark") ? CC_BTN_STYLE_DARK : CC_BTN_STYLE_COLOURED);
                 printf("  [load] %s%s", base, m ? "" : " FAILED");
                 if (fixed) printf(" (put back %d layer%s the file lost)", fixed, fixed > 1 ? "s" : "");
                 printf("\n");
