@@ -13,6 +13,9 @@ void cc_host_init(AsVm *vm);
 AsVal cc_flash_global(AsVm *vm, const char *name);
 void cc_set_flash_global(AsVm *vm, const char *name, AsVal v);
 void cc_native_init(AsVm *vm);   // native versions of hot game functions (cc_native.c); called by cc_host_init
+// For files shown without MAIN.swf (the title menu): the _root functions their prompt icons
+// call (f_GetButtonArt), defined on that root.
+void cc_native_root_functions(AsVm *vm, AsObj *root);
 
 // Save data per controller port (ReadStorage/WriteStorage); dirty when the game wrote to it.
 double *cc_storage(int port);
