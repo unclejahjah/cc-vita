@@ -1,40 +1,57 @@
-# Handoff: state of the Castle Crashers Vita port (2026-10-14)
+# Handoff: state of the Castle Crashers Vita port (2026-10-15)
 
 Goal: Castle Crashers running 1:1 on the PS Vita (then local/online co-op), by running the
 game's own ActionScript 1 from the user's PC copy on a small AVM1 engine written here.
 
 ## Layout
 - `src/as.h, as_core.c` – AVM1 interpreter (SWF6 rules, custom opcodes 0x70 Not, 0xA0-0xA4 Push).
+  Pinned variables (as_pin), native overrides of script functions (as_override), lazy GC.
 - `src/as_mc.c` – movie clips: timelines (uid diff), frame-script queue, clip events, loadMovie.
+  A placed clip's onClipEvent(load) runs after its own first frame, before its children's.
 - `src/as_lib.c` – Object/Array/String/Math/MovieClip/Color/Sound built-ins.
 - `src/as_render.c` – draws the clip tree; text fields (host bitmap font or embedded font).
-- `src/cc_host.c` – the natives the PC exe gives the scripts (Key.isDown via cc_keys[], storage,
-  flash globals, music, sessions...). Missing ones show up as "call to undefined function" warnings.
-- `src/swf.c, render.c` – SWF parser (shapes, sprites, fonts, lossless bitmaps), tessellation, draw lists.
-- `src/hostfont.c` – the exe's BMFont (data/fonts/synjUnicode_20) packed into a 512px atlas.
-- `src/audio.c` – Vita mixer (mpg123): sfx/<linkage>.mp3 cached, music/<name>.mp3 streamed. Untested on hardware.
-- `src/main.c` – Vita app. `src/viewer.c` (+level/player/enemy.c) – the older hand-written viewer, `-DCC_VIEWER=ON`.
-- `tools/hosttest.c` – PC harness. `--as GAME_DIR MAIN.swf out frames every` runs the game headless and
-  writes PPM frames. Env: CC_KEYS="frame:code[:hold],..", AS_PRINT, AS_DUMP, AS_TREE(+AS_TREE_AT),
-  AS_HIDE, AS_CALLS, AS_WATCH, AS_TEXTDBG, CC_FONT_DIR.
-- `tools/scripts/` – helper scripts (asrun.sh builds+runs hosttest; avm1.py disassembler; fmain.sh,
-  findstr.sh, clipev.sh, py.sh...). Paths inside point at the original Windows/WSL machine – adjust.
+- `src/cc_host.c` – the natives the exe gives the scripts (Key.isDown via cc_keys[], storage,
+  flash globals, music, GetCheat=false, GetLocalGamerTag...), the console_version pins, level
+  repairs (cc_repair_level, cc_repair_cut_short for EBARBOSS).
+- `src/cc_native.c` – native BSP collision; f_GetDefaultWeapon (seeds new characters: default
+  weapon, 1 point per stat, as the exe does).
+- `src/cc_buttons.c` – Xbox button art -> PlayStation balls and Vita L/R shoulder slabs.
+- `src/swf.c, render.c` – SWF parser (shapes, sprites, fonts, lossless bitmaps, tag 148 trigger
+  boxes), tessellation, draw lists.
+- `src/hostfont.c, strtab.c` – BMFont atlas; text table by ntext number (strings_en.txt, not in git).
+- `src/audio.c` – mpg123 mixer: sfx/<linkage>.mp3, music/<name>.mp3.
+- `src/main.c` – Vita app: loader, renderer, pad mapping, pause menu, overlay (SELECT+UP).
+- `tools/hosttest.c` – PC harness (`--as GAME_DIR MAIN.swf out frames every`). Env: CC_KEYS,
+  CC_CALL (frame:fn:args, 'str #num path), CC_SET (frame:path.name=num), AS_PRINT, AS_TRACE_EVERY,
+  AS_GOTO, AS_CALLS, CC_STRINGS, CC_FONT_DIR, CC_PS_BUTTONS, CC_REPAIR_DEBUG.
 
-## Build
-VitaSDK (vdpm: vita2d, libjpeg-turbo; mpg123 ships with the SDK): `mkdir build && cd build && cmake .. && make`.
-`sce_gap.ld` works around a vita-elf-create segment-overlap crash.
+## Build / device
+VitaSDK in WSL; `cmake .. && make` in build/. Vita: ux0:data/CastleCrashers/{game,levels,fonts,sfx,
+music}/, strings_en.txt, strings_vita_en.txt, save.dat. VPK to ux0:downloads via VitaShell FTP.
 
-## Device layout (ux0 only)
-ux0:data/CastleCrashers/{game,levels,fonts,sfx,music}/ from the user's own files; save.dat written by the app.
+## Facts that cost time (read before debugging)
+- Levels use a custom tag 148 for invisible trigger/hit boxes (id, s32 rect, 64x64 pixels).
+- MAIN.swf ships developer stubs on _root (GetCheat on for most cheats). The exe says no cheats.
+- console_version: the exe's value is true. Pinned true only inside f_LoadCharacterData,
+  f_HudWaitEnd, f_Depth, f_RemovePlayer (death -> map), f_Walk (full tilt runs, light tilt walks:
+  keys 37-40 run, 117-120 walk). Pinning it everywhere breaks the script front end; pinning
+  f_MoveCharH/V broke movement.
+- The decompiled "Raw Game Files CC/Game Files/Source Code/*Actionscript.txt" ignores opcode
+  0x70, so many if-conditions there are inverted. Check P-Code.txt.
+- About 60 of the user's .swf files are missing their last 125-128 bytes (PAUSE.swf half).
+  Complete copies come from the user's own Castle Mod Tool extraction (pakoutput). Done so far:
+  LEVEL8/14/15/19/27/39 (in level-fixes/). EBARBOSS is repaired in code.
 
-## Working (PC harness)
-Boot → lobby/character select (widescreen) → map → Home (LEVEL13): intro, player walks, collision,
-stairs, camera, waypoints, depth. Text with the host font, bitmaps.
+## Done and checked on the PC (2026-10-15)
+Sandwich (beefy) door rip, weapon pickup/banner/stats bubble, weapon frog swapping (>64-arg
+calls), item switching (right stick), respawn after death, walk/run, no cheats + seeded new
+characters, Barbarian Boss ending (chest, gold, princess, kiss, map), text table (282 ntexts),
+Vita L/R art.
 
-## Known gaps / next steps
-1. First on-device test of the engine build (performance, memory: heap 160 MB, meshes in CDRAM).
-2. Menu strings: fields get `ntext = N`; the exe maps N to text but its code is SteamStub-encrypted
-   (don't decrypt). Needs another legitimate source for the string table.
-3. Verify audio on hardware; the music volume/options globals are not wired.
-4. Remaining natives as warnings appear; enemies/combat under the real scripts beyond Home.
-5. Co-op: ports 2-4 key codes are in f_GetButtons (see cc_host.c comment); online later.
+## Next (in order)
+1. 100% Blue Knight test save as a separate file with a switch (never overwrite save.dat).
+2. Blank lobby/front-end text (ntexts 447, 476, 581, 805, 806, 815-825...).
+3. Sky and heat-shimmer effects (AddShader in SKY*.swf, LEVEL26/30/35/37/38).
+4. Title screen and main menu (the exe draws them in the original).
+5. Swap in complete copies of the cut-short files once the user extracts them.
+6. Performance (needs the Vita overlay numbers), then Wi-Fi co-op.
