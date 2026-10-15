@@ -624,6 +624,9 @@ static int as_mode(int argc, char **argv) {
         static double prof_ms, prof_max;
         static long long prof_ops;
         if (getenv("AS_PROF") && f == atoi(getenv("AS_PROF"))) { as_prof_enable(1); prof_from = f; }
+        // CC_SAVE_AT=frame: read CC_SAVE again then (after a scripted jump wrote over it)
+        if (getenv("CC_SAVE_AT") && getenv("CC_SAVE") && f == atoi(getenv("CC_SAVE_AT")))
+            cc_storage_load(getenv("CC_SAVE"));
         extern double as_time_ms(void);
         double t0 = as_time_ms();
         long long ops0 = vm->ops;
