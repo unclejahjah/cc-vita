@@ -299,34 +299,53 @@ int cc_repair_level(Movie *m) {
 }
 
 // Most of the game's files are missing their last ~128 bytes. That's usually only the
-// final End tags, but EBARBOSS.swf loses its last frame's display list: the root's "die"
-// frame should replace the body with the death animation (sprite 168, 93 frames: the
-// chest drops on 73, then the princesses). Without it the boss vanishes when he dies.
+// final End tags, but a character file can lose its last frame's display list: the boss's
+// final labelled frame ("die" in EBARBOSS, "die4" in EWIZARD) should put up his death
+// animation, and without it he vanishes (no chest, no ending). That animation is the one
+// sprite nothing places (EBARBOSS 168: the chest drops on frame 73; EWIZARD 176). Put it back
+// at depth 1, where the earlier bodies go, on the last frame.
+static void mark_placed(const Sprite *s, uint8_t *placed) {
+    for (int f = 0; f < s->nframes; f++)
+        for (int i = 0; i < s->frames[f].count; i++) placed[s->frames[f].places[i].cid] = 1;
+}
+
 static int cc_repair_cut_short(Movie *m) {
     int n = m->root.nframes;
-    if (n < 2 || m->root.nlabels < 1) return 0;
+    if (!m->truncated || n < 2 || m->root.nlabels < 1) return 0;
     const Label *last = &m->root.labels[m->root.nlabels - 1];
-    if (getenv("CC_REPAIR_DEBUG"))
-        fprintf(stderr, "repair? frames %d last label %s@%d sprite168 type %d\n", n, last->name, last->frame,
-                m->chars[168].type);
-    if (strcmp(last->name, "die") || last->frame != n - 1) return 0;
-    if (m->chars[168].type != CHAR_SPRITE || ((Sprite *)m->chars[168].ptr)->nframes < 73) return 0;
-    Frame *f = &m->root.frames[n - 1];
-    if (getenv("CC_REPAIR_DEBUG"))
-        for (int i = 0; i < f->count; i++) fprintf(stderr, "  depth %d cid %d\n", f->places[i].depth, f->places[i].cid);
-    for (int i = 0; i < f->count; i++)
-        if (f->places[i].cid == 168) return 0;   // a complete file: nothing to do
+    if (last->frame != n - 1) return 0;
+    Frame *f = &m->root.frames[n - 1], *before = &m->root.frames[n - 2];
+    for (int i = 0; i < f->count; i++) {   // something new at depth 1 on that frame: not cut
+        if (f->places[i].depth != 1) continue;
+        int same = 0;
+        for (int k = 0; k < before->count; k++) same |= before->places[k].uid == f->places[i].uid;
+        if (!same) return 0;
+    }
+    uint8_t *placed = calloc(65536, 1);
+    if (!placed) return 0;
+    mark_placed(&m->root, placed);
+    int orphan = -1;
+    for (int c = 0; c < 65536; c++)
+        if (m->chars[c].type == CHAR_SPRITE) mark_placed(m->chars[c].ptr, placed);
+    for (int c = 0; c < 65536; c++)   // the last-defined unplaced, unexported sprite
+        if (m->chars[c].type == CHAR_SPRITE && !placed[c] && !m->chars[c].export) orphan = c;
+    free(placed);
+    if (orphan < 0 || ((Sprite *)m->chars[orphan].ptr)->nframes < 10) return 0;
     // the body goes where the earlier animations put theirs (depth 1, same matrix)
     const Place *model = NULL;
     for (int fr = n - 2; fr >= 0 && !model; fr--)
         for (int i = 0; i < m->root.frames[fr].count; i++)
             if (m->root.frames[fr].places[i].depth == 1) { model = &m->root.frames[fr].places[i]; break; }
-    if (!model) return 0;
-    Place p = *model;
     int body = 0;
     for (int i = 1; i < m->nnames; i++)
         if (!strcmp(m->names[i], "body")) body = i;
-    p.cid = 168;
+    int named_body = 0;   // only character files: their timelines put a "body" at depth 1
+    for (int fr = 0; fr < n && body; fr++)
+        for (int i = 0; i < m->root.frames[fr].count; i++)
+            named_body |= m->root.frames[fr].places[i].depth == 1 && m->root.frames[fr].places[i].name == body;
+    if (!model || !named_body) return 0;
+    Place p = *model;
+    p.cid = orphan;
     p.name = body;
     p.clip = 0;
     p.uid = 0x7e000000u;
@@ -338,9 +357,9 @@ static int cc_repair_cut_short(Movie *m) {
     memmove(f->places + 1, f->places, sizeof(Place) * k);
     f->places[0] = p;
     f->count = k + 1;
+    if (getenv("CC_REPAIR_DEBUG")) fprintf(stderr, "repaired: frame %d (%s) shows sprite %d\n", n, last->name, orphan);
     return 1;
 }
-
 // ---- collision for the shipping ("console") path ---------------------------------------
 // With console_version on, a level calls f_BSPLoadLevel("bspN") and the executable loads a
 // precomputed tree (bsps/BSPn.PDAG). The scripts' developer path builds the same tree from
@@ -419,6 +438,9 @@ void cc_host_init(AsVm *vm) {
         snprintf(name, sizeof name, "g_nPort%dState", p);
         cc_set_flash_global(vm, name, as_num(1));
     }
+    // character select offers every unlocked character, not just the four knights (the
+    // executable sets this for the full game; the DLC characters are treated as owned)
+    cc_set_flash_global(vm, "g_bAllowHiddenCharacters", as_bool(1));
     as_def_fn(vm, g, "GetGameMode", ret_zero);
     as_def_fn(vm, g, "GetWidescreen", ret_true);   // the Vita screen is 16:9
     as_def_fn(vm, g, "IsPalMode", ret_false);

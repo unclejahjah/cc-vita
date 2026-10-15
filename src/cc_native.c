@@ -188,6 +188,10 @@ static AsVal native_get_button_art(AsVm *vm, AsVal this_, int argc, AsVal *argv)
     return as_undef();
 }
 
+void cc_native_root_functions(AsVm *vm, AsObj *root) {
+    as_def_fn(vm, root, "f_GetButtonArt", native_get_button_art);
+}
+
 void cc_native_init(AsVm *vm) {
     as_override(vm, "f_GetDefaultWeapon", native_get_default_weapon);
     as_override(vm, "f_GetButtonArt", native_get_button_art);

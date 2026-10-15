@@ -247,6 +247,8 @@ static void draw_list(const DrawList *dl) {
 
 static vita2d_pgf *g_font;
 
+static int g_show_loads;   // the debug overlay (SELECT+UP) is on
+
 static void show_message(const char *line1, const char *line2) {
     vita2d_set_clear_color(RGBA8(20, 20, 24, 255));
     vita2d_start_drawing();
@@ -281,9 +283,11 @@ static Movie *vita_loader(AsVm *vm, const char *url) {
         SceUID fd = sceIoOpen(path, SCE_O_RDONLY, 0);
         if (fd < 0) continue;
         sceIoClose(fd);
-        char msg[128];
-        snprintf(msg, sizeof msg, "Loading %s...", base);
-        show_message(msg, NULL);
+        if (g_show_loads) {   // debug overlay on: say which file is loading
+            char msg[128];
+            snprintf(msg, sizeof msg, "Loading %s...", base);
+            show_message(msg, NULL);
+        }   // otherwise the last frame stays up; the game shows its own loading screen
         Movie *m = swf_load(path, err, sizeof err);
         if (!m) {
             snprintf(g_last_error, sizeof g_last_error, "%s: %s", base, err);
@@ -484,10 +488,41 @@ static void vita_warn(AsVm *vm, const char *msg) {
     snprintf(g_last_error, sizeof g_last_error, "%s", msg);
 }
 
-// ---- title screen ----------------------------------------------------------------------
+// ---- title screen and main menu --------------------------------------------------------
 // The original's executable shows MENU.swf's opening frame (the logo and the knights, with
-// the title music) before the game's own files take over. It runs here in a VM of its own
-// until START or CROSS, before the game's VM is set up (cc_host keeps per-VM state).
+// the title music), then attaches its "buttonchoices" panel and runs the menu itself: the
+// highlight, the moves and what each button does aren't in the files. Here: START or CROSS
+// on the title brings the panel up; the D-pad/stick moves (the chosen button grows, as the
+// panel's buttons do in the original), CROSS picks. Local Game starts the game, Help &
+// Options shows the controls page, Quit leaves; the online, download, leaderboard and store
+// buttons say they aren't on the Vita. It all runs in a VM of its own, before the game's VM
+// is set up (cc_host keeps per-VM state).
+
+// the panel's buttons by timeline depth, in rows (the three small icons, then Quit / Merch)
+static const int MENU_ROWS[][3] = {{9}, {11}, {13}, {15}, {3, 7, 5}, {17, 19}};
+static const int MENU_ROW_LEN[] = {1, 1, 1, 1, 3, 2};
+#define MENU_NROWS 6
+enum { MENU_PLAY, MENU_OPTIONS, MENU_QUIT, MENU_UNAVAILABLE };
+
+static int menu_action(int row, int col) {
+    if (row == 0) return MENU_PLAY;
+    if (row == 2) return MENU_OPTIONS;
+    if (row == 5 && col == 0) return MENU_QUIT;
+    return MENU_UNAVAILABLE;
+}
+
+static AsMc *menu_button(AsMc *panel, int depth) {
+    for (int i = 0; panel && i < panel->ndisp; i++)
+        if (panel->disp[i].depth == depth - 16384 && panel->disp[i].kind == DISP_MC) return panel->disp[i].mc;
+    return NULL;
+}
+
+static void outlined_text(int x, int y, float size, const char *s) {
+    for (int dx = -2; dx <= 2; dx += 2)
+        for (int dy = -2; dy <= 2; dy += 2)
+            vita2d_pgf_draw_text(g_font, x + dx, y + dy, RGBA8(0, 0, 0, 255), size, s);
+    vita2d_pgf_draw_text(g_font, x, y, RGBA8(255, 255, 255, 255), size, s);
+}
 
 static void title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, size_t cache_bytes) {
     Movie *m = vita_loader(NULL, "MENU.swf");
@@ -499,18 +534,79 @@ static void title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, si
     cc_host_init(t);
     as_render_init(t);
     t->root = as_mc_new(t, m, &m->root, NULL, 0);
+    cc_native_root_functions(t, &t->root->obj);
     const char *prompt = strtab_number(1);   // the game's "Press START"
     if (!prompt) prompt = "Press START";
+    const char *unavailable = strtab_get("vita.online.unavailable");
+    if (!unavailable) unavailable = "Not available on PS Vita";
+    AsMc *panel = NULL;
+    int row = 0, col = 0, last_row = -1, last_col = -1, message = 0;
+    static Pause controls;   // Help & Options: the pause book's controls page
     SceCtrlData pad, old = {0};
     sceCtrlPeekBufferPositive(0, &old, 1);
     SceUInt64 prev = sceKernelGetProcessTimeWide(), acc = 0;
     const SceUInt64 tick_us = 1000000 / 30;
     unsigned frame = 0;
+    AsStr *A_xs = as_atom(t, "_xscale"), *A_ys = as_atom(t, "_yscale");
     for (;;) {
         sceCtrlPeekBufferPositive(0, &pad, 1);
         unsigned pressed = pad.buttons & ~old.buttons;
+        int ly = pad.ly - 128, lx = pad.lx - 128, oly = old.ly - 128, olx = old.lx - 128;
+        if (ly < -80 && oly >= -80) pressed |= SCE_CTRL_UP;   // the stick moves once per push
+        if (ly > 80 && oly <= 80) pressed |= SCE_CTRL_DOWN;
+        if (lx < -80 && olx >= -80) pressed |= SCE_CTRL_LEFT;
+        if (lx > 80 && olx <= 80) pressed |= SCE_CTRL_RIGHT;
         old = pad;
-        if (pressed & (SCE_CTRL_START | SCE_CTRL_CROSS)) break;
+        if (controls.open) {
+            if (pressed & (SCE_CTRL_CIRCLE | SCE_CTRL_CROSS | SCE_CTRL_START)) controls.open = 0;
+        } else if (!panel) {
+            if (pressed & (SCE_CTRL_START | SCE_CTRL_CROSS)) {
+                AsVal args[3] = {as_strv(as_str(t, "buttonchoices")), as_strv(as_str(t, "menupanel")), as_num(5000)};
+                AsVal p = as_call_method(t, as_objv(&t->root->obj), "attachMovie", 3, args);
+                if (p.t == V_OBJ && p.o->type == OBJ_MC) {
+                    panel = (AsMc *)p.o;
+                    // left of the knights, over the (empty) news box
+                    as_set(t, p, as_atom(t, "_x"), as_num(m->stage_w * 0.2));
+                    as_set(t, p, as_atom(t, "_y"), as_num(m->stage_h * 0.52));
+                    int found;
+                    AsVal news = as_resolve_path(t, t->root, "body.newsfeed", &found);
+                    if (found) as_set(t, news, as_atom(t, "_visible"), as_bool(0));
+                } else {
+                    break;   // no panel in this copy of the file: straight into the game
+                }
+            }
+        } else {
+            if (pressed & SCE_CTRL_UP) { row = (row + MENU_NROWS - 1) % MENU_NROWS; message = 0; }
+            if (pressed & SCE_CTRL_DOWN) { row = (row + 1) % MENU_NROWS; message = 0; }
+            if (pressed & SCE_CTRL_LEFT) { col--; message = 0; }
+            if (pressed & SCE_CTRL_RIGHT) { col++; message = 0; }
+            if (col < 0) col = 0;
+            if (col >= MENU_ROW_LEN[row]) col = MENU_ROW_LEN[row] - 1;
+            if (pressed & SCE_CTRL_CROSS) {
+                int a = menu_action(row, col);
+                if (a == MENU_PLAY) break;
+                if (a == MENU_QUIT) {
+                    vita2d_wait_rendering_done();
+                    audio_shutdown();
+                    vita2d_fini();
+                    sceKernelExitProcess(0);
+                }
+                if (a == MENU_OPTIONS) {
+                    controls.open = 1;
+                    controls.page = 1;
+                    if (!controls.have_art) pause_build_art(&controls);
+                }
+                if (a == MENU_UNAVAILABLE) message = 90;   // three seconds
+            }
+            if (row != last_row || col != last_col) {   // the chosen button grows
+                AsMc *b = menu_button(panel, MENU_ROWS[last_row < 0 ? 0 : last_row][last_col < 0 ? 0 : last_col]);
+                if (b) { as_set(t, as_objv(&b->obj), A_xs, as_num(100)); as_set(t, as_objv(&b->obj), A_ys, as_num(100)); }
+                b = menu_button(panel, MENU_ROWS[row][col]);
+                if (b) { as_set(t, as_objv(&b->obj), A_xs, as_num(115)); as_set(t, as_objv(&b->obj), A_ys, as_num(115)); }
+                last_row = row;
+                last_col = col;
+            }
+        }
         memset(cc_keys, 0, sizeof cc_keys);
         SceUInt64 now = sceKernelGetProcessTimeWide();
         acc += now - prev;
@@ -538,13 +634,17 @@ static void title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, si
         vita2d_start_drawing();
         vita2d_clear_screen();
         draw_list(vb);
-        if ((frame++ / 30) % 2 == 0) {   // blinking, over the news box at the bottom left
-            int w = vita2d_pgf_text_width(g_font, 1.2f, prompt), x = 180 - w / 2, y = 470;
-            for (int dx = -2; dx <= 2; dx += 2)
-                for (int dy = -2; dy <= 2; dy += 2)
-                    vita2d_pgf_draw_text(g_font, x + dx, y + dy, RGBA8(0, 0, 0, 255), 1.2f, prompt);
-            vita2d_pgf_draw_text(g_font, x, y, RGBA8(255, 255, 255, 255), 1.2f, prompt);
+        frame++;
+        if (!panel && (frame / 30) % 2 == 0) {   // blinking, over the news box at the bottom left
+            int w = vita2d_pgf_text_width(g_font, 1.2f, prompt);
+            outlined_text(180 - w / 2, 470, 1.2f, prompt);
         }
+        if (message > 0) {
+            message--;
+            int w = vita2d_pgf_text_width(g_font, 1.0f, unavailable);
+            outlined_text((SCREEN_W - w) / 2, SCREEN_H - 24, 1.0f, unavailable);
+        }
+        if (controls.open) pause_draw(&controls);
         vita2d_end_drawing();
         vita2d_swap_buffers();
     }
@@ -552,7 +652,6 @@ static void title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, si
     if (cc_music_stop) cc_music_stop();
     memset(cc_keys, 0, sizeof cc_keys);
 }
-
 int main(void) {
     scePowerSetArmClockFrequency(444);
     scePowerSetBusClockFrequency(222);
@@ -641,7 +740,7 @@ int main(void) {
         old = pad;
         int debug = pad.buttons & SCE_CTRL_SELECT;
         if (debug && (pressed & SCE_CTRL_START)) break;
-        if (debug && (pressed & SCE_CTRL_UP)) overlay = !overlay;
+        if (debug && (pressed & SCE_CTRL_UP)) g_show_loads = overlay = !overlay;
         map_pad(&pad, debug);
         // in a level, Start is the pause menu's (the executable's in the original)
         int level = in_level(vm);
