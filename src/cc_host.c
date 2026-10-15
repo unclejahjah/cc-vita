@@ -396,6 +396,10 @@ void cc_host_init(AsVm *vm) {
         "f_Walk",                // a full tilt runs, a light one walks (not keyboard double-taps)
         "f_SelectingChar",       // character select: each knight's saved level (else the
         "f_ChangeSelectedChar",  //   field keeps its placeholder "99")
+        "f_Goal",                // world map: the location's name under the cursor
+        "f_GuyInit",
+        "f_InitStatScreen",      // stat screen: gold, exp and unspent points, Cross accepts
+        "f_StatScreen",
     };
     if (!getenv("CC_DEV_PATHS"))
         for (size_t i = 0; i < sizeof console_fns / sizeof *console_fns; i++)

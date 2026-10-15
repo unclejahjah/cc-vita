@@ -160,8 +160,37 @@ static AsVal native_get_default_weapon(AsVm *vm, AsVal this_, int argc, AsVal *a
     return as_num(w);
 }
 
+// ---- f_GetButtonArt(icon, code): which button a prompt icon shows ----------------------
+// Every prompt icon is an 8-frame clip: 1 X, 2 Y, 3 A, 4 B, 5 LT, 6 RT (Xbox art, turned into
+// Square, Triangle, Cross, Circle, L, R by cc_buttons.c), 7 a keyboard key, 8 blank. MAIN.swf
+// only has the PC developer version (codes 1-4, anything else the left trigger); the
+// executable answers every code the files use. 1-6 are the game's buttons in that order;
+// the others are actions: 16 accept/continue (A), 17 back (B), 18 invite (Y), 19 select (X),
+// 22 the map's "Return Home" (light attack, X) and 23 its "Stats" (heavy attack, Y).
+static int button_frame(int code) {
+    switch (code) {
+    case 1: case 2: case 3: case 4: case 5: case 6: return code;
+    case 16: return 3;
+    case 17: return 4;
+    case 18: return 2;
+    case 19: return 1;
+    case 22: return 1;
+    case 23: return 2;
+    default: return 8;
+    }
+}
+
+static AsVal native_get_button_art(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
+    (void)this_;
+    AsVal icon = ARG(0);
+    if (icon.t == V_OBJ && icon.o->type == OBJ_MC)
+        as_mc_goto(vm, (AsMc *)icon.o, button_frame(as_toint32(vm, ARG(1))) - 1, 0);
+    return as_undef();
+}
+
 void cc_native_init(AsVm *vm) {
     as_override(vm, "f_GetDefaultWeapon", native_get_default_weapon);
+    as_override(vm, "f_GetButtonArt", native_get_button_art);
     A_aBSP = as_atom(vm, "a_BSP");
     A_wl = as_atom(vm, "bsp_working_line");
     A_x1 = as_atom(vm, "x1");
