@@ -449,6 +449,8 @@ void cc_host_init(AsVm *vm) {
     as_def_fn(vm, g, "WriteStorage", write_storage);
     as_def_fn(vm, g, "IsPortTalking", ret_false);   // voice chat
     as_def_fn(vm, g, "GetLocalGamerTag", gamer_tag);
+    as_def_fn(vm, g, "PreloadNews", ret_undef);     // the menu's online news panel: no news
+    as_def_fn(vm, g, "IsNewsLoaded", ret_true);
     // GetCheat(n): MAIN.swf ships a developer version on _root that turns most cheats on
     // (every combo and magic at level 1, every character, animals without unlocking). The
     // executable's answer is no cheats, so both the global and MAIN's own are replaced.

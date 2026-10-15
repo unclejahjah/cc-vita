@@ -484,6 +484,75 @@ static void vita_warn(AsVm *vm, const char *msg) {
     snprintf(g_last_error, sizeof g_last_error, "%s", msg);
 }
 
+// ---- title screen ----------------------------------------------------------------------
+// The original's executable shows MENU.swf's opening frame (the logo and the knights, with
+// the title music) before the game's own files take over. It runs here in a VM of its own
+// until START or CROSS, before the game's VM is set up (cc_host keeps per-VM state).
+
+static void title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, size_t cache_bytes) {
+    Movie *m = vita_loader(NULL, "MENU.swf");
+    if (!m) return;
+    AsVm *t = as_new(vita_loader);
+    t->sound_start = vita_sound_start;
+    t->sound_stop = vita_sound_stop;
+    t->warn = vita_warn;
+    cc_host_init(t);
+    as_render_init(t);
+    t->root = as_mc_new(t, m, &m->root, NULL, 0);
+    const char *prompt = strtab_number(1);   // the game's "Press START"
+    if (!prompt) prompt = "Press START";
+    SceCtrlData pad, old = {0};
+    sceCtrlPeekBufferPositive(0, &old, 1);
+    SceUInt64 prev = sceKernelGetProcessTimeWide(), acc = 0;
+    const SceUInt64 tick_us = 1000000 / 30;
+    unsigned frame = 0;
+    for (;;) {
+        sceCtrlPeekBufferPositive(0, &pad, 1);
+        unsigned pressed = pad.buttons & ~old.buttons;
+        old = pad;
+        if (pressed & (SCE_CTRL_START | SCE_CTRL_CROSS)) break;
+        memset(cc_keys, 0, sizeof cc_keys);
+        SceUInt64 now = sceKernelGetProcessTimeWide();
+        acc += now - prev;
+        prev = now;
+        if (acc > 2 * tick_us) acc = 2 * tick_us;
+        int ticked = 0;
+        while (acc >= tick_us) {
+            as_tick(t);
+            as_gc(t);
+            acc -= tick_us;
+            ticked = 1;
+        }
+        if (ticked) {
+            if (cache->used > cache->cap * 9 / 10 || cache->entries * 4 >= cache->table_size * 3) {
+                vita2d_wait_rendering_done();
+                recolour_cache_free(cache);
+                recolour_cache_init(cache, cache_mem, cache_bytes);
+            }
+            float k = SCREEN_W / m->stage_w;
+            Mat screen = {k / 20, 0, 0, k / 20, 0, 0};
+            render_begin(vb);
+            as_render_mc(t->root, screen, CX_IDENTITY, vb);
+        }
+        vita2d_set_clear_color(RGBA8(m->bg[0], m->bg[1], m->bg[2], 255));
+        vita2d_start_drawing();
+        vita2d_clear_screen();
+        draw_list(vb);
+        if ((frame++ / 30) % 2 == 0) {   // blinking, over the news box at the bottom left
+            int w = vita2d_pgf_text_width(g_font, 1.2f, prompt), x = 180 - w / 2, y = 470;
+            for (int dx = -2; dx <= 2; dx += 2)
+                for (int dy = -2; dy <= 2; dy += 2)
+                    vita2d_pgf_draw_text(g_font, x + dx, y + dy, RGBA8(0, 0, 0, 255), 1.2f, prompt);
+            vita2d_pgf_draw_text(g_font, x, y, RGBA8(255, 255, 255, 255), 1.2f, prompt);
+        }
+        vita2d_end_drawing();
+        vita2d_swap_buffers();
+    }
+    vita2d_wait_rendering_done();
+    if (cc_music_stop) cc_music_stop();
+    memset(cc_keys, 0, sizeof cc_keys);
+}
+
 int main(void) {
     scePowerSetArmClockFrequency(444);
     scePowerSetBusClockFrequency(222);
@@ -518,13 +587,6 @@ int main(void) {
     audio_init(DATA_DIR);
     cc_music_play = audio_music_play;
     cc_music_stop = audio_music_stop;
-    AsVm *vm = as_new(vita_loader);
-    vm->rand_state = (uint32_t)sceKernelGetProcessTimeWide() ^ 0x9E3779B9u;   // Flash's random() differs each session
-    vm->sound_start = vita_sound_start;
-    vm->sound_stop = vita_sound_stop;
-    vm->warn = vita_warn;
-    cc_host_init(vm);
-    as_render_init(vm);
     // the game's own text font (from the PC copy's data/fonts); text is left out without it
     char ferr[256];
     HostFont *font = hostfont_load(DATA_DIR "fonts/synjUnicode_20.fnt", DATA_DIR "fonts/synjUnicode_20_0.dds", ferr,
@@ -542,7 +604,6 @@ int main(void) {
     } else {
         snprintf(g_last_error, sizeof g_last_error, "%s", ferr);
     }
-    vm->root = as_mc_new(vm, start, &start->root, NULL, 0);
 
     DrawList vb = {0};
     vb.view[2] = SCREEN_W;
@@ -554,6 +615,17 @@ int main(void) {
     void *cache_mem = gpu_alloc(cache_bytes, &cache_gpu);
     recolour_cache_init(&cache, cache_mem, cache_bytes);
     vb.cache = &cache;
+
+    title_screen(&vb, &cache, cache_mem, cache_bytes);
+
+    AsVm *vm = as_new(vita_loader);
+    vm->rand_state = (uint32_t)sceKernelGetProcessTimeWide() ^ 0x9E3779B9u;   // Flash's random() differs each session
+    vm->sound_start = vita_sound_start;
+    vm->sound_stop = vita_sound_stop;
+    vm->warn = vita_warn;
+    cc_host_init(vm);
+    as_render_init(vm);
+    vm->root = as_mc_new(vm, start, &start->root, NULL, 0);
 
     SceCtrlData pad, old = {0};
     int overlay = 0;
