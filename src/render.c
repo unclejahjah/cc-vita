@@ -275,6 +275,7 @@ void render_begin(DrawList *out) {
     out->masking = 0;
     out->nparts = 0;
     out->nmask = 0;
+    out->heat_at = -1;
     set_cmd(out, 0, STENCIL_KEEP);
     memset(&render_stats.triangles, 0, sizeof render_stats - sizeof render_stats.shapes_tessellated);
 }

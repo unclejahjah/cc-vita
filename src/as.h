@@ -161,6 +161,7 @@ struct AsMc {
     int ndisp, capdisp;
     int pending_frame;         // frame whose scripts are queued, -1 none
     uint32_t born;             // vm->tick it was created on: it doesn't advance until the next one
+    uint8_t shader;            // AddShader on this clip: 1 "Heat" (the screen behind it shimmers)
     const EditText *text;      // a text field (its contents are the "text" variable)
 };
 

@@ -478,6 +478,11 @@ static Movie *host_loader(AsVm *vm, const char *url) {
                 closedir(d);
                 Movie *m = swf_load(path, err, sizeof err);
                 int fixed = m ? cc_repair_level(m) : 0;
+    if (m && getenv("CC_DUMP_SHAPE") && !strcmp(base, "MENU.swf")) {
+        extern void cc_dump_shape(Movie *m, int cid);
+        cc_dump_shape(m, atoi(getenv("CC_DUMP_SHAPE")));
+    }
+    if (m && getenv("CC_PS_BUTTONS")) cc_menu_vita_badge(m);
     if (m && getenv("CC_PS_BUTTONS"))   // as the Vita does for every file it loads
         cc_buttons_playstation(m, !strcmp(getenv("CC_PS_BUTTONS"), "dark") ? CC_BTN_STYLE_DARK : CC_BTN_STYLE_COLOURED);
                 printf("  [load] %s%s", base, m ? "" : " FAILED");
@@ -656,6 +661,25 @@ static int as_mode(int argc, char **argv) {
                        prof_ms / (f - prof_from + 1), prof_max, prof_ops / (f - prof_from + 1));
         }
         if (f % every == 0 || f == frames - 1) {
+            if (getenv("CC_MENU") && f == atoi(getenv("CC_MENU"))) {   // CC_MENU=frame: the Vita's title menu
+                static AsMc *panel;
+                if (!panel) {
+                    cc_native_root_functions(vm, &vm->root->obj);
+                    panel = cc_menu_attach(vm, vm->root->movie->stage_w * 0.226f, vm->root->movie->stage_h * 0.635f);
+                    if (panel) cc_menu_highlight(vm, panel, getenv("CC_MENU_ITEM") ? atoi(getenv("CC_MENU_ITEM")) : 0);
+                }
+            }
+            if (getenv("AS_HIDE_CHAR")) {   // AS_HIDE_CHAR=n: hide every clip of sprite n (finding art)
+                int cid = atoi(getenv("AS_HIDE_CHAR"));
+                void hide(AsMc *mc) {
+                    for (int i = 0; i < mc->ndisp; i++)
+                        if (mc->disp[i].kind == DISP_MC && mc->disp[i].mc) {
+                            if (mc->disp[i].cid == cid) mc->disp[i].mc->visible = 0;
+                            hide(mc->disp[i].mc);
+                        }
+                }
+                hide(vm->root);
+            }
             if (getenv("AS_HIDE")) {   // AS_HIDE="path,path": hide clips in the snapshots (finding what draws what)
                 char buf[1024];
                 snprintf(buf, sizeof buf, "%s", getenv("AS_HIDE"));
@@ -668,6 +692,9 @@ static int as_mode(int argc, char **argv) {
             clear(start->bg);
             render_begin(&vb);
             as_render_mc(vm->root, screen, CX_IDENTITY, &vb);
+            if (vb.heat_at >= 0)   // the Vita draws a heat shimmer behind this
+                printf("  [heat] items 0..%d shimmer in %.0f,%.0f - %.0f,%.0f\n", vb.heat_at, vb.heat[0], vb.heat[1],
+                       vb.heat[2], vb.heat[3]);
             rasterise(&vb);
             write_frame(argv[4], shot++);
             printf("tick %d: %.1f ms, %lld actions, heap %zu objects, root frame %d\n", f, ms, vm->ops - ops0,

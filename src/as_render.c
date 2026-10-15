@@ -194,6 +194,16 @@ void as_render_mc(AsMc *mc, Mat parent, CXform pcx, DrawList *out) {
     Mat m = mat_mul(parent, mc->m);
     CXform cx = cx_mul(pcx, cx_with_alpha(mc->cx, mc->alpha));
     if (cx.mul[3] <= 0 && cx.add[3] <= 0 && !out->masking) return;
+    int heat_here = 0;   // one heat haze per frame: this clip's own items shimmer
+    if (mc->shader == 1 && out->heat_at < 0 && !out->masking && !out->level) {
+        float b[4];
+        render_mc_bounds(mc, m, b);
+        if (b[2] > b[0]) {
+            out->heat_at = out->n;
+            memcpy(out->heat, b, sizeof b);
+            heat_here = 1;
+        }
+    }
     // a mask entry covers the entries after it up to its clip depth
     int open = 0, mask_end[16];
     for (int i = 0; i < mc->ndisp; i++) {
@@ -216,6 +226,7 @@ void as_render_mc(AsMc *mc, Mat parent, CXform pcx, DrawList *out) {
         }
     }
     while (open--) render_mask_pop(out);
+    if (heat_here) out->heat_end = out->n;
 }
 
 static void grow(float b[4], const float s[4], Mat m) {

@@ -188,6 +188,84 @@ static AsVal native_get_button_art(AsVm *vm, AsVal this_, int argc, AsVal *argv)
     return as_undef();
 }
 
+// ---- the title menu ---------------------------------------------------------------------
+// MENU.swf's "buttonchoices" panel as the Vita shows it: Local Game, Help & Options and Quit
+// (the online, download, leaderboard and store buttons are hidden), evenly spaced in the
+// panel's own top three slots. Buttons by timeline depth; labels in panel.txtClip.
+static const int MENU_DEPTH[CC_MENU_ITEMS] = {9, 13, 17};
+
+static AsMc *panel_child(AsMc *panel, int depth) {
+    for (int i = 0; panel && i < panel->ndisp; i++)
+        if (panel->disp[i].depth == depth - 16384 && panel->disp[i].kind == DISP_MC) return panel->disp[i].mc;
+    return NULL;
+}
+
+static void set_num(AsVm *vm, AsMc *mc, const char *k, double v) {
+    if (mc) as_set(vm, as_objv(&mc->obj), as_atom(vm, k), as_num(v));
+}
+
+static AsMc *panel_path(AsVm *vm, AsMc *panel, const char *path) {
+    int found;
+    AsVal v = as_resolve_path(vm, panel, path, &found);
+    return found && v.t == V_OBJ && v.o->type == OBJ_MC ? (AsMc *)v.o : NULL;
+}
+
+AsMc *cc_menu_attach(AsVm *vm, float x, float y) {
+    AsVal args[3] = {as_strv(as_str(vm, "buttonchoices")), as_strv(as_str(vm, "menupanel")), as_num(5000)};
+    AsVal p = as_call_method(vm, as_objv(&vm->root->obj), "attachMovie", 3, args);
+    if (p.t != V_OBJ || p.o->type != OBJ_MC) return NULL;
+    AsMc *panel = (AsMc *)p.o;
+    set_num(vm, panel, "_x", x);
+    set_num(vm, panel, "_y", y);
+    int found;
+    static const char *news_box[] = {"body.newsfeed", "body.scroll"};   // the empty news box
+    for (int i = 0; i < 2; i++) {
+        AsVal news = as_resolve_path(vm, vm->root, news_box[i], &found);
+        if (found) as_set(vm, news, as_atom(vm, "_visible"), as_bool(0));
+    }
+    AsVal body = as_resolve_path(vm, vm->root, "body", &found);   // and its unnamed frame (depth 63)
+    if (found && body.t == V_OBJ && body.o->type == OBJ_MC) {
+        AsMc *frame = panel_child((AsMc *)body.o, 63);
+        if (frame) frame->visible = 0;
+    }
+    static const int hide[] = {11, 15, 3, 5, 7, 19, 21, 24, 26, 28};   // online (+ its icon), download, the 3 icon buttons (+ icons), merch
+    for (size_t i = 0; i < sizeof hide / sizeof *hide; i++) {
+        AsMc *b = panel_child(panel, hide[i]);
+        if (b) b->visible = 0;
+    }
+    static const char *hide_text[] = {"txtClip.textMultiplayer", "txtClip.textDownload", "txtClip.textMerch"};
+    for (size_t i = 0; i < 3; i++) {
+        AsMc *t = panel_path(vm, panel, hide_text[i]);
+        if (t) t->visible = 0;
+    }
+    // Help & Options and Quit move up into the 2nd and 3rd slots (57 px apart), labels with them
+    AsMc *opt = panel_child(panel, 13), *quit = panel_child(panel, 17), *local = panel_child(panel, 9);
+    AsMc *topt = panel_path(vm, panel, "txtClip.textOptions"), *tquit = panel_path(vm, panel, "txtClip.textQuit");
+    AsMc *tlocal = panel_path(vm, panel, "txtClip.textLocalGame");
+    if (opt && local && topt && tlocal) {
+        double ly = local->m.ty / 20, dy = ly + 57 - opt->m.ty / 20;
+        set_num(vm, opt, "_y", opt->m.ty / 20 + dy);
+        set_num(vm, topt, "_y", topt->m.ty / 20 + dy);
+        if (quit && tquit) {
+            // Quit is a half-width button drawn left of its origin: centre it under the others
+            double qdy = ly + 114 - quit->m.ty / 20, qdx = local->m.tx / 20 - quit->m.tx / 20 + 68;
+            set_num(vm, quit, "_y", quit->m.ty / 20 + qdy);
+            set_num(vm, quit, "_x", quit->m.tx / 20 + qdx);
+            set_num(vm, tquit, "_y", tquit->m.ty / 20 + qdy);
+            set_num(vm, tquit, "_x", tquit->m.tx / 20 + qdx);
+        }
+    }
+    return panel;
+}
+
+void cc_menu_highlight(AsVm *vm, AsMc *panel, int item) {
+    for (int i = 0; i < CC_MENU_ITEMS; i++) {
+        AsMc *b = panel_child(panel, MENU_DEPTH[i]);
+        set_num(vm, b, "_xscale", i == item ? 112 : 100);
+        set_num(vm, b, "_yscale", i == item ? 112 : 100);
+    }
+}
+
 void cc_native_root_functions(AsVm *vm, AsObj *root) {
     as_def_fn(vm, root, "f_GetButtonArt", native_get_button_art);
 }

@@ -16,9 +16,15 @@ void cc_native_init(AsVm *vm);   // native versions of hot game functions (cc_na
 // For files shown without MAIN.swf (the title menu): the _root functions their prompt icons
 // call (f_GetButtonArt), defined on that root.
 void cc_native_root_functions(AsVm *vm, AsObj *root);
+// The title's menu panel (MENU.swf "buttonchoices"), trimmed to the Vita's three items, at x, y
+// (stage px); NULL if the file has no panel. cc_menu_highlight enlarges item 0..2.
+enum { CC_MENU_PLAY, CC_MENU_OPTIONS, CC_MENU_QUIT, CC_MENU_ITEMS };
+AsMc *cc_menu_attach(AsVm *vm, float x, float y);
+void cc_menu_highlight(AsVm *vm, AsMc *panel, int item);
 
 // Save data per controller port (ReadStorage/WriteStorage); dirty when the game wrote to it.
 double *cc_storage(int port);
+void cc_own_dlc_characters(void);   // the DLC characters are unlocked in every profile
 extern int cc_storage_dirty;
 extern int cc_save_requested;           // WriteSaveGame was called: write the save file
 int cc_storage_save(const char *path);  // 1 on success

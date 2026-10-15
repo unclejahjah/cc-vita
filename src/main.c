@@ -15,6 +15,7 @@
 #include <psp2/power.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <math.h>
 #include <string.h>
 #include <strings.h>
 #include <vita2d.h>
@@ -153,7 +154,8 @@ static void make_split_program(void) {
     if (sceGxmShaderPatcherCreateVertexProgram(sp, id, attr, 2, st, 2, &g_split_vp) < 0) g_split_vp = NULL;
 }
 
-static void draw_list(const DrawList *dl) {
+// Draws the items from..to-1 of a frame's list (all of it: draw_list).
+static void draw_list_range(const DrawList *dl, int from, int to) {
     static const SceGxmStencilOp ops[] = {SCE_GXM_STENCIL_OP_KEEP, SCE_GXM_STENCIL_OP_INCR, SCE_GXM_STENCIL_OP_DECR};
     if (!g_indices) return;
     SceGxmContext *ctx = vita2d_get_context();
@@ -167,8 +169,10 @@ static void draw_list(const DrawList *dl) {
     for (int c = 0; c < dl->ncmd; c++) {
         const DrawCmd *cmd = &dl->cmd[c];
         if (!cmd->count) continue;
+        int k0 = cmd->start < from ? from : cmd->start, k1 = cmd->start + cmd->count > to ? to : cmd->start + cmd->count;
+        if (k0 >= k1) continue;
         set_stencil(SCE_GXM_STENCIL_FUNC_EQUAL, cmd->ref, ops[cmd->op]);
-        for (int k = cmd->start; k < cmd->start + cmd->count; k++) {
+        for (int k = k0; k < k1; k++) {
             const DrawItem *it = &dl->items[k];
             float wvp[16];
             item_wvp(&it->m, wvp);
@@ -245,7 +249,48 @@ static void draw_list(const DrawList *dl) {
     set_stencil(SCE_GXM_STENCIL_FUNC_ALWAYS, 1, SCE_GXM_STENCIL_OP_KEEP);
 }
 
+static void draw_list(const DrawList *dl) { draw_list_range(dl, 0, dl->n); }
+
 static vita2d_pgf *g_font;
+
+// ---- heat haze --------------------------------------------------------------------------
+// A clip the game gave AddShader("Heat") (lava world's backdrop) shimmers. Its own items go
+// into a screen-sized texture first; then the screen gets what's before it, that texture in
+// thin rows each shifted sideways by a moving wave, and the rest of the frame on top.
+// Starts the screen's drawing either way.
+
+static vita2d_texture *g_heat_rt;
+
+static void draw_frame(const DrawList *vb, unsigned clock) {
+    if (vb->heat_at < 0 || vb->heat_end <= vb->heat_at ||
+        (!g_heat_rt && !(g_heat_rt = vita2d_create_empty_texture_rendertarget(SCREEN_W, SCREEN_H,
+                                                                                SCE_GXM_TEXTURE_FORMAT_A8B8G8R8)))) {
+        vita2d_start_drawing();
+        vita2d_clear_screen();
+        draw_list(vb);
+        return;
+    }
+    unsigned clear = 0;
+    vita2d_start_drawing_advanced(g_heat_rt, 0);
+    vita2d_set_clear_color(RGBA8(0, 0, 0, 0));
+    vita2d_clear_screen();
+    draw_list_range(vb, vb->heat_at, vb->heat_end);
+    vita2d_end_drawing();
+    vita2d_wait_rendering_done();   // the texture is read by the next scene
+    (void)clear;
+    vita2d_start_drawing();
+    vita2d_set_clear_color(RGBA8(0, 0, 0, 255));
+    vita2d_clear_screen();
+    draw_list_range(vb, 0, vb->heat_at);
+    int x0 = vb->heat[0] < 0 ? 0 : (int)vb->heat[0], x1 = vb->heat[2] > SCREEN_W ? SCREEN_W : (int)vb->heat[2];
+    int y0 = vb->heat[1] < 0 ? 0 : (int)vb->heat[1], y1 = vb->heat[3] > SCREEN_H ? SCREEN_H : (int)vb->heat[3];
+    for (int y = y0; y < y1; y += 4) {
+        float dx = 2.5f * sinf(clock * 0.21f + y * 0.09f) + 1.5f * sinf(clock * 0.13f + y * 0.023f);
+        int h = y + 4 > y1 ? y1 - y : 4;
+        vita2d_draw_texture_part(g_heat_rt, x0 + dx, y, x0, y, x1 - x0, h);
+    }
+    draw_list_range(vb, vb->heat_end, vb->n);
+}
 
 static int g_show_loads;   // the debug overlay (SELECT+UP) is on
 
@@ -295,6 +340,7 @@ static Movie *vita_loader(AsVm *vm, const char *url) {
         }
         cc_repair_level(m);
         cc_buttons_playstation(m, CC_BTN_STYLE_COLOURED);   // the game's button art as PlayStation buttons
+        cc_menu_vita_badge(m);                              // "Vita Edition" on the title
         // bitmaps become textures; the pixels are then only on the GPU side
         for (int c = 0; c < 65536; c++) {
             if (m->chars[c].type != CHAR_BITMAP) continue;
@@ -498,25 +544,6 @@ static void vita_warn(AsVm *vm, const char *msg) {
 // buttons say they aren't on the Vita. It all runs in a VM of its own, before the game's VM
 // is set up (cc_host keeps per-VM state).
 
-// the panel's buttons by timeline depth, in rows (the three small icons, then Quit / Merch)
-static const int MENU_ROWS[][3] = {{9}, {11}, {13}, {15}, {3, 7, 5}, {17, 19}};
-static const int MENU_ROW_LEN[] = {1, 1, 1, 1, 3, 2};
-#define MENU_NROWS 6
-enum { MENU_PLAY, MENU_OPTIONS, MENU_QUIT, MENU_UNAVAILABLE };
-
-static int menu_action(int row, int col) {
-    if (row == 0) return MENU_PLAY;
-    if (row == 2) return MENU_OPTIONS;
-    if (row == 5 && col == 0) return MENU_QUIT;
-    return MENU_UNAVAILABLE;
-}
-
-static AsMc *menu_button(AsMc *panel, int depth) {
-    for (int i = 0; panel && i < panel->ndisp; i++)
-        if (panel->disp[i].depth == depth - 16384 && panel->disp[i].kind == DISP_MC) return panel->disp[i].mc;
-    return NULL;
-}
-
 static void outlined_text(int x, int y, float size, const char *s) {
     for (int dx = -2; dx <= 2; dx += 2)
         for (int dy = -2; dy <= 2; dy += 2)
@@ -540,14 +567,13 @@ static void title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, si
     const char *unavailable = strtab_get("vita.online.unavailable");
     if (!unavailable) unavailable = "Not available on PS Vita";
     AsMc *panel = NULL;
-    int row = 0, col = 0, last_row = -1, last_col = -1, message = 0;
+    int item = 0, message = 0;
     static Pause controls;   // Help & Options: the pause book's controls page
     SceCtrlData pad, old = {0};
     sceCtrlPeekBufferPositive(0, &old, 1);
     SceUInt64 prev = sceKernelGetProcessTimeWide(), acc = 0;
     const SceUInt64 tick_us = 1000000 / 30;
     unsigned frame = 0;
-    AsStr *A_xs = as_atom(t, "_xscale"), *A_ys = as_atom(t, "_yscale");
     for (;;) {
         sceCtrlPeekBufferPositive(0, &pad, 1);
         unsigned pressed = pad.buttons & ~old.buttons;
@@ -561,50 +587,29 @@ static void title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, si
             if (pressed & (SCE_CTRL_CIRCLE | SCE_CTRL_CROSS | SCE_CTRL_START)) controls.open = 0;
         } else if (!panel) {
             if (pressed & (SCE_CTRL_START | SCE_CTRL_CROSS)) {
-                AsVal args[3] = {as_strv(as_str(t, "buttonchoices")), as_strv(as_str(t, "menupanel")), as_num(5000)};
-                AsVal p = as_call_method(t, as_objv(&t->root->obj), "attachMovie", 3, args);
-                if (p.t == V_OBJ && p.o->type == OBJ_MC) {
-                    panel = (AsMc *)p.o;
-                    // left of the knights, over the (empty) news box
-                    as_set(t, p, as_atom(t, "_x"), as_num(m->stage_w * 0.2));
-                    as_set(t, p, as_atom(t, "_y"), as_num(m->stage_h * 0.52));
-                    int found;
-                    AsVal news = as_resolve_path(t, t->root, "body.newsfeed", &found);
-                    if (found) as_set(t, news, as_atom(t, "_visible"), as_bool(0));
-                } else {
-                    break;   // no panel in this copy of the file: straight into the game
-                }
+                // left of the knights, over the (hidden, empty) news box
+                panel = cc_menu_attach(t, m->stage_w * 0.226f, m->stage_h * 0.635f);
+                if (!panel) break;   // no panel in this copy of the file: straight into the game
+                cc_menu_highlight(t, panel, item);
             }
         } else {
-            if (pressed & SCE_CTRL_UP) { row = (row + MENU_NROWS - 1) % MENU_NROWS; message = 0; }
-            if (pressed & SCE_CTRL_DOWN) { row = (row + 1) % MENU_NROWS; message = 0; }
-            if (pressed & SCE_CTRL_LEFT) { col--; message = 0; }
-            if (pressed & SCE_CTRL_RIGHT) { col++; message = 0; }
-            if (col < 0) col = 0;
-            if (col >= MENU_ROW_LEN[row]) col = MENU_ROW_LEN[row] - 1;
+            int moved = 0;
+            if (pressed & (SCE_CTRL_UP | SCE_CTRL_LEFT)) { item = (item + CC_MENU_ITEMS - 1) % CC_MENU_ITEMS; moved = 1; }
+            if (pressed & (SCE_CTRL_DOWN | SCE_CTRL_RIGHT)) { item = (item + 1) % CC_MENU_ITEMS; moved = 1; }
+            if (moved) cc_menu_highlight(t, panel, item);
             if (pressed & SCE_CTRL_CROSS) {
-                int a = menu_action(row, col);
-                if (a == MENU_PLAY) break;
-                if (a == MENU_QUIT) {
+                if (item == CC_MENU_PLAY) break;
+                if (item == CC_MENU_QUIT) {
                     vita2d_wait_rendering_done();
                     audio_shutdown();
                     vita2d_fini();
                     sceKernelExitProcess(0);
                 }
-                if (a == MENU_OPTIONS) {
+                if (item == CC_MENU_OPTIONS) {
                     controls.open = 1;
                     controls.page = 1;
                     if (!controls.have_art) pause_build_art(&controls);
                 }
-                if (a == MENU_UNAVAILABLE) message = 90;   // three seconds
-            }
-            if (row != last_row || col != last_col) {   // the chosen button grows
-                AsMc *b = menu_button(panel, MENU_ROWS[last_row < 0 ? 0 : last_row][last_col < 0 ? 0 : last_col]);
-                if (b) { as_set(t, as_objv(&b->obj), A_xs, as_num(100)); as_set(t, as_objv(&b->obj), A_ys, as_num(100)); }
-                b = menu_button(panel, MENU_ROWS[row][col]);
-                if (b) { as_set(t, as_objv(&b->obj), A_xs, as_num(115)); as_set(t, as_objv(&b->obj), A_ys, as_num(115)); }
-                last_row = row;
-                last_col = col;
             }
         }
         memset(cc_keys, 0, sizeof cc_keys);
@@ -732,6 +737,7 @@ int main(void) {
     SceUInt64 last = sceKernelGetProcessTimeWide(), acc = 0, prev = last;
     float fps = 0, tick_ms = 0, build_ms = 0, shown_tick = 0, shown_build = 0;
     int frames = 0, ticks = 0;
+    unsigned heat_clock = 0;
     const SceUInt64 tick_us = 1000000 / 30;   // the game's frame rate
 
     for (;;) {
@@ -793,9 +799,7 @@ int main(void) {
         }
 
         vita2d_set_clear_color(RGBA8(start->bg[0], start->bg[1], start->bg[2], 255));
-        vita2d_start_drawing();
-        vita2d_clear_screen();
-        draw_list(&vb);
+        draw_frame(&vb, heat_clock++);
         if (pause.open) pause_draw(&pause);
         if (overlay) {
             unsigned ink = RGBA8(255, 255, 255, 255);
