@@ -69,6 +69,8 @@ Desktop\Castle Mod Tool\castlecrashers-main\pak (pak_list.txt); outputs go to pa
 1. Parity sweep with the 100% Blue Knight save: shops, animal orbs, Insane Mode, Arena,
    mini-games, items (bombs, horn, boomerang, shovel), HUD, relics.
 2. Endless ice magic in the final battle: not reproduced on the PC; waiting for details.
-3. When the user extracts the paks: swap in complete files, drop patches no longer needed.
+3. Done 2026-10-15: 69 re-extracted files swapped in (..\complete-files; old cut copies in
+   ..\cut-files-backup) and uploaded. All complete except PAUSE.swf (482 of 738 KB). The cut-short
+   repairs only act on truncated files, so they're idle now; LEVEL40's layer fix still applies.
 4. Remaining blank lobby text (online-only screens).
 5. Performance (needs Vita overlay numbers), then Wi-Fi co-op.
