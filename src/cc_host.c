@@ -394,6 +394,8 @@ void cc_host_init(AsVm *vm) {
         "f_Depth",               // no debug trace
         "f_RemovePlayer",        // after dying: wait on the HUD, back to the map when all are down
         "f_Walk",                // a full tilt runs, a light one walks (not keyboard double-taps)
+        "f_SelectingChar",       // character select: each knight's saved level (else the
+        "f_ChangeSelectedChar",  //   field keeps its placeholder "99")
     };
     if (!getenv("CC_DEV_PATHS"))
         for (size_t i = 0; i < sizeof console_fns / sizeof *console_fns; i++)

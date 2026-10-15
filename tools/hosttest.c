@@ -532,6 +532,9 @@ static int as_mode(int argc, char **argv) {
     vm->trace = host_trace;
     extern void cc_host_init(AsVm *vm);
     cc_host_init(vm);
+    // CC_SAVE=path: start from a save file (cc_host.c's "CCS2" format), like the Vita's save.dat
+    if (getenv("CC_SAVE") && !cc_storage_load(getenv("CC_SAVE")))
+        printf("  couldn't read save %s\n", getenv("CC_SAVE"));
     as_render_init(vm);
     if (getenv("CC_STRINGS")) {   // strings_en.txt from extract_strings.py
         extern int strtab_load(const char *path);

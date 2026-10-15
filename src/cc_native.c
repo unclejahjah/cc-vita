@@ -129,16 +129,16 @@ static AsVal native_check_line_hit(AsVm *vm, AsVal this_, int argc, AsVal *argv)
 // starts empty, so a fresh character here is seeded the same way before the stats are
 // read. (With weapon 0 a swapped-out weapon dropped as an empty pickup that never showed
 // its stats bubble; with stats 0 the stat screen offered 4 unspent points at level 1.)
-// Character data: 64 + 48 * (p_type - 1): level - 1, 4 exp bytes, weapon, animal,
-// strength, defense, magic, agility.
+// Character data at 64 + 48 * (p_type - 1): 128 (unlocked), level - 1, 4 exp bytes, weapon,
+// animal, strength, defense, magic, agility, ... (f_SaveCharacterData's order).
 static void seed_new_character(AsVm *vm, AsVal hud, int p_type, int weapon) {
     double *s = cc_storage(as_toint32(vm, as_get(vm, hud, as_atom(vm, "port"))) - 1);
     if (!s) return;
     double *c = s + 64 + 48 * (p_type - 1);
-    for (int i = 0; i <= 10; i++)
-        if (i != 6 && c[i] != 0) return;   // played before (the animal can be set alone)
-    c[5] = weapon;
-    c[7] = c[8] = c[9] = c[10] = 1;
+    for (int i = 1; i <= 11; i++)
+        if (i != 7 && c[i] != 0) return;   // played before (the animal can be set alone)
+    c[6] = weapon;
+    c[8] = c[9] = c[10] = c[11] = 1;
     cc_storage_dirty = 1;
 }
 
