@@ -69,8 +69,13 @@ Desktop\Castle Mod Tool\castlecrashers-main\pak (pak_list.txt); outputs go to pa
 1. Parity sweep with the 100% Blue Knight save: shops, animal orbs, Insane Mode, Arena,
    mini-games, items (bombs, horn, boomerang, shovel), HUD, relics.
 2. Endless ice magic in the final battle: not reproduced on the PC; waiting for details.
-3. Done 2026-10-15: 69 re-extracted files swapped in (..\complete-files; old cut copies in
-   ..\cut-files-backup) and uploaded. All complete except PAUSE.swf (482 of 738 KB). The cut-short
-   repairs only act on truncated files, so they're idle now; LEVEL40's layer fix still applies.
+3. Build mix-up (2026-10-15): the pakoutput re-extraction (..\complete-files) is mostly the newer
+   FRESH/Remastered build, not the original. Only 14 of its files are the original bytes plus the
+   missing tail: CHICKEN EBAT ESLIME ETOWER MOUNT3 SKY4 TEST UFODUST LEVEL8/14/15/19/27/39. Those are
+   used. The other 55 (list in ..\restored_original_build.txt, incl. MENU MAIN MAP SELECT PLAYER
+   PAUSE) were put back to the original-build (truncated) copies from ..\cut-files-backup. FRESH
+   files broke the title menu (different MENU layout), hitched character select and crashed the
+   stat screen. Never mix builds: a file is usable only if its first bytes equal the original's.
+   The cut-short repairs are active again for the truncated originals.
 4. Remaining blank lobby text (online-only screens).
 5. Performance (needs Vita overlay numbers), then Wi-Fi co-op.

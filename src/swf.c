@@ -819,7 +819,7 @@ Movie *swf_load(const char *path, char *err, int errlen) {
                 m->chars[id].type = CHAR_SHAPE;
                 m->chars[id].ptr = s;
             }
-        } else if (code == 39) {
+        } else if (code == 39 && l >= 4) {   // (a cut-short file can end inside the header)
             Sprite *s = calloc(1, sizeof(Sprite));
             s->id = d[body] | (d[body + 1] << 8);
             parse_timeline(m, d, len, body + 4, body + l, s);

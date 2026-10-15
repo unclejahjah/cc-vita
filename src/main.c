@@ -15,6 +15,7 @@
 #include <psp2/power.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <malloc.h>
 #include <math.h>
 #include <string.h>
 #include <strings.h>
@@ -61,6 +62,7 @@ extern float _vita2d_ortho_matrix[16];
 typedef struct {
     SceUID uid;
     void *addr;
+    size_t size;
 } GpuBlock;
 
 static size_t g_gpu_bytes;   // for the overlay
@@ -77,7 +79,7 @@ static void *gpu_alloc(size_t bytes, void *ctx) {
         blk->uid = -1;
         return NULL;
     }
-    g_gpu_bytes += size;
+    g_gpu_bytes += blk->size = size;
     return blk->addr;
 }
 
@@ -89,7 +91,7 @@ static void *mesh_alloc(size_t bytes, void *ctx) {
     if (blk->uid >= 0) {
         sceKernelGetMemBlockBase(blk->uid, &blk->addr);
         if (sceGxmMapMemory(blk->addr, size, SCE_GXM_MEMORY_ATTRIB_READ) >= 0) {
-            g_gpu_bytes += size;
+            g_gpu_bytes += blk->size = size;
             return blk->addr;
         }
         sceKernelFreeMemBlock(blk->uid);
@@ -101,6 +103,7 @@ static void gpu_free(GpuBlock *blk) {
     if (blk->uid < 0) return;
     sceGxmUnmapMemory(blk->addr);
     sceKernelFreeMemBlock(blk->uid);
+    g_gpu_bytes -= blk->size;
     blk->uid = -1;
 }
 
@@ -307,10 +310,11 @@ static void show_message(const char *line1, const char *line2) {
 // ---- loading the game's files -------------------------------------------------------
 
 // "../player/player.swf" -> ux0:data/CastleCrashers/game/PLAYER.swf (or levels/).
-// Each file is parsed and uploaded once and kept: the game loads player.swf into
-// every player slot and fx.swf into every effect.
+// Each file is parsed and uploaded once and kept while it's in use: the game loads
+// player.swf into every player slot and fx.swf into every effect. Files nothing uses any
+// more (levels left behind, the title's menu) are freed by free_unused_movies.
 #define MAX_MOVIES 160
-static struct { char name[64]; Movie *m; GpuBlock gpu; } g_movies[MAX_MOVIES];
+static struct { char name[64]; Movie *m; GpuBlock gpu; int keep; } g_movies[MAX_MOVIES];
 static int g_nmovies;
 static char g_last_error[256];
 
@@ -364,6 +368,43 @@ static Movie *vita_loader(AsVm *vm, const char *url) {
     }
     snprintf(g_last_error, sizeof g_last_error, "missing %s", base);
     return NULL;
+}
+
+// a file the port itself draws from (MAIN, the pause book): never freed
+static Movie *host_movie(const char *name) {
+    Movie *m = vita_loader(NULL, name);
+    for (int i = 0; m && i < g_nmovies; i++)
+        if (g_movies[i].m == m) g_movies[i].keep = 1;
+    return m;
+}
+
+// Frees the files no clip or script function of the game belongs to any more. Their meshes
+// may be in the last frame's draw list and the recolour cache, so the GPU is let finish and
+// the cache starts over; the caller builds a new frame before drawing again. Returns how many.
+static int free_unused_movies(AsVm *vm, RecolourCache *cache, void *cache_mem, size_t cache_bytes) {
+    Movie *ms[MAX_MOVIES];
+    uint8_t used[MAX_MOVIES];
+    for (int i = 0; i < g_nmovies; i++) ms[i] = g_movies[i].m;
+    if (!as_movies_used(vm, ms, g_nmovies, used)) return 0;
+    int unused = 0;
+    for (int i = 0; i < g_nmovies; i++) unused += !used[i] && !g_movies[i].keep;
+    if (!unused) return 0;
+    vita2d_wait_rendering_done();
+    recolour_cache_free(cache);
+    recolour_cache_init(cache, cache_mem, cache_bytes);
+    int n = 0;
+    for (int i = 0; i < g_nmovies; i++) {
+        if (used[i] || g_movies[i].keep) { g_movies[n++] = g_movies[i]; continue; }
+        Movie *m = g_movies[i].m;
+        for (int c = 0; c < 65536; c++)
+            if (m->chars[c].type == CHAR_BITMAP && ((Bitmap *)m->chars[c].ptr)->tex)
+                vita2d_free_texture(((Bitmap *)m->chars[c].ptr)->tex);
+        as_forget_movie(m);
+        swf_free(m);
+        gpu_free(&g_movies[i].gpu);
+    }
+    g_nmovies = n;
+    return unused;
 }
 
 // ---- controls -> the key codes f_GetButtons gives port 1 ---------------------------
@@ -433,7 +474,7 @@ static int in_level(AsVm *vm) {
 
 // the pause book from PAUSE.swf, centred, about 60% of the screen wide
 static void pause_build_art(Pause *ps) {
-    Movie *pm = vita_loader(NULL, "PAUSE.swf");
+    Movie *pm = host_movie("PAUSE.swf");
     ps->have_art = 0;
     if (!pm) return;
     int cid = -1;
@@ -672,7 +713,7 @@ int main(void) {
     for (int i = 0; g_indices && i < MAX_BATCH; i++) g_indices[i] = i;
     sceCtrlSetSamplingMode(SCE_CTRL_MODE_ANALOG);
 
-    Movie *start = vita_loader(NULL, "MAIN.swf");
+    Movie *start = host_movie("MAIN.swf");
     if (!start) {
         SceCtrlData pad;
         for (;;) {
@@ -740,6 +781,7 @@ int main(void) {
     float fps = 0, tick_ms = 0, build_ms = 0, shown_tick = 0, shown_build = 0;
     int frames = 0, ticks = 0;
     unsigned heat_clock = 0;
+    uint32_t last_free = 0;
     const SceUInt64 tick_us = 1000000 / 30;   // the game's frame rate
 
     for (;;) {
@@ -786,6 +828,13 @@ int main(void) {
         }
 
         if (ticked) {
+            // every few seconds, once the heap is half full: let go of the files left behind
+            // (levels played earlier, the title). Below that they stay, so going back to the
+            // map or replaying a level doesn't load them again.
+            if (vm->tick - last_free >= 90 && mallinfo().uordblks > (size_t)_newlib_heap_size_user / 2) {
+                last_free = vm->tick;
+                free_unused_movies(vm, &cache, cache_mem, cache_bytes);
+            }
             // a full recolour cache stops helping: start it over (after the GPU is done with it)
             if (cache.used > cache.cap * 9 / 10 || cache.entries * 4 >= cache.table_size * 3) {
                 vita2d_wait_rendering_done();
@@ -810,8 +859,9 @@ int main(void) {
                                   "%.0f fps   script %.1f ms   build %.1f ms   %d tris  %d draws  cpu-coloured %d   heap %u objs",
                                   fps, shown_tick, shown_build, render_stats.triangles, render_stats.draws,
                                   render_stats.cx_tris, (unsigned)vm->heap_count);
-            vita2d_pgf_draw_textf(g_font, 12, 50, ink, 0.8f, "%d files, %.1f MB GPU   %s", g_nmovies,
-                                  g_gpu_bytes / 1048576.0, g_last_error);
+            vita2d_pgf_draw_textf(g_font, 12, 50, ink, 0.8f, "%d files, %.1f MB GPU, heap %.1f of %d MB   %s",
+                                  g_nmovies, g_gpu_bytes / 1048576.0, mallinfo().uordblks / 1048576.0,
+                                  _newlib_heap_size_user >> 20, g_last_error);
         }
         vita2d_end_drawing();
         vita2d_swap_buffers();
