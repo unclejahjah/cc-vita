@@ -76,6 +76,10 @@ typedef struct {
     // masks opened with render_mask_push, innermost last: their first item and count
     int nmask;
     int mask_start[16], mask_count[16];
+    // a "Heat" clip (AddShader): its own items heat_at..heat_end-1 shimmer, inside heat[]
+    // (screen x0, y0, x1, y1); heat_at is -1 if there's none this frame
+    int heat_at, heat_end;
+    float heat[4];
 } DrawList;
 
 typedef struct {

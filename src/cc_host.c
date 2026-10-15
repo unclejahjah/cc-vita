@@ -123,6 +123,17 @@ static AsVal write_storage(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
 
 double *cc_storage(int port) { return port >= 0 && port < 4 ? storage[port] : NULL; }
 
+// The downloadable characters (29-31 after the 28 of the original game: Pink Knight, Hatty
+// Hattington, Blacksmith) are owned on the Vita: their "unlocked" bit is set in every
+// profile, as owning the DLC did. Everyone else is still earned through the game.
+void cc_own_dlc_characters(void) {
+    for (int p = 0; p < 4; p++)
+        for (int t = 29; t <= 31; t++) {
+            double *b = &storage[p][64 + 48 * (t - 1)];
+            if (!((int)*b & 128)) *b = (int)*b | 128;
+        }
+}
+
 // WriteSaveGame(): the game asks for its storage to be committed; the platform writes
 // it out when cc_save_requested is set (see cc_storage_save).
 int cc_save_requested;
@@ -187,6 +198,15 @@ static AsVal gamer_tag(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
     char s[16];
     snprintf(s, sizeof s, "Player %d", (int)as_tonum(vm, ARG(0)) + 1);
     return as_strv(as_str(vm, s));
+}
+
+// AddShader(name), from a clip's frame script: a screen effect on that clip. "Heat" (lava
+// world's haze) makes the picture behind the clip shimmer, which the Vita renderer draws;
+// "RasterHack" (the skies) only hides seams in the cloud loops, so there's nothing to do.
+static AsVal add_shader(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
+    if (this_.t == V_OBJ && this_.o->type == OBJ_MC && !strcmp(as_tostr(vm, ARG(0))->s, "Heat"))
+        ((AsMc *)this_.o)->shader = 1;
+    return as_undef();
 }
 
 // ---- music: RegisterMusic(id, "music/NAME.wav"), PlayMusic(id, loop), StopMusic() ------
@@ -441,6 +461,7 @@ void cc_host_init(AsVm *vm) {
     // character select offers every unlocked character, not just the four knights (the
     // executable sets this for the full game; the DLC characters are treated as owned)
     cc_set_flash_global(vm, "g_bAllowHiddenCharacters", as_bool(1));
+    cc_own_dlc_characters();
     as_def_fn(vm, g, "GetGameMode", ret_zero);
     as_def_fn(vm, g, "GetWidescreen", ret_true);   // the Vita screen is 16:9
     as_def_fn(vm, g, "IsPalMode", ret_false);
@@ -490,7 +511,7 @@ void cc_host_init(AsVm *vm) {
     as_def_fn(vm, g, "VibrateController", ret_undef);  // the Vita has no rumble
     as_def_fn(vm, g, "HiFps_SetEnabled", ret_undef);
     as_def_fn(vm, g, "HiFps_Loop", ret_undef);
-    as_def_fn(vm, g, "AddShader", ret_undef);   // PC screen effects (heat haze, skies): not drawn yet
+    as_def_fn(vm, g, "AddShader", add_shader);
     as_def_fn(vm, g, "SetScores", ret_undef);   // arena scoreboards (online stats)
     as_def_fn(vm, g, "Error", ret_undef);       // the executable's error log
     as_def_fn(vm, g, "FadeIn", ret_undef);      // screen fades (the scripts draw their own)

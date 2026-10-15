@@ -6,6 +6,7 @@
 #include "cc_buttons.h"
 
 #include <math.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -302,6 +303,153 @@ static void make_trigger(Shape *s, char c) {
     Poly tp = {0};
     letter(&tp, c, (Box){cxm - lh * 0.31f, y0 + (h2 - lh) / 2 - o * 0.3f, cxm + lh * 0.31f, y0 + (h2 + lh) / 2 - o * 0.3f});
     append_fill(s, fill_from(&tp, INK));
+}
+
+// ---- the title's "Steam Edition" badge becomes "Vita Edition" -------------------------
+// MENU.swf's title is a bitmap with the badge (hand-lettered "STEAM EDITION" and the Steam
+// pin, white on the yellow sky right of the logo) painted in. Fills added to the logo shape
+// (drawn above the bitmap) cover it with the sky's colour and put "VITA EDITION" there in
+// one of the file's own fonts, with the four PlayStation symbols where the pin was.
+// Positions are worked out on the 960 x 544 screen and mapped back into the logo's space.
+
+typedef struct { Mat to_shape; float k; } BadgeSpace;   // screen px -> logo shape twips
+
+static void bpt(Poly *p, const BadgeSpace *bs, float sx, float sy) {
+    float x = sx / bs->k * 20, y = sy / bs->k * 20;   // stage twips
+    poly_pt(p, bs->to_shape.a * x + bs->to_shape.c * y + bs->to_shape.tx,
+            bs->to_shape.b * x + bs->to_shape.d * y + bs->to_shape.ty);
+}
+
+static Mat mat_invert(Mat m) {
+    float det = m.a * m.d - m.b * m.c;
+    if (det == 0) det = 1;
+    Mat r = {m.d / det, -m.b / det, -m.c / det, m.a / det, 0, 0};
+    r.tx = -(r.a * m.tx + r.c * m.ty);
+    r.ty = -(r.b * m.tx + r.d * m.ty);
+    return r;
+}
+
+static Mat mat_mul2(Mat p, Mat c) {   // p after c
+    return (Mat){p.a * c.a + p.c * c.b, p.b * c.a + p.d * c.b, p.a * c.c + p.c * c.d, p.b * c.c + p.d * c.d,
+                 p.a * c.tx + p.c * c.ty + p.tx, p.b * c.tx + p.d * c.ty + p.ty};
+}
+
+// a font with every letter of the badge, the one with the most glyphs
+static const Font *badge_font(const Movie *m) {
+    const Font *best = NULL;
+    for (int c = 0; c < 65536; c++) {
+        if (m->chars[c].type != CHAR_FONT) continue;
+        const Font *f = m->chars[c].ptr;
+        int ok = 1;
+        for (const char *s = "VITAEDON"; *s && ok; s++) ok = font_glyph(f, *s) >= 0 && f->glyphs[font_glyph(f, *s)];
+        if (ok && (!best || f->nglyphs > best->nglyphs)) best = f;
+    }
+    return best;
+}
+
+// text at screen x,y (top-left), h px tall caps, tilted by slope (dy per dx)
+static float badge_text(Poly *p, const BadgeSpace *bs, const Font *f, const char *s, float x, float y, float h, float slope) {
+    float scale = h / (f->ascent ? f->ascent * 0.72f : f->em * 0.7f);   // cap height about 0.72 of the ascent
+    float pen = 0;
+    for (; *s; s++) {
+        int gi = font_glyph(f, *s);
+        if (gi >= 0 && f->glyphs[gi]) {
+            const Shape *g = f->glyphs[gi];
+            for (int fi = 0; fi < g->nfills; fi++) {
+                const ShapeFill *sf = &g->fills[fi];
+                for (int l = 0; l < sf->nloops; l++) {
+                    poly_begin_loop(p);
+                    for (int i = sf->loop_start[l]; i < sf->loop_start[l + 1]; i++) {
+                        float gx = (pen + sf->pts[i * 2]) * scale, gy = sf->pts[i * 2 + 1] * scale;
+                        bpt(p, bs, x + gx, y + h + gy + gx * slope);
+                    }
+                }
+            }
+        }
+        float adv = f->has_layout && gi >= 0 ? f->advance[gi] : f->em * 0.6f;
+        pen += adv;
+    }
+    return pen * scale;
+}
+
+// where the old badge is on the 960 x 544 screen: the sky patch is a box from x2..x1, y0..y1 with its
+// top-left corner (left of x0, above y2) cut away, which is where the logo's "RS" reaches down
+#define SKY_X0 392
+#define SKY_X1 456
+#define SKY_X2 314
+#define SKY_Y0 32
+#define SKY_Y1 164
+#define SKY_Y2 90
+
+int cc_menu_vita_badge(Movie *m) {
+    // MENU.swf: the title sprite 631 shows the logo (shape 354) at depth 60; the root's "main"
+    // frame shows 631 as "body"
+    if (m->chars[631].type != CHAR_SPRITE || m->chars[354].type != CHAR_SHAPE || m->stage_w <= 0) return 0;
+    const Sprite *title = m->chars[631].ptr;
+    const Place *logo = NULL, *body = NULL;
+    for (int i = 0; title->nframes && i < title->frames[0].count; i++)
+        if (title->frames[0].places[i].cid == 354) logo = &title->frames[0].places[i];
+    for (int fr = 0; fr < m->root.nframes && !body; fr++)
+        for (int i = 0; i < m->root.frames[fr].count; i++)
+            if (m->root.frames[fr].places[i].cid == 631) { body = &m->root.frames[fr].places[i]; break; }
+    if (!logo || !body) return 0;
+    Shape *s = m->chars[354].ptr;
+    if (s->tessellated) return 0;
+    BadgeSpace bs = {mat_invert(mat_mul2(body->m, logo->m)), 960.0f / m->stage_w};
+    static const uint8_t SKY[4] = {255, 212, 87, 255}, WHITE[4] = {255, 255, 255, 255}, EDGE[4] = {255, 236, 160, 255};
+    // the sky over the old badge, clear of the logo's "RS" (left, top) and the green knight (right)
+    Poly sky = {0};
+    poly_begin_loop(&sky);
+    bpt(&sky, &bs, SKY_X0, SKY_Y0); bpt(&sky, &bs, SKY_X1, SKY_Y0); bpt(&sky, &bs, SKY_X1, SKY_Y1);
+    bpt(&sky, &bs, SKY_X2, SKY_Y1); bpt(&sky, &bs, SKY_X2, SKY_Y2); bpt(&sky, &bs, SKY_X0, SKY_Y2);
+    append_fill(s, fill_from(&sky, SKY));
+    const Font *f = badge_font(m);
+    if (f) {
+        Poly txt = {0};
+        float slope = -0.12f;   // the original lettering rises to the right
+        badge_text(&txt, &bs, f, "VITA", 352, 92, 20, slope);
+        badge_text(&txt, &bs, f, "EDITION", 342, 116, 16, slope);
+        append_fill(s, fill_from(&txt, WHITE));
+    }
+    // the PlayStation symbols where the pin was, in their colours
+    static const uint8_t COLS[4][4] = {{122, 160, 230, 255}, {230, 90, 100, 255}, {220, 120, 200, 255}, {90, 200, 160, 255}};
+    static const float POS[4][2] = {{432, 124}, {443, 112}, {421, 112}, {432, 100}};   // cross bottom, circle right, square left, triangle top
+    static const int SYM[4] = {CC_BTN_CROSS, CC_BTN_CIRCLE, CC_BTN_SQUARE, CC_BTN_TRIANGLE};
+    for (int i = 0; i < 4; i++) {
+        Poly sp = {0}, mapped = {0};
+        symbol(&sp, SYM[i], POS[i][0], POS[i][1], 11);
+        poly_begin_loop(&sp);
+        sp.nloops--;
+        for (int l = 0; l < sp.nloops; l++) {
+            poly_begin_loop(&mapped);
+            for (int q = sp.loops[l]; q < sp.loops[l + 1]; q++) bpt(&mapped, &bs, sp.pts[q * 2], sp.pts[q * 2 + 1]);
+        }
+        free(sp.pts);
+        free(sp.loops);
+        append_fill(s, fill_from(&mapped, COLS[i]));
+    }
+    return 1;
+}
+
+// debugging: every loop of a shape's fills with its box (px) and colour
+void cc_dump_shape(Movie *m, int cid) {
+    if (m->chars[cid].type != CHAR_SHAPE) return;
+    Shape *s = m->chars[cid].ptr;
+    for (int f = 0; f < s->nfills; f++) {
+        const ShapeFill *sf = &s->fills[f];
+        for (int l = 0; l < sf->nloops; l++) {
+            Box lb = {1e30f, 1e30f, -1e30f, -1e30f};
+            for (int i = sf->loop_start[l]; i < sf->loop_start[l + 1]; i++) {
+                float x = sf->pts[i * 2], y = sf->pts[i * 2 + 1];
+                if (x < lb.x0) lb.x0 = x;
+                if (y < lb.y0) lb.y0 = y;
+                if (x > lb.x1) lb.x1 = x;
+                if (y > lb.y1) lb.y1 = y;
+            }
+            printf("fill %d loop %d  x %.0f..%.0f y %.0f..%.0f  #%02x%02x%02x\n", f, l, lb.x0 / 20, lb.x1 / 20,
+                   lb.y0 / 20, lb.y1 / 20, sf->style.color[0], sf->style.color[1], sf->style.color[2]);
+        }
+    }
 }
 
 static Shape *exported_shape(Movie *m, const char *name) {

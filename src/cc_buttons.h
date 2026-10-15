@@ -11,5 +11,8 @@ enum { CC_BTN_STYLE_COLOURED, CC_BTN_STYLE_DARK };   // the game's coloured ball
 // Cross/Circle/Square/Triangle and L/R. Call after swf_load, before tessellating.
 // Returns how many clips it changed.
 int cc_buttons_playstation(Movie *m, int style);
+// MENU.swf's title: the painted "Steam Edition" badge covered and "Vita Edition" drawn in
+// its place (fills added to the logo). 1 if this was that file. Call before tessellating.
+int cc_menu_vita_badge(Movie *m);
 
 #endif
