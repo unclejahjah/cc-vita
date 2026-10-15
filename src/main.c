@@ -3,13 +3,13 @@
 // .../levels. The game logic runs at its 30 frames a second; drawing is the
 // GPU shape renderer.
 //
-// Controls (player 1): stick/D-pad move, SQUARE light attack, TRIANGLE heavy,
-// CROSS jump/accept, CIRCLE projectile/item/back, L block, R magic, START pause,
-// rear touchpad left/right half: previous/next item.
+// Controls (player 1): left stick move (light tilt walks, full tilt runs, as on the
+// original consoles), D-pad run, SQUARE light attack, TRIANGLE heavy, CROSS
+// jump/accept, CIRCLE projectile/item/back, L block, R magic, START pause,
+// right stick flicked left/right: previous/next item.
 // SELECT+UP shows the stats overlay, SELECT+START quits.
 #include <psp2/ctrl.h>
 #include <psp2/io/fcntl.h>
-#include <psp2/touch.h>
 #include <psp2/kernel/processmgr.h>
 #include <psp2/kernel/sysmem.h>
 #include <psp2/power.h>
@@ -322,24 +322,33 @@ enum {
     K_ACCEPT = 2, K_BACK = 3, K_LEFT = 37, K_UP = 38, K_RIGHT = 39, K_DOWN = 40,
     K_START = 49, K_SELECT = 53, K_PUNCH1 = 65, K_R2 = 66, K_L2 = 67, K_PROJECTILE = 68,
     K_MAGIC = 69, K_SHIELD = 81, K_JUMP = 83, K_PUNCH2 = 87,
+    // the light-tilt directions (f_Walk: these walk, the full ones above run)
+    K_WALK_LEFT = 117, K_WALK_UP = 118, K_WALK_RIGHT = 119, K_WALK_DOWN = 120,
 };
+
+#define STICK_DEAD 40   // of 128: below this the stick is centred
+#define STICK_RUN 100   // at or beyond this it's a full tilt
 
 static void map_pad(const SceCtrlData *pad, int debug) {
     memset(cc_keys, 0, sizeof cc_keys);
     if (debug) return;
-    // the rear touchpad stands in for L2/R2 (switching items): left half / right half
-    SceTouchData touch;
-    if (sceTouchPeek(SCE_TOUCH_PORT_BACK, &touch, 1) > 0)
-        for (unsigned i = 0; i < touch.reportNum; i++) {
-            if (touch.report[i].x < 960) cc_keys[K_L2] = 1;
-            else cc_keys[K_R2] = 1;
-        }
     unsigned b = pad->buttons;
     int lx = pad->lx - 128, ly = pad->ly - 128;
-    if ((b & SCE_CTRL_LEFT) || lx < -48) cc_keys[K_LEFT] = 1;
-    if ((b & SCE_CTRL_RIGHT) || lx > 48) cc_keys[K_RIGHT] = 1;
-    if ((b & SCE_CTRL_UP) || ly < -48) cc_keys[K_UP] = 1;
-    if ((b & SCE_CTRL_DOWN) || ly > 48) cc_keys[K_DOWN] = 1;
+    // the console scripts run on a full tilt and walk on a light one; the D-pad runs
+    if ((b & SCE_CTRL_LEFT) || lx <= -STICK_RUN) cc_keys[K_LEFT] = 1;
+    else if (lx <= -STICK_DEAD) cc_keys[K_WALK_LEFT] = 1;
+    if ((b & SCE_CTRL_RIGHT) || lx >= STICK_RUN) cc_keys[K_RIGHT] = 1;
+    else if (lx >= STICK_DEAD) cc_keys[K_WALK_RIGHT] = 1;
+    if ((b & SCE_CTRL_UP) || ly <= -STICK_RUN) cc_keys[K_UP] = 1;
+    else if (ly <= -STICK_DEAD) cc_keys[K_WALK_UP] = 1;
+    if ((b & SCE_CTRL_DOWN) || ly >= STICK_RUN) cc_keys[K_DOWN] = 1;
+    else if (ly >= STICK_DEAD) cc_keys[K_WALK_DOWN] = 1;
+    // the right stick stands in for L2/R2 (switching items). The script steps once per
+    // press and waits for the release, so a flick past the deadzone is one step and the
+    // stick re-arms when it comes back to the centre.
+    int rx = pad->rx - 128;
+    if (rx <= -STICK_RUN + 20) cc_keys[K_L2] = 1;
+    if (rx >= STICK_RUN - 20) cc_keys[K_R2] = 1;
     if (b & SCE_CTRL_CROSS) cc_keys[K_ACCEPT] = cc_keys[K_JUMP] = 1;
     if (b & SCE_CTRL_CIRCLE) cc_keys[K_BACK] = cc_keys[K_PROJECTILE] = 1;
     if (b & SCE_CTRL_SQUARE) cc_keys[K_PUNCH1] = 1;
@@ -446,9 +455,9 @@ static void pause_draw(Pause *ps) {
     unsigned ink = RGBA8(70, 45, 20, 255), hi = RGBA8(190, 40, 30, 255);
     if (ps->page == 1) {
         static const char *lines[] = {
-            "Stick / D-pad: move",       "Square: light attack",  "Triangle: heavy attack",
+            "Left stick: walk / run",    "Square: light attack",  "Triangle: heavy attack",
             "Cross: jump",               "Circle: use item",      "L: block",
-            "R (hold) + attack: magic",  "Rear touchpad: switch item", "Start: pause",
+            "R (hold) + attack: magic",  "Right stick left/right: switch item", "Start: pause",
         };
         for (int i = 0; i < 9; i++) vita2d_pgf_draw_text(g_font, x0, y0 + i * 26, ink, 0.9f, lines[i]);
         vita2d_pgf_draw_text(g_font, x0, y0 + 9 * 26 + 14, hi, 0.9f, "Circle: back");
@@ -487,7 +496,6 @@ int main(void) {
     g_indices = gpu_alloc(sizeof(uint16_t) * MAX_BATCH, &g_index_block);
     for (int i = 0; g_indices && i < MAX_BATCH; i++) g_indices[i] = i;
     sceCtrlSetSamplingMode(SCE_CTRL_MODE_ANALOG);
-    sceTouchSetSamplingState(SCE_TOUCH_PORT_BACK, SCE_TOUCH_SAMPLING_STATE_START);
 
     Movie *start = vita_loader(NULL, "MAIN.swf");
     if (!start) {

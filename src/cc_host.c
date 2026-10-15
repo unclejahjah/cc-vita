@@ -346,6 +346,8 @@ void cc_host_init(AsVm *vm) {
         "f_LoadCharacterData",   // your saved character, not a level-40 test one
         "f_HudWaitEnd",          // "press START" on the empty player slots
         "f_Depth",               // no debug trace
+        "f_RemovePlayer",        // after dying: wait on the HUD, back to the map when all are down
+        "f_Walk",                // a full tilt runs, a light one walks (not keyboard double-taps)
     };
     if (!getenv("CC_DEV_PATHS"))
         for (size_t i = 0; i < sizeof console_fns / sizeof *console_fns; i++)
