@@ -13,7 +13,7 @@
 #define OUT_FRAMES 1024            // per output block (~23 ms)
 #define MAX_SFX 512
 #define MAX_VOICES 32
-#define CACHE_BYTES (40 * 1024 * 1024)   // decoded sound effects kept in memory
+#define CACHE_BYTES (24 * 1024 * 1024)   // decoded sound effects kept in memory (of the 160 MB heap)
 #define MUSIC_VOLUME 0.7f
 
 enum { SFX_NONE, SFX_QUEUED, SFX_READY, SFX_FAILED };
