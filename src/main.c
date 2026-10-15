@@ -379,19 +379,21 @@ enum {
 #define STICK_DEAD 40   // of 128: below this the stick is centred
 #define STICK_RUN 100   // at or beyond this it's a full tilt
 
-static void map_pad(const SceCtrlData *pad, int debug) {
+static void map_pad(const SceCtrlData *pad, int debug, int in_game) {
     memset(cc_keys, 0, sizeof cc_keys);
     if (debug) return;
     unsigned b = pad->buttons;
     int lx = pad->lx - 128, ly = pad->ly - 128;
-    // the console scripts run on a full tilt and walk on a light one; the D-pad runs
-    if ((b & SCE_CTRL_LEFT) || lx <= -STICK_RUN) cc_keys[K_LEFT] = 1;
+    // the console scripts run on a full tilt and walk on a light one; the D-pad runs. Outside a
+    // level (map, stat screen, menus) only the full directions mean anything: any tilt is one.
+    int run = in_game ? STICK_RUN : STICK_DEAD;
+    if ((b & SCE_CTRL_LEFT) || lx <= -run) cc_keys[K_LEFT] = 1;
     else if (lx <= -STICK_DEAD) cc_keys[K_WALK_LEFT] = 1;
-    if ((b & SCE_CTRL_RIGHT) || lx >= STICK_RUN) cc_keys[K_RIGHT] = 1;
+    if ((b & SCE_CTRL_RIGHT) || lx >= run) cc_keys[K_RIGHT] = 1;
     else if (lx >= STICK_DEAD) cc_keys[K_WALK_RIGHT] = 1;
-    if ((b & SCE_CTRL_UP) || ly <= -STICK_RUN) cc_keys[K_UP] = 1;
+    if ((b & SCE_CTRL_UP) || ly <= -run) cc_keys[K_UP] = 1;
     else if (ly <= -STICK_DEAD) cc_keys[K_WALK_UP] = 1;
-    if ((b & SCE_CTRL_DOWN) || ly >= STICK_RUN) cc_keys[K_DOWN] = 1;
+    if ((b & SCE_CTRL_DOWN) || ly >= run) cc_keys[K_DOWN] = 1;
     else if (ly >= STICK_DEAD) cc_keys[K_WALK_DOWN] = 1;
     // the right stick stands in for L2/R2 (switching items). The script steps once per
     // press and waits for the release, so a flick past the deadzone is one step and the
@@ -747,9 +749,9 @@ int main(void) {
         int debug = pad.buttons & SCE_CTRL_SELECT;
         if (debug && (pressed & SCE_CTRL_START)) break;
         if (debug && (pressed & SCE_CTRL_UP)) g_show_loads = overlay = !overlay;
-        map_pad(&pad, debug);
         // in a level, Start is the pause menu's (the executable's in the original)
         int level = in_level(vm);
+        map_pad(&pad, debug, level);
         if (level) cc_keys[K_START] = 0;
         if (pause.open) {
             pause.open = pause_input(&pause, vm, pressed);
