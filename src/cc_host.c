@@ -209,6 +209,20 @@ static AsVal add_shader(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
     return as_undef();
 }
 
+// RemoveShader(name): the clip's screen effect ends
+static AsVal remove_shader(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
+    (void)vm; (void)argc; (void)argv;
+    if (this_.t == V_OBJ && this_.o->type == OBJ_MC) ((AsMc *)this_.o)->shader = 0;
+    return as_undef();
+}
+
+// IsSameProfile(portA, portB): the shops unlock a bought animal for every player on the
+// buyer's profile. On the Vita each port is its own profile.
+static AsVal is_same_profile(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
+    (void)this_;
+    return as_bool(as_toint32(vm, ARG(0)) == as_toint32(vm, ARG(1)));
+}
+
 // ---- music: RegisterMusic(id, "music/NAME.wav"), PlayMusic(id, loop), StopMusic() ------
 
 void (*cc_music_play)(const char *name, int loop);
@@ -512,6 +526,25 @@ void cc_host_init(AsVm *vm) {
     as_def_fn(vm, g, "HiFps_SetEnabled", ret_undef);
     as_def_fn(vm, g, "HiFps_Loop", ret_undef);
     as_def_fn(vm, g, "AddShader", add_shader);
+    as_def_fn(vm, g, "RemoveShader", remove_shader);
+    as_def_fn(vm, g, "IsSameProfile", is_same_profile);
+    // the rest the level and menu files call that matter offline: profiles are signed in,
+    // nothing is ranked, and the PC/online extras (skins, avatar items, the loading screen's
+    // own hide call, interpolation, session ends) have nothing to do here
+    as_def_fn(vm, g, "IsPlayerSignedIn", ret_true);
+    as_def_fn(vm, g, "TryBindUserToController", ret_true);
+    as_def_fn(vm, g, "IsRankedMatch", ret_false);
+    as_def_fn(vm, g, "ReadSaveGame", ret_true);
+    as_def_fn(vm, g, "GetRegion", ret_zero);
+    as_def_fn(vm, g, "AttachSkinGraphic", ret_undef);
+    as_def_fn(vm, g, "UnlockAvatarItem", ret_undef);
+    as_def_fn(vm, g, "HideLoadingScreen", ret_undef);
+    as_def_fn(vm, g, "InterpolationOff", ret_undef);
+    as_def_fn(vm, g, "SetFlashController", ret_undef);
+    as_def_fn(vm, g, "CheckSlowest", ret_undef);
+    as_def_fn(vm, g, "EndSession", ret_undef);
+    as_def_fn(vm, g, "LeaveSession", ret_undef);
+    as_def_fn(vm, g, "SetFramerate", ret_undef);   // the boss's death slow motion: kept at full speed
     as_def_fn(vm, g, "SetScores", ret_undef);   // arena scoreboards (online stats)
     as_def_fn(vm, g, "Error", ret_undef);       // the executable's error log
     as_def_fn(vm, g, "FadeIn", ret_undef);      // screen fades (the scripts draw their own)
