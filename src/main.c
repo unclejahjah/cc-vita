@@ -511,6 +511,7 @@ int main(void) {
     cc_music_play = audio_music_play;
     cc_music_stop = audio_music_stop;
     AsVm *vm = as_new(vita_loader);
+    vm->rand_state = (uint32_t)sceKernelGetProcessTimeWide() ^ 0x9E3779B9u;   // Flash's random() differs each session
     vm->sound_start = vita_sound_start;
     vm->sound_stop = vita_sound_stop;
     vm->warn = vita_warn;

@@ -399,6 +399,11 @@ void cc_host_init(AsVm *vm) {
     as_def_fn(vm, g, "WriteStorage", write_storage);
     as_def_fn(vm, g, "IsPortTalking", ret_false);   // voice chat
     as_def_fn(vm, g, "GetLocalGamerTag", gamer_tag);
+    // GetCheat(n): MAIN.swf ships a developer version on _root that turns most cheats on
+    // (every combo and magic at level 1, every character, animals without unlocking). The
+    // executable's answer is no cheats, so both the global and MAIN's own are replaced.
+    as_def_fn(vm, g, "GetCheat", ret_false);
+    as_override(vm, "GetCheat", ret_false);
     // MAIN defines its own IsFullGame on _root, but level scripts call the executable's
     // (they can't see _root's functions): this is the full game
     as_def_fn(vm, g, "IsFullGame", ret_true);
