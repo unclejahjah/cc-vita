@@ -251,7 +251,10 @@ static int sprite_holds(const Movie *m, const Sprite *s, const char *inner) {
     return 0;
 }
 
+static int cc_repair_cut_short(Movie *m);
+
 int cc_repair_level(Movie *m) {
+    if (cc_repair_cut_short(m)) return 1;
     static const char *layers[][2] = {{"bg3_c", "bg3"}, {"bg2_c", "bg2"}, {"bg1_c", "bg1"}, {"game", "game"}, {"bg0_c", "bg0"}};
     if (!m->root.nframes) return 0;
     Frame *f = &m->root.frames[0];
@@ -293,6 +296,49 @@ int cc_repair_level(Movie *m) {
         added++;
     }
     return added;
+}
+
+// Most of the game's files are missing their last ~128 bytes. That's usually only the
+// final End tags, but EBARBOSS.swf loses its last frame's display list: the root's "die"
+// frame should replace the body with the death animation (sprite 168, 93 frames: the
+// chest drops on 73, then the princesses). Without it the boss vanishes when he dies.
+static int cc_repair_cut_short(Movie *m) {
+    int n = m->root.nframes;
+    if (n < 2 || m->root.nlabels < 1) return 0;
+    const Label *last = &m->root.labels[m->root.nlabels - 1];
+    if (getenv("CC_REPAIR_DEBUG"))
+        fprintf(stderr, "repair? frames %d last label %s@%d sprite168 type %d\n", n, last->name, last->frame,
+                m->chars[168].type);
+    if (strcmp(last->name, "die") || last->frame != n - 1) return 0;
+    if (m->chars[168].type != CHAR_SPRITE || ((Sprite *)m->chars[168].ptr)->nframes < 73) return 0;
+    Frame *f = &m->root.frames[n - 1];
+    if (getenv("CC_REPAIR_DEBUG"))
+        for (int i = 0; i < f->count; i++) fprintf(stderr, "  depth %d cid %d\n", f->places[i].depth, f->places[i].cid);
+    for (int i = 0; i < f->count; i++)
+        if (f->places[i].cid == 168) return 0;   // a complete file: nothing to do
+    // the body goes where the earlier animations put theirs (depth 1, same matrix)
+    const Place *model = NULL;
+    for (int fr = n - 2; fr >= 0 && !model; fr--)
+        for (int i = 0; i < m->root.frames[fr].count; i++)
+            if (m->root.frames[fr].places[i].depth == 1) { model = &m->root.frames[fr].places[i]; break; }
+    if (!model) return 0;
+    Place p = *model;
+    int body = 0;
+    for (int i = 1; i < m->nnames; i++)
+        if (!strcmp(m->names[i], "body")) body = i;
+    p.cid = 168;
+    p.name = body;
+    p.clip = 0;
+    p.uid = 0x7e000000u;
+    p.events_off = p.events_len = 0;
+    int k = 0;   // drop whatever the cut frame kept at depth 1, then put the body first
+    for (int i = 0; i < f->count; i++)
+        if (f->places[i].depth != 1) f->places[k++] = f->places[i];
+    f->places = realloc(f->places, sizeof(Place) * (k + 1));
+    memmove(f->places + 1, f->places, sizeof(Place) * k);
+    f->places[0] = p;
+    f->count = k + 1;
+    return 1;
 }
 
 // ---- collision for the shipping ("console") path ---------------------------------------
