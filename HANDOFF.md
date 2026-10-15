@@ -48,10 +48,18 @@ calls), item switching (right stick), respawn after death, walk/run, no cheats +
 characters, Barbarian Boss ending (chest, gold, princess, kiss, map), text table (282 ntexts),
 Vita L/R art.
 
+Also: character select levels (console branch), 100% Blue Knight save
+(tools/make_save100.py -> ux0:data/CastleCrashers/save.dat; the user's old save is
+save_backup_20261015.dat there and in ../saves/). Save layout per character at
+64 + 48*(p_type-1): 128 flag, level-1, exp x4, weapon, animal, str, def, mag, agi, normal
+levels x3, potions, bombs, sandwiches, relics, gold x4, insane flag, insane levels x3.
+Global: 7 arenas, 8-11 animals, 12-27 items, 28-35 expansion items. p_type 1 green, 2 red,
+3 blue, 4 orange.
+
 ## Next (in order)
-1. 100% Blue Knight test save as a separate file with a switch (never overwrite save.dat).
-2. Blank lobby/front-end text (ntexts 447, 476, 581, 805, 806, 815-825...).
-3. Sky and heat-shimmer effects (AddShader in SKY*.swf, LEVEL26/30/35/37/38).
-4. Title screen and main menu (the exe draws them in the original).
-5. Swap in complete copies of the cut-short files once the user extracts them.
-6. Performance (needs the Vita overlay numbers), then Wi-Fi co-op.
+1. Title screen and main menu (the exe draws them in the original; MENU.swf has the art).
+2. Heat shimmer (AddShader "Heat", LEVEL30 sprite 7 etc.): distorts the screen behind a haze
+   layer; needs a framebuffer copy. "RasterHack" (skies) is a seam fix, nothing to draw.
+3. Remaining blank lobby text (476, 581, 805, 806, 815-825) - lobby is online-only.
+4. Cut-short files: patch case by case (user parked a full re-extraction).
+5. Performance (needs the Vita overlay numbers), then Wi-Fi co-op.
