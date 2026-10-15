@@ -49,6 +49,20 @@ static void enqueue(AsMc *mc, int kind, int arg) {
     q[qn++] = (QItem){mc, kind, arg};
 }
 
+// onClipEvent(load) of a clip just placed: right after its own first-frame item (queued
+// at mark), before the frame scripts of the children that frame placed. Flash runs it in
+// that order, and children read what the load handler sets (button prompts read
+// _parent.u_temp in their first frame).
+static void enqueue_load(AsMc *mc, int mark) {
+    int at = mark < qn && q[mark].mc == mc && q[mark].kind == Q_FRAME ? mark + 1 : qn;
+    enqueue(mc, Q_EVENT, EV_LOAD);
+    if (at < qn - 1) {
+        QItem it = q[qn - 1];
+        memmove(&q[at + 1], &q[at], sizeof(QItem) * (qn - 1 - at));
+        q[at] = it;
+    }
+}
+
 void as_queue_frame(AsVm *vm, AsMc *mc) {
     (void)vm;
     enqueue(mc, Q_FRAME, mc->frame);
@@ -201,11 +215,12 @@ static AsMc *place(AsVm *vm, AsMc *parent, const Place *p, int depth) {
     mc->events_off = p->events_off;
     mc->events_len = p->events_len;
     e->mc = mc;
-    // first frame, then onClipEvent(load)
+    // first frame, then onClipEvent(load), then the children's first frames
+    int mark = qn;
     as_mc_goto(vm, mc, 0, 1);
     if (mc->events_len) {
         run_clip_events(vm, mc, EV_INIT | EV_CONSTRUCT);
-        enqueue(mc, Q_EVENT, EV_LOAD);
+        enqueue_load(mc, mark);
     }
     return mc;
 }
@@ -386,8 +401,9 @@ AsMc *as_mc_duplicate(AsVm *vm, AsMc *mc, AsStr *name, int depth) {
     c->events_len = mc->events_len;
     c->name = as_intern(vm, name);
     e->mc = c;
+    int mark = qn;
     as_mc_goto(vm, c, 0, 1);
-    if (c->events_len) enqueue(c, Q_EVENT, EV_LOAD);
+    if (c->events_len) enqueue_load(c, mark);
     return c;
 }
 

@@ -78,6 +78,8 @@ typedef struct {
     int nbfills;               // bitmap fills, drawn after the colour mesh
     BitmapFill *bfills;
     int tessellated;
+    int has_box;               // tag 148 trigger box: no outlines, only this extent
+    float box[4];              // min x, min y, max x, max y (twips)
 } Shape;
 
 typedef struct {
