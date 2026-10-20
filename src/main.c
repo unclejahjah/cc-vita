@@ -327,11 +327,13 @@ static char g_last_error[256];
 // ---- the log file -------------------------------------------------------------------
 // ux0:data/CastleCrashers/log.txt: each distinct warning once, the files loaded and freed,
 // and the animal orbs each level places, for bugs that only show on the Vita. The run
-// before is kept as log_prev.txt.
+// before is kept as log_prev.txt. Lines collect in memory and go to the card every few
+// seconds (log_flush): a write per line cost frames in fights.
 #define LOG_PATH DATA_DIR "log.txt"
 #define LOG_MAX (1 << 20)
 static SceUID g_log = -1;
-static int g_log_bytes;
+static int g_log_bytes, g_log_used;
+static char g_log_buf[16384];
 static uint32_t g_log_seen[2048];
 static int g_log_nseen;
 
@@ -339,6 +341,11 @@ static void log_open(void) {
     sceIoRemove(DATA_DIR "log_prev.txt");
     sceIoRename(LOG_PATH, DATA_DIR "log_prev.txt");
     g_log = sceIoOpen(LOG_PATH, SCE_O_WRONLY | SCE_O_CREAT | SCE_O_TRUNC, 0666);
+}
+
+static void log_flush(void) {
+    if (g_log >= 0 && g_log_used) sceIoWrite(g_log, g_log_buf, g_log_used);
+    g_log_used = 0;
 }
 
 static void log_line(const char *fmt, ...) {
@@ -351,14 +358,17 @@ static void log_line(const char *fmt, ...) {
     if (n < 0) return;
     if (n > (int)sizeof buf - 2) n = sizeof buf - 2;
     buf[n++] = '\n';
-    sceIoWrite(g_log, buf, n);
+    if (g_log_used + n > (int)sizeof g_log_buf) log_flush();
+    memcpy(g_log_buf + g_log_used, buf, n);
+    g_log_used += n;
     g_log_bytes += n;
 }
 
-// 1 the first time a message is seen
+// 1 the first time a message is seen; numbers don't count (fx201, fx202... are one message)
 static int log_first(const char *msg) {
     uint32_t h = 2166136261u;
-    for (const char *c = msg; *c; c++) h = (h ^ (uint8_t)*c) * 16777619u;
+    for (const char *c = msg; *c; c++)
+        if (*c < '0' || *c > '9') h = (h ^ (uint8_t)*c) * 16777619u;
     for (int i = 0; i < g_log_nseen; i++)
         if (g_log_seen[i] == h) return 0;
     if (g_log_nseen < (int)(sizeof g_log_seen / sizeof g_log_seen[0])) g_log_seen[g_log_nseen++] = h;
@@ -751,6 +761,7 @@ static void title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, si
                 if (item == CC_MENU_QUIT) {
                     vita2d_wait_rendering_done();
                     audio_shutdown();
+                    log_flush();
                     vita2d_fini();
                     sceKernelExitProcess(0);
                 }
@@ -831,6 +842,7 @@ int main(void) {
             sceCtrlPeekBufferPositive(0, &pad, 1);
             if (pad.buttons & SCE_CTRL_START) break;
         }
+        log_flush();
         vita2d_fini();
         sceKernelExitProcess(0);
         return 0;
@@ -934,6 +946,7 @@ new_game:   // the title again after Exit to Main Menu
                    !as_tobool(vm, cc_flash_global(vm, "g_bNoPause"))) {
             pause_open(&pause);
             pause_set_state(vm, 2);
+            log_flush();   // the log is complete while paused (to copy it off by FTP)
             if (!pause.have_art) pause_build_art(&pause);
         }
 
@@ -963,6 +976,7 @@ new_game:   // the title again after Exit to Main Menu
             // (levels played earlier, the title). Below that they stay, so going back to the
             // map or replaying a level doesn't load them again.
             if (vm->tick % 30 == 0) log_animals(vm);
+            if (vm->tick % 150 == 0) log_flush();
             if (vm->tick - last_free >= 90 && mallinfo().uordblks > (size_t)_newlib_heap_size_user / 2) {
                 last_free = vm->tick;
                 free_unused_movies(vm, &cache, cache_mem, cache_bytes);
@@ -1049,6 +1063,7 @@ new_game:   // the title again after Exit to Main Menu
     gpu_free(&cache_gpu);
     gpu_free(&g_index_block);
     vita2d_free_pgf(g_font);
+    log_flush();
     vita2d_fini();
     sceKernelExitProcess(0);
     return 0;
