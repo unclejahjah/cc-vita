@@ -27,6 +27,7 @@
 #include "cc_buttons.h"
 #include "cc_host.h"
 #include "hostfont.h"
+#include "pause_menu.h"
 #include "render.h"
 #include "strtab.h"
 #ifdef CC_TROPHIES
@@ -400,7 +401,8 @@ static int free_unused_movies(AsVm *vm, RecolourCache *cache, void *cache_mem, s
     Movie *ms[MAX_MOVIES];
     uint8_t used[MAX_MOVIES];
     for (int i = 0; i < g_nmovies; i++) ms[i] = g_movies[i].m;
-    if (!as_movies_used(vm, ms, g_nmovies, used)) return 0;
+    if (!vm) memset(used, 0, sizeof used);   // no game any more: all but the kept files
+    else if (!as_movies_used(vm, ms, g_nmovies, used)) return 0;
     int unused = 0;
     for (int i = 0; i < g_nmovies; i++) unused += !used[i] && !g_movies[i].keep;
     if (!unused) return 0;
@@ -472,14 +474,13 @@ static void map_pad(const SceCtrlData *pad, int debug, int in_game) {
 // tells the scripts through g_nPort<n>State: 2 paused, 1 playing, 3 quit to the map.
 
 typedef struct {
-    int open, sel, page;       // page 0: the menu, 1: controls, 2: achievements
-    DrawList art;              // the pause book, drawn over the frozen game
+    int open;
+    PauseMenu m;               // the menu (pause_menu.c)
+    DrawList ui;               // this frame's backdrop, words and button prompts
+    DrawList art;              // the pause book (controls and achievements pages)
     int have_art;
     float book[4];             // where the book is on screen
 } Pause;
-
-static const char *PAUSE_ITEMS[] = {"Resume", "Controls", "Achievements", "Quit to Map"};
-#define NPAUSE_ITEMS 4
 
 static int in_level(AsVm *vm) {
     int found;
@@ -531,26 +532,9 @@ static void pause_build_art(Pause *ps) {
 
 static void pause_set_state(AsVm *vm, int state) { cc_set_flash_global(vm, "g_nPort1State", as_num(state)); }
 
-// one frame of the open menu: returns 1 while it stays open
-static int pause_input(Pause *ps, AsVm *vm, unsigned pressed) {
-    if (ps->page) {   // controls or achievements page: any of these goes back
-        if (pressed & (SCE_CTRL_CIRCLE | SCE_CTRL_CROSS | SCE_CTRL_START)) ps->page = 0;
-        return 1;
-    }
-    if (pressed & SCE_CTRL_UP) ps->sel = (ps->sel + NPAUSE_ITEMS - 1) % NPAUSE_ITEMS;
-    if (pressed & SCE_CTRL_DOWN) ps->sel = (ps->sel + 1) % NPAUSE_ITEMS;
-    if (pressed & (SCE_CTRL_CIRCLE | SCE_CTRL_START)) { pause_set_state(vm, 1); return 0; }
-    if (pressed & SCE_CTRL_CROSS) {
-        if (ps->sel == 0) { pause_set_state(vm, 1); return 0; }
-        if (ps->sel == 1 || ps->sel == 2) { ps->page = ps->sel; return 1; }
-        pause_set_state(vm, 3);   // the scripts take the party back to the map
-        return 0;
-    }
-    return 1;
-}
-
-static void pause_draw(Pause *ps) {
-    vita2d_draw_rectangle(0, 0, SCREEN_W, SCREEN_H, RGBA8(0, 0, 0, 140));
+// the book pages: the old pages of controls and achievements over the pause book
+static void pause_book_draw(Pause *ps, int page, int dim) {
+    if (dim) vita2d_draw_rectangle(0, 0, SCREEN_W, SCREEN_H, RGBA8(0, 0, 0, 140));
     float x0 = SCREEN_W * 0.3f, y0 = SCREEN_H * 0.3f, x1 = SCREEN_W * 0.7f;
     if (ps->have_art) {
         draw_list(&ps->art);
@@ -561,7 +545,7 @@ static void pause_draw(Pause *ps) {
         vita2d_draw_rectangle(x0 - 20, y0 - 60, x1 - x0 + 40, 260, RGBA8(237, 222, 180, 255));
     }
     unsigned ink = RGBA8(70, 45, 20, 255), hi = RGBA8(190, 40, 30, 255);
-    if (ps->page == 1) {
+    if (page == PG_CONTROLS) {
         static const char *lines[] = {
             "Left stick: walk / run",    "Square: light attack",  "Triangle: heavy attack",
             "Cross: jump",               "Circle: use item",      "L: block",
@@ -569,23 +553,47 @@ static void pause_draw(Pause *ps) {
         };
         for (int i = 0; i < 9; i++) vita2d_pgf_draw_text(g_font, x0, y0 + i * 26, ink, 0.9f, lines[i]);
         vita2d_pgf_draw_text(g_font, x0, y0 + 9 * 26 + 14, hi, 0.9f, "Circle: back");
-        return;
-    }
-    if (ps->page == 2) {
-        unsigned got = cc_achievements(), dim = RGBA8(150, 130, 100, 255);
+    } else if (page == PG_ACHIEVEMENTS) {
+        unsigned got = cc_achievements(), dimmed = RGBA8(150, 130, 100, 255);
         int n = 0;
         for (int id = 1; id <= CC_ACHIEVEMENTS; id++) n += got >> id & 1;
         vita2d_pgf_draw_textf(g_font, x0, y0 - 30, ink, 1.0f, "Achievements  %d / %d", n, CC_ACHIEVEMENTS);
         for (int id = 1; id <= CC_ACHIEVEMENTS; id++)
-            vita2d_pgf_draw_textf(g_font, x0, y0 + (id - 1) * 21, got >> id & 1 ? ink : dim, 0.75f, "%s %s",
+            vita2d_pgf_draw_textf(g_font, x0, y0 + (id - 1) * 21, got >> id & 1 ? ink : dimmed, 0.75f, "%s %s",
                                   got >> id & 1 ? "[x]" : "[  ]", cc_achievement_name(id));
         vita2d_pgf_draw_text(g_font, x0, y0 + CC_ACHIEVEMENTS * 21 + 10, hi, 0.9f, "Circle: back");
-        return;
     }
-    vita2d_pgf_draw_text(g_font, x0, y0, ink, 1.2f, "Paused");
-    for (int i = 0; i < NPAUSE_ITEMS; i++)
-        vita2d_pgf_draw_textf(g_font, x0 + 10, y0 + 45 + i * 34, i == ps->sel ? hi : ink, 1.1f, "%s%s",
-                              i == ps->sel ? "> " : "  ", PAUSE_ITEMS[i]);
+}
+
+// the menu over the frozen game, or a book page over its backdrop
+static void pause_draw(Pause *ps) {
+    Movie *pm = host_movie("PAUSE.swf");
+    render_begin(&ps->ui);
+    ps->ui.view[2] = SCREEN_W;
+    ps->ui.view[3] = SCREEN_H;
+    if (pm) pause_menu_build(&ps->m, pm, SCREEN_W / 848.0f, &ps->ui);
+    else vita2d_draw_rectangle(0, 0, SCREEN_W, SCREEN_H, RGBA8(0, 0, 0, 200));
+    draw_list(&ps->ui);
+    if (ps->m.page == PG_CONTROLS || ps->m.page == PG_ACHIEVEMENTS) pause_book_draw(ps, ps->m.page, 0);
+}
+
+// one frame of the open menu: 1 while it stays open, 0 closed, 2 back to the title
+static int pause_input(Pause *ps, AsVm *vm, unsigned pressed, float dt) {
+    unsigned b = (pressed & SCE_CTRL_UP ? PM_UP : 0) | (pressed & SCE_CTRL_DOWN ? PM_DOWN : 0) |
+                 (pressed & (SCE_CTRL_CROSS | SCE_CTRL_START) ? PM_ACCEPT : 0) | (pressed & SCE_CTRL_CIRCLE ? PM_BACK : 0);
+    int sound;
+    int r = pause_menu_update(&ps->m, b, dt, &sound);
+    if (sound >= 0) audio_sfx_play(sound ? "sound_player_select.wav" : "sound_toggle_b.wav", 1, 0, 0, ps);
+    if (r == PM_OPEN) return 1;
+    ps->open = 0;
+    if (r == PM_TO_TITLE) return 2;
+    pause_set_state(vm, r == PM_TO_MAP ? 3 : 1);   // 3: the scripts take the party back to the map
+    return 0;
+}
+
+static void pause_open(Pause *ps) {
+    ps->open = 1;
+    pause_menu_open(&ps->m);
 }
 
 static void vita_sound_start(AsVm *vm, const char *linkage, float volume, float pan, int loops, const void *owner) {
@@ -676,7 +684,6 @@ static void title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, si
                 }
                 if (item == CC_MENU_OPTIONS) {
                     controls.open = 1;
-                    controls.page = 1;
                     if (!controls.have_art) pause_build_art(&controls);
                 }
             }
@@ -718,13 +725,14 @@ static void title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, si
             int w = vita2d_pgf_text_width(g_font, 1.0f, unavailable);
             outlined_text((SCREEN_W - w) / 2, SCREEN_H - 24, 1.0f, unavailable);
         }
-        if (controls.open) pause_draw(&controls);
+        if (controls.open) pause_book_draw(&controls, PG_CONTROLS, 1);
         vita2d_end_drawing();
         vita2d_swap_buffers();
     }
     vita2d_wait_rendering_done();
     if (cc_music_stop) cc_music_stop();
     memset(cc_keys, 0, sizeof cc_keys);
+    as_free(t);
 }
 int main(void) {
     scePowerSetArmClockFrequency(444);
@@ -800,6 +808,7 @@ int main(void) {
     g_cache_mem = cache_mem;
     g_cache_bytes = cache_bytes;
 
+new_game:   // the title again after Exit to Main Menu
     title_screen(&vb, &cache, cache_mem, cache_bytes);
 
     AsVm *vm = as_new(vita_loader);
@@ -822,10 +831,15 @@ int main(void) {
     int ach_shown = 0, ach_timer = 0;   // the "achievement unlocked" banner
     uint32_t last_free = 0;
     const SceUInt64 tick_us = 1000000 / 30;   // the game's frame rate
+    int exit_to_title = 0;
+    pause.open = 0;
 
-    for (;;) {
+    while (!exit_to_title) {
         sceCtrlPeekBufferPositive(0, &pad, 1);
         unsigned pressed = pad.buttons & ~old.buttons;
+        unsigned nav = pressed;   // menus: the stick moves once per push too
+        if (pad.ly < 48 && old.ly >= 48) nav |= SCE_CTRL_UP;
+        if (pad.ly > 208 && old.ly <= 208) nav |= SCE_CTRL_DOWN;
         old = pad;
         int debug = pad.buttons & SCE_CTRL_SELECT;
         if (debug && (pressed & SCE_CTRL_START)) break;
@@ -835,12 +849,13 @@ int main(void) {
         map_pad(&pad, debug, level);
         if (level) cc_keys[K_START] = 0;
         if (pause.open) {
-            pause.open = pause_input(&pause, vm, pressed);
+            float dt = (sceKernelGetProcessTimeWide() - prev) / 1000000.0f;
+            int r = pause_input(&pause, vm, nav, dt > 0.1f ? 0.1f : dt);
+            if (r == 2) exit_to_title = 1;
             memset(cc_keys, 0, sizeof cc_keys);
         } else if (level && !debug && (pressed & SCE_CTRL_START) &&
                    !as_tobool(vm, cc_flash_global(vm, "g_bNoPause"))) {
-            pause.open = 1;
-            pause.sel = pause.page = 0;
+            pause_open(&pause);
             pause_set_state(vm, 2);
             if (!pause.have_art) pause_build_art(&pause);
         }
@@ -930,6 +945,16 @@ int main(void) {
             frames = ticks = 0;
             last = now;
         }
+    }
+    if (exit_to_title) {   // the game is left: everything of it goes, then the title's menu
+        vita2d_wait_rendering_done();
+        audio_sfx_stop(NULL);
+        if (cc_music_stop) cc_music_stop();
+        as_free(vm);
+        free_unused_movies(NULL, &cache, cache_mem, cache_bytes);
+        memset(cc_keys, 0, sizeof cc_keys);
+        render_begin(&vb);   // its meshes were in the files just freed
+        goto new_game;
     }
 
     vita2d_wait_rendering_done();

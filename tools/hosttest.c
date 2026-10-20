@@ -15,6 +15,7 @@
 #include "../src/hostfont.h"
 #include "../src/cc_buttons.h"
 #include "../src/cc_host.h"
+#include "../src/pause_menu.h"
 #include "../src/enemy.h"
 
 #define MAX_W 960
@@ -576,6 +577,19 @@ static int as_mode(int argc, char **argv) {
     // accept 2, back 3, start 49, d-pad 37-40, punch1 65, punch2 87, jump 83, magic 69)
     const char *keys = getenv("CC_KEYS");
     for (int f = 0; f < frames; f++) {
+        if (getenv("CC_RESTART_AT") && f == atoi(getenv("CC_RESTART_AT"))) {   // the Vita's Exit to Main Menu
+            as_free(vm);
+            vm = as_new(host_loader);
+            vm->warn = host_warn;
+            vm->trace = host_trace;
+            vm->sound_start = host_sound;
+            cc_host_init(vm);
+            as_render_init(vm);
+            vm->root = as_mc_new(vm, start, &start->root, NULL, 0);
+            if (!strcasecmp(argv[3], "MAIN.swf") && !getenv("CC_NO_LOADING")) cc_loading_attach(vm);
+            render_begin(&vb);
+            printf("  [restart at %d]\n", f);
+        }
         memset(cc_keys, 0, sizeof cc_keys);
         for (const char *p = keys; p && *p;) {
             int kf = 0, code = 0, hold = 2;
@@ -806,11 +820,66 @@ static int as_mode(int argc, char **argv) {
     return 0;
 }
 
+// The pause menu's pages: --pause PAUSE.swf out_prefix [backdrop.ppm 960x544]
+static int pause_mode(int argc, char **argv) {
+    if (argc < 4) { fprintf(stderr, "usage: %s --pause PAUSE.swf out_prefix [backdrop.ppm]\n", argv[0]); return 1; }
+    char err[256];
+    Movie *m = swf_load(argv[2], err, sizeof err);
+    if (!m) { fprintf(stderr, "%s\n", err); return 1; }
+    cc_buttons_playstation(m, CC_BTN_STYLE_COLOURED);
+    if (getenv("CC_FONT_DIR")) {
+        char fnt[600], dds[600];
+        snprintf(fnt, sizeof fnt, "%s/synjUnicode_20.fnt", getenv("CC_FONT_DIR"));
+        snprintf(dds, sizeof dds, "%s/synjUnicode_20_0.dds", getenv("CC_FONT_DIR"));
+        HostFont *hf = hostfont_load(fnt, dds, err, sizeof err);
+        if (hf) as_render_set_font(hf);
+        else printf("font: %s\n", err);
+    }
+    W = 960; H = 544;
+    static uint8_t back[960 * 544 * 3];
+    FILE *bf = argc > 4 ? fopen(argv[4], "rb") : NULL;
+    int have_back = 0;
+    if (bf) {
+        int w, h;
+        if (fscanf(bf, "P6 %d %d 255", &w, &h) == 2 && w == 960 && h == 544 && fgetc(bf) != EOF)
+            have_back = fread(back, 1, sizeof back, bf) == sizeof back;
+        fclose(bf);
+    }
+    PauseMenu pm = {0};
+    pause_menu_open(&pm);
+    // each step: buttons, then seconds to let pass before the picture
+    static const struct { unsigned b; float wait; const char *what; } steps[] = {
+        {0, 0.5f, "main"}, {PM_DOWN, 0.1f, "main, Help & Options chosen"}, {PM_DOWN, 0.05f, NULL},
+        {PM_ACCEPT, 0.08f, "Information flashing"}, {0, 0.6f, "information"}, {PM_BACK, 0.6f, "main again"},
+        {PM_DOWN, 0.05f, NULL}, {PM_ACCEPT, 0.7f, "exit to map: are you sure"}, {PM_BACK, 0.6f, NULL},
+        {PM_DOWN, 0.05f, NULL}, {PM_ACCEPT, 0.7f, "exit to main menu: are you sure"},
+        {PM_DOWN, 0.1f, "Yes chosen"},
+    };
+    DrawList vb = {0};
+    for (size_t i = 0; i < sizeof steps / sizeof *steps; i++) {
+        int sound, r = pause_menu_update(&pm, steps[i].b, 1 / 60.0f, &sound);
+        for (float t = 0; t < steps[i].wait; t += 1 / 60.0f) r = pause_menu_update(&pm, 0, 1 / 60.0f, &sound);
+        if (r != PM_OPEN) printf("step %zu: closes with %d\n", i, r);
+        if (!steps[i].what) continue;
+        if (have_back) memcpy(px, back, sizeof back), memset(stencil, 0, (size_t)W * H);
+        else clear((const uint8_t[3]){90, 130, 70});
+        render_begin(&vb);
+        vb.view[2] = W;
+        vb.view[3] = H;
+        pause_menu_build(&pm, m, W / 848.0f, &vb);
+        rasterise(&vb);
+        printf("%zu: %s (page %d, line %d)\n", i, steps[i].what, pm.page, pm.sel);
+        write_frame(argv[3], (int)i);
+    }
+    return 0;
+}
+
 int main(int argc, char **argv) {
     if (argc > 1 && !strcmp(argv[1], "--as")) return as_mode(argc, argv);
     if (argc > 1 && !strcmp(argv[1], "--dress")) return dress_mode(argc, argv);
     if (argc > 1 && !strcmp(argv[1], "--sprite")) return sprite_mode(argc, argv);
     if (argc > 1 && !strcmp(argv[1], "--clips")) return clips_mode(argc, argv);
+    if (argc > 1 && !strcmp(argv[1], "--pause")) return pause_mode(argc, argv);
     if (argc > 1 && !strcmp(argv[1], "--level")) return level_mode(argc, argv);
     if (argc > 1 && !strcmp(argv[1], "--player")) return player_mode(argc, argv);
     if (argc < 4) { fprintf(stderr, "usage: %s file.swf label out_prefix [frames]\n", argv[0]); return 1; }
