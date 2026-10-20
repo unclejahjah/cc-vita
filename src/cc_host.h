@@ -21,9 +21,13 @@ void cc_native_root_functions(AsVm *vm, AsObj *root);
 enum { CC_MENU_PLAY, CC_MENU_OPTIONS, CC_MENU_QUIT, CC_MENU_ITEMS };
 AsMc *cc_menu_attach(AsVm *vm, float x, float y);
 void cc_menu_highlight(AsVm *vm, AsMc *panel, int item);
-// The power sign over the Quit tile, in screen pixels through screen (stage twips -> screen):
-// up to max dots (x, y, radius) making its ring and the bar (x, y, w, h). Returns the dots.
-int cc_menu_power_icon(AsMc *panel, Mat screen, float *dots, int max, float bar[4]);
+// The power button that stands for Quit, as triangles in screen pixels through screen (stage
+// twips -> screen); lit when chosen. Returns the vertices written (up to max; it needs about 3400).
+typedef struct { float x, y; uint8_t rgba[4]; } CcVert;
+int cc_menu_power_button(AsMc *panel, Mat screen, CcVert *out, int max);
+// The chosen button's highlight frame: hidden in the panel, the app draws it last (over the
+// power button) by rendering it on its own.
+AsMc *cc_menu_highlight_clip(AsMc *panel, Mat *m);
 
 // Save data per controller port (ReadStorage/WriteStorage); dirty when the game wrote to it.
 double *cc_storage(int port);
