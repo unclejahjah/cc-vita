@@ -322,8 +322,26 @@ static struct { char name[64]; Movie *m; GpuBlock gpu; int keep; } g_movies[MAX_
 static int g_nmovies;
 static char g_last_error[256];
 
+// the recolour cache, for freeing files from inside a load (main sets these)
+static RecolourCache *g_cache;
+static void *g_cache_mem;
+static size_t g_cache_bytes;
+static int free_unused_movies(AsVm *vm, RecolourCache *cache, void *cache_mem, size_t cache_bytes);
+
+// swf_bitmap_loaded: each bitmap becomes a texture as soon as it's decoded, and its pixels are
+// then only on the GPU side
+static void bitmap_to_texture(Bitmap *bm) {
+    vita2d_texture *tex = vita2d_create_empty_texture_format(bm->w, bm->h, SCE_GXM_TEXTURE_FORMAT_U8U8U8U8_ABGR);
+    if (!tex) return;
+    uint8_t *dst = vita2d_texture_get_datap(tex);
+    unsigned stride = vita2d_texture_get_stride(tex);
+    for (int y = 0; y < bm->h; y++) memcpy(dst + y * stride, bm->rgba + (size_t)y * bm->w * 4, (size_t)bm->w * 4);
+    bm->tex = tex;
+    free(bm->rgba);
+    bm->rgba = NULL;
+}
+
 static Movie *vita_loader(AsVm *vm, const char *url) {
-    (void)vm;
     const char *base = strrchr(url, '/');
     base = base ? base + 1 : url;
     for (int i = 0; i < g_nmovies; i++)
@@ -341,7 +359,12 @@ static Movie *vita_loader(AsVm *vm, const char *url) {
             snprintf(msg, sizeof msg, "Loading %s...", base);
             show_message(msg, NULL);
         }   // otherwise the last frame stays up; the game shows its own loading screen
+        // a big file (a sky is up to 34 MB of pixels) after a long session: make room first
+        if (vm && g_cache && mallinfo().uordblks > (size_t)_newlib_heap_size_user / 2)
+            free_unused_movies(vm, g_cache, g_cache_mem, g_cache_bytes);
         Movie *m = swf_load(path, err, sizeof err);
+        if (!m && vm && g_cache && free_unused_movies(vm, g_cache, g_cache_mem, g_cache_bytes))
+            m = swf_load(path, err, sizeof err);   // out of memory: try again without the old files
         if (!m) {
             snprintf(g_last_error, sizeof g_last_error, "%s: %s", base, err);
             return NULL;
@@ -350,19 +373,6 @@ static Movie *vita_loader(AsVm *vm, const char *url) {
         cc_repair_level(m);
         cc_buttons_playstation(m, CC_BTN_STYLE_COLOURED);   // the game's button art as PlayStation buttons
         cc_menu_vita_badge(m);                              // "Vita Edition" on the title
-        // bitmaps become textures; the pixels are then only on the GPU side
-        for (int c = 0; c < 65536; c++) {
-            if (m->chars[c].type != CHAR_BITMAP) continue;
-            Bitmap *bm = m->chars[c].ptr;
-            vita2d_texture *tex = vita2d_create_empty_texture_format(bm->w, bm->h, SCE_GXM_TEXTURE_FORMAT_U8U8U8U8_ABGR);
-            if (!tex) continue;
-            uint8_t *dst = vita2d_texture_get_datap(tex);
-            unsigned stride = vita2d_texture_get_stride(tex);
-            for (int y = 0; y < bm->h; y++) memcpy(dst + y * stride, bm->rgba + (size_t)y * bm->w * 4, (size_t)bm->w * 4);
-            bm->tex = tex;
-            free(bm->rgba);
-            bm->rgba = NULL;
-        }
         GpuBlock *blk = &g_movies[g_nmovies].gpu;
         blk->uid = -1;
         render_tessellate_all(m);
@@ -722,6 +732,7 @@ int main(void) {
     scePowerSetGpuClockFrequency(222);
     scePowerSetGpuXbarClockFrequency(166);
     vita2d_init_advanced_with_msaa(16 * 1024 * 1024, SCE_GXM_MULTISAMPLE_4X);
+    swf_bitmap_loaded = bitmap_to_texture;
     vita2d_set_vblank_wait(1);
     g_font = vita2d_load_default_pgf();
     make_split_program();
@@ -785,6 +796,9 @@ int main(void) {
     void *cache_mem = gpu_alloc(cache_bytes, &cache_gpu);
     recolour_cache_init(&cache, cache_mem, cache_bytes);
     vb.cache = &cache;
+    g_cache = &cache;
+    g_cache_mem = cache_mem;
+    g_cache_bytes = cache_bytes;
 
     title_screen(&vb, &cache, cache_mem, cache_bytes);
 
