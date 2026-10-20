@@ -488,7 +488,10 @@ static AsVal bsp_load_level(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
     return as_undef();
 }
 
+static void loading_exit_check(AsVm *vm);
+
 static void after_frame_scripts(AsVm *vm) {
+    loading_exit_check(vm);
     if (!bsp_pending) return;
     bsp_pending = 0;
     as_call_method(vm, as_objv(&vm->root->obj), "f_InitLevelBSP", 0, NULL);
@@ -501,7 +504,7 @@ static void after_frame_scripts(AsVm *vm) {
 // plays the intro, holds the file until the intro sets g_bReadyToLoad (the screen is
 // covered), then plays the exit (which calls HideLoadingScreen). So does this.
 #define LOADING_DEPTH 1048500
-static int load_wait, loading_shown;
+static int load_wait, loading_shown, exit_wait = -1;
 
 static AsMc *loading_screen(AsVm *vm) {
     return as_mc_child(vm->root, as_atom(vm, "cc_loading"));
@@ -523,6 +526,9 @@ void cc_loading_attach(AsVm *vm) {
     if (!m) return;
     AsMc *mc = as_mc_create_empty(vm, vm->root, as_atom(vm, "cc_loading"), LOADING_DEPTH);
     as_mc_load_movie(vm, mc, m);
+    mc->visible = 0;   // shown from the first level change (hold_load)
+    loading_shown = 0;
+    exit_wait = -1;
 }
 
 static int is_level_slot(AsVm *vm, AsMc *target) {
@@ -530,21 +536,46 @@ static int is_level_slot(AsVm *vm, AsMc *target) {
 }
 
 static int hold_load(AsVm *vm, AsMc *target, const char *url) {
-    (void)url;
     AsMc *ls = loading_screen(vm);
-    if (!ls || !is_level_slot(vm, target) || as_tobool(vm, cc_flash_global(vm, "g_bNoLoadingScreen"))) return 0;
-    if (!loading_shown) {
-        loading_shown = 1;
-        load_wait = 0;
-        cc_set_flash_global(vm, "g_bLoading", as_num(1));
-        cc_set_flash_global(vm, "g_bReadyToLoad", as_num(0));
-        // its hint text asks _root for f_GetHint, which its own first frame defines
-        as_set(vm, as_objv(&vm->root->obj), as_atom(vm, "f_GetHint"),
-               as_get(vm, as_objv(&ls->obj), as_atom(vm, "f_GetHint")));
-        loading_play(vm, ls, NULL);
+    if (ls && is_level_slot(vm, target) && !as_tobool(vm, cc_flash_global(vm, "g_bNoLoadingScreen"))) {
+        if (!loading_shown) {
+            loading_shown = 1;
+            load_wait = 0;
+            exit_wait = -1;
+            ls->visible = 1;
+            cc_set_flash_global(vm, "g_bLoading", as_num(1));
+            cc_set_flash_global(vm, "g_bReadyToLoad", as_num(0));
+            // its hint text asks _root for f_GetHint, which its own first frame defines
+            as_set(vm, as_objv(&vm->root->obj), as_atom(vm, "f_GetHint"),
+                   as_get(vm, as_objv(&ls->obj), as_atom(vm, "f_GetHint")));
+            loading_play(vm, ls, NULL);
+        }
+        // the intro takes 20 frames; don't wait forever if it never says so
+        if (as_tonum(vm, cc_flash_global(vm, "g_bReadyToLoad")) != 1 && ++load_wait < 90) return 1;
     }
-    // the intro takes 20 frames; don't wait forever if it never says so
-    return as_tonum(vm, cc_flash_global(vm, "g_bReadyToLoad")) != 1 && ++load_wait < 90;
+    // the file is read on another thread while the game (and the loading screen) runs on
+    return vm->prefetch && vm->prefetch(vm, url);
+}
+
+// The loading screen plays its exit once the level is in and the files its first frames
+// asked for (sky, enemies, mounts) are in too: two frames with no load waiting.
+static void loading_exit_check(AsVm *vm) {
+    if (exit_wait < 0) return;
+    if (vm->loads) { exit_wait = 0; return; }
+    if (++exit_wait < 2) return;
+    exit_wait = -1;
+    loading_shown = 0;
+    cc_set_flash_global(vm, "g_bLoading", as_num(0));
+    AsMc *ls = loading_screen(vm);
+    if (ls) loading_play(vm, ls, "exit");
+}
+
+// HideLoadingScreen(): the exit is over; the clip stops being drawn until the next load
+static AsVal hide_loading_screen(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
+    (void)this_; (void)argc; (void)argv;
+    AsMc *ls = loading_screen(vm);
+    if (ls && !loading_shown) ls->visible = 0;
+    return as_undef();
 }
 
 // f_LoadNewLevel waits for loader.b_loaded after a loadMovie. Menus set it from
@@ -564,12 +595,7 @@ static void on_loaded(AsVm *vm, AsMc *target) {
     if (as_get(vm, as_objv(&vm->root->obj), fsp).t == V_UNDEF)
         as_def_fn(vm, &vm->root->obj, "f_SafePlayerType", safe_player_type);
     as_set(vm, as_objv(&target->obj), as_atom(vm, "b_loaded"), as_bool(1));
-    if (is_level_slot(vm, target) && loading_shown) {   // the loading screen plays its exit
-        loading_shown = 0;
-        cc_set_flash_global(vm, "g_bLoading", as_num(0));
-        AsMc *ls = loading_screen(vm);
-        if (ls) loading_play(vm, ls, "exit");
-    }
+    if (is_level_slot(vm, target) && loading_shown) exit_wait = 0;   // its exit is next
 }
 
 static const char *text_for_number(AsVm *vm, int n) {
@@ -692,7 +718,7 @@ void cc_host_init(AsVm *vm) {
     as_def_fn(vm, g, "GetRegion", ret_zero);
     as_def_fn(vm, g, "AttachSkinGraphic", ret_undef);
     as_def_fn(vm, g, "UnlockAvatarItem", ret_undef);
-    as_def_fn(vm, g, "HideLoadingScreen", ret_undef);
+    as_def_fn(vm, g, "HideLoadingScreen", hide_loading_screen);
     as_def_fn(vm, g, "GetLocalSecond", local_second);
     as_def_fn(vm, g, "InterpolationOff", ret_undef);
     as_def_fn(vm, g, "SetFlashController", ret_undef);

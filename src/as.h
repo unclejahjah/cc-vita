@@ -208,6 +208,9 @@ struct AsVm {
     void (*after_frame_scripts)(AsVm *vm);
     // a loadMovie about to run: return 1 to hold it (and the ones after it) until a later frame
     int (*hold_load)(AsVm *vm, AsMc *target, const char *url);
+    // start reading a file in the background: 1 while it isn't ready yet, 0 once it is (or
+    // can't be read that way; the loader then reads it as usual)
+    int (*prefetch)(AsVm *vm, const char *url);
     // the executable's text by number (TextField.ntext = N), or NULL
     const char *(*text_for_number)(AsVm *vm, int n);
     // native versions of hot script functions, by name (as_override)

@@ -525,6 +525,20 @@ static void host_sound(AsVm *vm, const char *linkage, float vol, float pan, int 
     if (getenv("AS_SOUNDS")) printf("  [sound] %s vol %.2f pan %.2f loops %d\n", linkage, vol, pan, loops);
 }
 
+// CC_PREFETCH=N: each file's first loadMovie waits N frames, as the Vita's background loads do
+static int fake_prefetch(AsVm *vm, const char *url) {
+    (void)vm;
+    static char done[256][128];
+    static int ndone, waited;
+    static char cur[128];
+    for (int i = 0; i < ndone; i++) if (!strcasecmp(done[i], url)) return 0;
+    if (strcasecmp(cur, url)) { snprintf(cur, sizeof cur, "%s", url); waited = 0; }
+    if (++waited <= atoi(getenv("CC_PREFETCH"))) return 1;
+    if (ndone < 256) snprintf(done[ndone++], sizeof done[0], "%s", url);
+    cur[0] = 0;
+    return 0;
+}
+
 static int as_mode(int argc, char **argv) {
     if (argc < 5) { fprintf(stderr, "usage: %s --as GAME_DIR START.swf out_prefix [frames] [snap_every]\n", argv[0]); return 1; }
     snprintf(game_dir, sizeof game_dir, "%s", argv[2]);
@@ -539,6 +553,7 @@ static int as_mode(int argc, char **argv) {
     AsVm *vm = as_new(host_loader);
     vm->warn = host_warn;
     vm->trace = host_trace;
+    if (getenv("CC_PREFETCH")) vm->prefetch = fake_prefetch;
     extern void cc_host_init(AsVm *vm);
     cc_host_init(vm);
     // CC_SAVE=path: start from a save file (cc_host.c's "CCS2" format), like the Vita's save.dat
