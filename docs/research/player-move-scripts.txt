@@ -1,0 +1,116 @@
+## stand sprite 245 frames 13
+## walk sprite 336 frames 16
+## dash sprite 338 frames 12
+## jump sprite 357 frames 12
+   f11: _parent jumping ladder hanging
+## land sprite 397 frames 7
+   f5: _parent busy body_y body_table_y fp_StandAnim
+## punch1_1 sprite 497 frames 13
+   f0: 
+   f2: hit _parent fp_PunchHit
+   f3: hit fin
+   f5: 
+   f7: _parent punching
+   f11: _parent end_attack
+   f12: 
+## punch1_2 sprite 502 frames 13
+   f0: 
+   f4: hit _parent fp_PunchHit
+   f5: hit fin
+   f7: 
+   f8: _parent punching
+   f12: _parent end_attack
+## punch1_3 sprite 507 frames 14
+   f0: 
+   f3: hit _parent fp_PunchHit
+   f4: hit fin
+   f6: 
+   f10: _parent punching
+   f13: _parent end_attack
+## punch1_4 sprite 582 frames 18
+   f0: 
+   f2: _parent _root f_SlideSwingInit
+   f3: _parent _root f_SlideDust
+   f9: hit _parent fp_PunchHit
+   f11: hit fin
+   f14: 
+   f14: _parent punching
+   f17: _parent end_attack
+## punch2_1 sprite 585 frames 16
+   f0: 
+   f4: _root s_Swing1 start
+   f5: _parent thrusting uniquehit prev_fp_UniqueHit fp_UniqueHit _root f_HitReactionSwordLock swordthrust
+   f6: _parent prev_fp_UniqueHit fp_UniqueHit uniquehit thrusting hit fp_PunchHit
+   f7: hit fin
+   f9: 
+   f11: _parent punching
+   f15: _parent end_attack
+## punch2_2 sprite 589 frames 13
+   f0: _root s_SwishTriple start
+   f1: hit _parent fp_PunchHit
+   f5: hit _parent fp_PunchHit
+   f6: _parent punching
+   f11: _parent end_attack
+## punch2_2b sprite 601 frames 18
+   f0: _root s_SwishTriple start
+   f1: hit _parent fp_PunchHit
+   f8: hit _parent fp_PunchHit
+   f9: _parent punching
+   f16: _parent end_attack
+## punch2_3 sprite 609 frames 12
+   f0: 
+   f3: _parent _root f_GroundSlamDust f_ScreenShake s_SlamGround start fp_PunchHit
+   f9: _parent punching
+   f11: _parent end_attack
+## uppercut sprite 709 frames 15
+   f0: 
+   f1: _root s_Swing4 start
+   f2: _parent fp_PunchHit
+   f8: _parent punching human _root f_Buzzsaw
+   f9: _parent body spin
+   f13: 
+## slamdown sprite 715 frames 15
+   f0: 
+   f3: _root s_Swing2 start
+   f4: _parent fp_PunchHit
+   f8: _parent punching busy
+   f13: _parent end_attack
+   f14: 
+## jumpkick sprite 761 frames 3
+   f0: 
+   f1: hit _parent fp_PunchHit
+   f2: kick
+## dashpunch sprite 738 frames 13
+   f0: 
+   f3: _root f_SoundSwing
+   f6: _parent punching
+   f11: 
+## dashslam sprite 737 frames 14
+   f0: 
+   f8: speed
+   f11: _parent punching end_attack
+   f12: 
+## block1 sprite 446 frames 11
+   f0: 
+   f10: _parent _root f_EndBlockHit
+## hit1 sprite 374 frames 6
+   f0: 
+   f5: 
+## magic1 sprite 768 frames 15
+   f5: _parent fp_MagicMove
+   f14: _parent _root f_EndAttack
+## bow sprite 796 frames 20
+   f3: _parent agility
+   f4: _parent agility
+   f5: _parent agility
+   f6: _parent agility
+   f7: _parent agility
+   f8: _parent agility
+   f10: _parent agility arrow_speed_x arrow_pow arrow _root f_Shoot arrow_gravity arrow_speed_y s_arrowShoot start
+   f12: _parent agility _root f_EndAttack
+   f13: _parent agility _root f_EndAttack
+   f14: _parent agility _root f_EndAttack
+   f15: _parent agility _root f_EndAttack
+   f16: _parent agility _root f_EndAttack
+   f17: _parent agility _root f_EndAttack
+   f19: _parent _root f_EndAttack

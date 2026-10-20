@@ -1,0 +1,220 @@
+blank - 0 
+stand 245 13 loop 
+walk 336 16 loop 
+dash 338 12 loop 
+jump 357 12 stop@11 jump@0,mid@11
+hit1 374 6 stop@5 
+hit2 377 9 stop@3 go@4
+hit3 374 6 stop@5 
+juggle1 380 1 loop 
+bounce1 385 1 loop 
+bounce2 387 1 loop 
+hitground1 390 21 loop 
+die 395 122 stop@1 finish@18,wait@49,cpr@54,churchboss@71,necro@101,blank@121
+land 397 7 loop 
+blocking 439 3 stop@0 stand@0,walk@1,retreat@2
+block1 446 11 loop 
+block2 448 11 loop 
+blocked 488 18 loop 
+punch1_1 497 13 stop@12 fin@5
+punch1_2 502 13 stop@12 fin@7
+punch1_3 507 14 stop@13 fin@6
+punch1_4 582 18 stop@17 fin@14
+punch2_1 585 16 stop@15 fin@9
+punch2_2 589 13 stop@11 
+punch2_2b 601 18 stop@16 
+punch2_3 609 12 stop@11 
+punch5_1 643 14 stop@13 
+punch5_2 645 18 stop@17 
+punch6_1 646 20 stop@19 
+punch4_4 689 24 loop 
+punch11_1 691 9 stop@8 
+punch11_2 692 12 stop@11 
+topspin 701 28 loop 
+punch100_1 582 18 stop@17 fin@14
+punch100_2 705 19 stop@17 attack@0,transition@17
+punch100_3 707 27 stop@21 
+uppercut 709 15 stop@13 spin@13
+buzzsaw 714 10 loop 
+slamdown 715 15 stop@14 
+stomp 735 24 stop@23 
+dashslam 737 14 stop@11 
+dashpunch 738 13 stop@11 trans@10
+swordlock 739 5 loop 
+jumpkick 761 3 stop@0 kick@1
+jumpkickwarp 762 25 loop 
+magic1 768 15 loop 
+magic2 782 12 loop shoot@6
+magic0 784 15 loop 
+magic_air 785 13 loop 
+magic_air_down 786 13 loop 
+magic2_air_down 787 23 loop shoot@5
+gunshoot 791 15 loop 
+gunshoot_air 792 15 loop 
+gunshoot_air_down 793 15 loop 
+bow 796 20 loop go@10
+bowup 797 29 loop go@19
+hatty_cast 815 15 stop@13 
+pink_cast 831 16 loop 
+hattymagair1 832 12 loop 
+stun 837 45 loop 
+pink_stun 839 10 loop 
+throw 840 17 stop@16 
+thrown 842 7 loop 
+hanging 846 26 stop@16 
+climb 860 1 loop 
+ladderclimb 861 1 loop 
+autoclimb 861 1 loop 
+sideclimb_up 881 1 loop 
+sideclimb_down 888 24 loop down@0
+sideclimb_finish 891 29 loop climb up@0
+ladderclimb_sideup 901 1 loop 
+ladderclimb_sidedown 902 1 loop 
+autoclimb_sideup 901 1 loop 
+freeze 916 108 stop@7 enemy@36,end@107
+freeze_beefy 994 108 stop@7 enemy@36,end@107
+zapped 1004 6 loop 
+zapped_once 1005 20 loop 
+zapped_beefy_once 1011 20 loop 
+wizardmakebeefy 1022 20 loop 
+zapped_beefy 1023 6 loop 
+stomploop 1024 16 loop 
+stompedloop 1025 20 loop 
+horse_idle 1026 1 loop 
+horse_walk 1027 8 loop 
+camel_walk 1028 11 loop 
+horse_punch1_1 1029 11 stop@10 
+horse_punch1_2 1030 11 stop@10 
+horse_bow 1031 20 loop 
+horse_walkto 1027 8 loop 
+horse_wait 1026 1 loop 
+deer_walk 1033 11 loop 
+deerpoo_walk 1034 3 loop 
+horsejump 1035 23 loop 
+deertoss 1039 24 stop@23 
+deerslam 1044 44 stop@6 
+deerdie 395 122 stop@1 finish@18,wait@49,cpr@54,churchboss@71,necro@101,blank@121
+walkto 1045 2 stop@0 
+walkthru 1045 2 stop@0 
+beefy_walkto 1084 2 stop@0 
+beefy_walkthru 1084 2 stop@0 
+groundpunch 1085 1 loop 
+dig 1091 36 stop@35 
+dig2 1103 76 stop@33 finish@38
+boomerang 1121 17 loop 
+reach 1128 16 stop@15 chomp@9
+beefy_stand 1129 21 loop 
+beefy_walk 1081 10 loop 
+punch200_1 1228 12 stop@11 
+punch200_2 1327 13 stop@12 
+punch200_3 1329 14 stop@13 
+punch200_4 1332 19 stop@18 
+beefy_dashpunch 1333 13 stop@12 
+beefy_blocked 1334 9 stop@8 
+beefy_blocking 1335 1 loop 
+beefy_slam 1336 28 stop@27 
+beefy_arrow 1340 62 stop@61 
+punch201_1 1341 18 stop@17 
+punch201_2 1342 13 stop@12 
+punch201_3 1343 13 stop@12 
+punch201_4 1344 20 stop@19 
+propeller 1391 9 loop 
+beefy_stomp 1394 15 stop@14 
+beefy_jump 1083 23 stop@10 
+beefy_land 1395 7 loop 
+beefy_juggle1 1403 1 loop 
+beefy_bounce1 1460 1 loop 
+beefy_hitground1 1462 21 loop 
+beefy_bounce2 1460 1 loop 
+beefy_hit1 1463 7 stop@6 
+beefy_hit2 1465 7 stop@6 
+beefy_die 1466 44 stop@0 
+beefy_grabOLD 1490 12 stop@11 
+beefy_grab 1491 7 stop@6 
+beefy_stand_hostage 1492 21 loop 
+beefy_walk_hostage 1494 11 loop 
+beefy_throw 1502 23 stop@20 
+grapple - 0 
+beefythrowbeefy 1588 30 stop@29 
+beefythrown 1642 7 stop@6 
+horn 1650 37 loop 
+peep 1651 14 stop@13 
+hostage 1654 21 loop 
+hostage_walk 1656 11 loop 
+hostage_thrown 1658 14 loop 
+antlion 1673 14 stop@5 finish@13
+hiding_stand 18 1 loop 
+hiding_walk 324 8 loop 
+table_eat 1674 5 loop 
+autojump 1675 1 loop 
+roll 1677 8 loop 
+rollaway 1677 8 loop 
+runscared 1678 10 loop 
+burried 1682 41 stop@29 
+kiss 1688 86 loop loop@64
+vs_intro 1692 85 loop 
+dockjump 1693 55 stop@54 
+logstand 1695 16 loop 
+logwalk 1695 16 loop 
+swim_stand 1701 12 loop 
+swim_walk 1702 12 loop 
+paranoid 1703 11 loop 
+jumptohorse 1704 14 loop 
+stoneheart 1713 88 stop@79 
+blobbed 1721 9 stop@0 
+beefy_blobbed 1724 9 stop@0 
+bathead 1739 11 stop@3 finish@9
+tornado 1771 2 stop@0 
+ripoff 1774 24 stop@0 
+cpr 1780 10 stop@0 
+skylaunch 1781 21 loop 
+skyward 1782 1 loop 
+skydown 487 8 loop 
+intro - 0 
+introdash 338 12 loop 
+head 1784 21 loop 
+remove 1785 44 stop@43 
+weapon 244 112 stop@0 
+item 1794 49 loop 
+helm 138 59 stop@0 blank@58
+spawn 1803 13 stop@0 
+lightningspawn 1814 19 stop@0 
+vine 1818 43 loop 
+guard 1819 1 loop 
+corpse 1821 1 loop 
+search 1823 48 loop 
+taunt1 1824 24 stop@0 go@1
+laugh1 1825 5 loop 
+dance1 1828 12 loop 
+dance2 1834 48 loop 
+dance3 1841 78 loop 
+dance4 1825 5 loop 
+autofall 357 12 stop@11 jump@0,mid@11
+wait 1842 2 stop@0 
+wait_beefy 1843 2 stop@0 
+beefylaugh 1846 18 loop 
+transform 1883 71 loop 
+sleep 1888 60 loop 
+getrelic1 1889 60 loop 
+getrelic2 1890 60 stop@59 
+getrelic3 1891 60 stop@59 
+getmap 1892 60 stop@59 
+cinema_cannon 1893 67 stop@66 
+cinema_cannon2 1894 69 stop@68 
+cinema_cannon3 1895 68 stop@67 
+cinema_cannon4 1896 67 stop@66 
+cinema_catapult 1653 1 loop 
+cinema_catapulted 487 8 loop 
+faceplant 1901 34 loop 
+cinema_cake1 1902 180 stop@179 
+cinema_cake2 1903 85 stop@84 
+cinema_cake3 1904 95 stop@94 
+cinema_cake4 1908 100 stop@99 
+catch 1912 32 stop@31 finish@31
+cultspawn 1935 43 loop 
+beamup 385 1 loop 
+slideslope 1938 61 loop 
+finalfall 1939 2 loop 
+ending 245 13 loop 
+wait_init - 0 
+enemy_archerUNUSED - 0 

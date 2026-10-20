@@ -1,0 +1,85 @@
+guide_no	name	str	mag	def	agi	extra	level_req	unlocked_via
+1	Skinny Sword	-1	0	0	1		1	Castle Keep (32 Coins) or Unlock Gray Knight
+2	Thin Sword	0	0	0	0		1	Default (Green Knight)
+3	Thick Sword	2	-1	5	0		15	Swamp Village Store (445 Coins)
+4	Pumpkin Peeler	3	-2	2	0		15	Desert Chase (2nd Dig Spot)
+5	Gladiator Sword	1	-1	3	0	1% Critical Hit Chance	15	Full Moon (Weapon bag in plain sight) or Stove Face (Rare drop or unlock)
+6	Butcher Knife	5	-2	0	2		15	Snow Store (575 Coins)
+7	Utility Blade	0	-1	2	0		5	Industrial Castle (Hidden behind a bush outside at the start of the level)
+8	Carrot	-1	-2	3	0		5	Home Castle (Dig Spot right before climbing the stairs)
+9	Rusty Sword	-1	0	0	2		5	Bring Cardinal to the Forest Entrance or Thief (Rare drop or Unlock)
+10	Gold Sword	0	4	1	0		15	Marsh (Dig spot behind 2 connected houses [In the middle] before the tree)
+11	Dual-Pronged Sword	3	0	3	0	1% Critical Hit Chance	20	Brute (INSANELY RARE DROP [Industrial Castle only] or Unlock)
+12	Zig Zag	0	3	1	-1		10	Industrial Castle (Dig Spot under the Industrial Prince portrait)
+13	Buster Sword	0	3	3	-1		15	Medusa's Lair (Guaranteed drop by Medusa)
+14	Falchion	1	0	3	0		10	Desert (Dig Spot) or Saracen (Rare drop or Unlock)
+15	Pointy Sword	0	1	2	2		15	Industrial Castle (Bring Cardinal to the end of the level)
+16	Chewed-Up Sword	0	-1	4	2		15	Medusa's Lair (Dig Spot between two staircases near the end of the level)
+17	Rapier	1	1	0	1		10	Fencer (Rare drop or Unlock)
+18	Barbarian Ax	0	-1	-1	0	1% Critical Hit Chance	1	Barbarian (Rare drop or Unlock)
+19	Pitchfork	1	0	0	-1		1	Home Castle (Run into it before the first wave of enemies)
+20	Sickle Sword	2	3	-1	0		15	Sand Castle Roof (Dig Spot after 3rd wave of enemies)
+21	KeyBlade	-1	3	0	3		15	Full Moon (Bring Cardinal to the 2nd hut)
+22	Bonesaw	-1	1	3	0		10	Wedding Crash (1st Dig Spot)
+23	Rubber-Handle Sword	2	-2	0	3		10	Removed (Unlockable by having someone who has the weapon drop)
+24	Mace	0	0	0	0		1	Default (Red Knight)
+25	Wooden Club	5	0	5	-5	1% Critical Hit Chance	20	Bear (Rare drop or Unlock)
+26	Ugly Mace	0	-2	6	0	1% Critical Hit Chance	20	Industrialist (Rare drop or Unlock)
+27	Spiked Mace	1	0	1	1		10	Flowery Field (Dig Spot; hard to see, I recommend bringing Pazzo)
+28	Fish	2	-1	0	0		5	Tall Grass Field (Inside a cavern; use a sandwich on boulder before cliff)
+29	Wrapped Sword	-1	1	1	0		1	Thieves' Forest (Hidden behind a pillar right before the breakable wall)
+30	Skeletor Mace	-2	0	3	6		20	Skeleton (Rare drop or Unlock)
+31	Clunky Mace	5	0	0	-2		10	Volcano Store (340 Coins)
+32	Snakey Mace	0	5	-2	3	2% Critical Hit Chance	20	Snakey (Rare drop or Unlock)
+33	Rat-Bee-ting Bat	2	0	1	0		10	Beekeeper (Rare drop or Unlock)
+34	Black Morningstar	-3	6	1	0	1% Critical Hit Chance	20	Fire Demon (Rare drop or Unlock)
+35	King's Scepter	3	2	3	0		20	King's DLC or let the King die on insane mode FloweryField (Don't attack)
+36	Meat Tenderizer	2	0	0	-1		1	Thieves' Forest (Inside 1st Chest)
+37	Leaf	-1	3	-1	0		5	Forest Entrance (Dig Spot near the very end)
+38	Sheathed Sword	0	0	0	0		1	Default (Blue Knight)
+39	Practice Foil	0	1	-1	3		10	Church Store (415 Coins)
+40	Twig	-1	2	-1	0		1	Thieves' Store (65 Coins)
+41	Leafy Twig	-1	0	-1	2		1	Thieves' Forest (In the 2nd chest)
+42	Lightsaber	0	0	0	1	1% Lightning Attack	10	Conehead (100% Drop from final conehead in Cyclops Foretress)
+43	Magical Cane	0	4	-1	0		10	Church Store (390 Coins)
+44	Wooden Spoon	0	-1	0	2		1	Unlock Peasant
+45	Skeleton Leg	-2	0	0	5	1% Critical Hit Chance	15	Snow Store (Dig Spot - Pazzo Required)
+46	Alien Gun	0	0	0	0		0	Unlocking Alien Hominid (Get 1 Achievement in Alien Hominid HD)
+47	Harpoon	5	2	0	-3		15	Iceskimo (Rare drop or Unlock)
+48	Lance	4	0	2	-2		15	Snow Store (600 Coins)
+49	Sai	0	0	-2	6	1% Critical Hit Chance	20	Ninja (Rare drop or Unlock)
+50	Unicorn Horn	-3	6	1	0		20	Kill Painter while his Unicorn painting is on screen
+51	Ribeye	4	-2	0	4	1% Critical Hit Chance	20	Ice Castle (In plain sight right before breaking down the door)
+52	Kielbasa	1	1	0	0	1% Critical Hit Chance	10	Desert Chase (1st Dig spot)
+53	Lobster	-1	0	0	1		5	Tall Grass Field (Dig at very start of level)
+54	Umbrella	-2	0	3	0		5	Tall Grass Field (Dig near partway through; Pazzo heavily recommended)
+55	Broad Ax	0	0	0	0		1	Default (Orange Knight)
+56	Necromancer's Sword	0	2	7	0		20	Necromancer Pack DLC or Necromancer drop
+57	Ice Sword	0	0	0	0	2% Freeze Strike	20	Ice Castle (Hidden Dig Spot, Pazzo is required unless you know where it is)
+58	Candlestick	-1	1	0	0	1% Flame Strike	15	Marsh (Dig spot in front of two houses)
+59	Panic Mallet	1	0	0	0	2% Critical Hit Chance	15	Marsh (Inside a gravestone near the start of the level [near top right]
+60	Fishing Rod	-1	-1	-1	0		1	Marsh (Bring Cardinal; it will bring it to you near the start)
+61	Wrench	1	-1	0	0	1% Critical Hit Chance	5	Tall Grass Field (Near the start of the level, hidden behind the catapult)
+62	NG Lollipop	0	0	0	5		1	Pink Knight Pack or King Pack DLC
+63	Gold Skull Mace	2	0	0	0	3% Critical Hit Chance	30	Necromancer DLC or Insane Store (PS3 Only)
+64	NG Gold Sword	4	3	0	-3		30	King Pack DLC or Insanee Store (PS3 Only)
+65	Chainsaw	0	0	4	0	2% Critical Hit Chance	30	Necromancer DLC or Insane Store (PS3 only)
+66	Broad Spear	-2	0	0	4	1% Critical Hit Chance	15	Medusa's Lair (Destroy the 3rd Fish Man statue)
+67	Glowstick	-4	5	5	0	1% Critical Hit Chance	20	Necromancer DLC or Cultist (Drop-only)
+68	Chicken	0	2	-1	1		5	Snow World (Dig spot near the end of the level; in the snow village
+69	Dragon Sword	2	2	0	2	2% Flame Strike	20	Final Battle (100% drop by Evil Wizard)
+70	Broccoli Stick	0	0	0	0		1	Pink Knight Pack DLC
+71	Man Catcher	4	0	2	-2		35	Legend of the Blacksmith DLC
+72	Wooden Ladle	0	0	2	2		20	Wizard Castle Interior (Dig spot [Crossbone look in room with the 2nd fight)
+73	Ninja Claw	0	3	0	4		35	Can't Stop Crying DLC
+74	Buffalo Mace	4	0	1	-3		30	Pink Knight Pack DLC
+75	Electric Eel	0	2	-1	0	1% Lightning Attack	30	Pink Knight Pack DLC
+76	Scissors	0	0	3	-2		5	Pink Knight Pack DLC
+77	Dinner Forkats : +3 Magic, -2 Defense ; 1% Poison Strike	0	0	0	0		15	Legend of the Blacksmith DLC
+78	Cattle Prodtats : +3 Defense ; 1% Lightning Strike	0	0	0	0		30	Legend of the Blacksmith DLC
+79	LightningBolttats : +3 Magic	0	0	0	0		10	Can't Stop Crying DLC
+80	2x4tats : +2 Strength, -3 Magic, +2 Defense	0	0	0	0		10	Removed (Unlockable by having someone who has the weapon drop)
+81	Wooden Swordtats : +1 Strength, +1 Agility	0	0	0	0		6	Castle Keep (400 Coins [Insane Mode Only])
+82	Cardboard Tubetats : -2 Strength, +6 Agility	0	0	0	0		15	Can't Stop Crying DLC
+83	Gem Swordtats : +3 Magic, -1 Agility	0	0	0	0		1	Can't Stop Crying DLC
+84	The Blacksmith's Hammertats : +3 Strength, -1 Agility	0	0	0	0		1	Legend of the Blacksmith DLC
