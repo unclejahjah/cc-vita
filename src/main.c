@@ -9,6 +9,7 @@
 // right stick flicked left/right: previous/next item.
 // SELECT+UP shows the stats overlay, SELECT+START quits.
 #include <psp2/ctrl.h>
+#include <psp2/display.h>
 #include <psp2/io/fcntl.h>
 #include <psp2/kernel/processmgr.h>
 #include <psp2/kernel/threadmgr.h>
@@ -1137,8 +1138,17 @@ new_game:   // the title again after Exit to Main Menu
             build_ms += (sceKernelGetProcessTimeWide() - t0) / 1000.0f;
         }
 
+        // A new picture comes only with a game frame, 30 a second. Drawing it again in between
+        // showed the same frame twice and doubled the GPU's work: the map (66k triangles, ~22 ms
+        // of GPU a frame) then missed every other vblank and ran unevenly at 45 fps. The pause
+        // menu animates on its own and is drawn every vblank.
+        if (!ticked && !pause.open) {
+            sceDisplayWaitVblankStart();
+            continue;
+        }
         vita2d_set_clear_color(RGBA8(start->bg[0], start->bg[1], start->bg[2], 255));
-        draw_frame(&vb, heat_clock++);
+        draw_frame(&vb, heat_clock);
+        if (ticked) heat_clock += 2;   // the shimmer's speed, as when it was drawn 60 times a second
         if (pause.open) pause_draw(&pause);
         int ach = cc_achievement_take_new();
         if (trophies && cc_achievements() != trophies_synced) {
@@ -1148,9 +1158,9 @@ new_game:   // the title again after Exit to Main Menu
 #endif
             trophies_synced = cc_achievements();
         }
-        if (ach) { ach_shown = ach; ach_timer = 60 * 4; }
+        if (ach) { ach_shown = ach; ach_timer = 30 * 4; }
         if (ach_timer > 0) {   // a banner at the top for four seconds
-            ach_timer--;
+            if (ticked) ach_timer--;
             vita2d_draw_rectangle(SCREEN_W / 2 - 230, 14, 460, 64, RGBA8(0, 0, 0, 170));
             outlined_text(SCREEN_W / 2 - 210, 40, 0.9f, "Achievement unlocked");
             outlined_text(SCREEN_W / 2 - 210, 68, 1.0f, cc_achievement_name(ach_shown));
@@ -1159,7 +1169,7 @@ new_game:   // the title again after Exit to Main Menu
             unsigned ink = RGBA8(255, 255, 255, 255);
             vita2d_draw_rectangle(0, 0, SCREEN_W, 64, RGBA8(0, 0, 0, 150));
             vita2d_pgf_draw_textf(g_font, 12, 24, ink, 0.8f,
-                                  "%.0f fps   script %.1f ms   build %.1f ms   %d tris  %d draws  cpu-coloured %d   heap %u objs",
+                                  "%.0f/30 fps   script %.1f ms   build %.1f ms   %d tris  %d draws  cpu-coloured %d   heap %u objs",
                                   fps, shown_tick, shown_build, render_stats.triangles, render_stats.draws,
                                   render_stats.cx_tris, (unsigned)vm->heap_count);
             vita2d_pgf_draw_textf(g_font, 12, 50, ink, 0.8f, "%d files, %.1f MB GPU, heap %.1f of %d MB   %s",
