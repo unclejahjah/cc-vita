@@ -5,7 +5,7 @@
 #include "swf.h"
 
 enum { CC_BTN_CROSS, CC_BTN_CIRCLE, CC_BTN_SQUARE, CC_BTN_TRIANGLE };
-enum { CC_BTN_STYLE_COLOURED, CC_BTN_STYLE_DARK };   // the game's coloured balls / PlayStation's dark buttons
+enum { CC_BTN_STYLE_COLOURED, CC_BTN_STYLE_DARK, CC_BTN_STYLE_GREY };   // the game's coloured balls / dark / grey PlayStation buttons
 
 // Redraws a movie's exported button clips (A/B/X/Y balls, LT/RT triggers) as
 // Cross/Circle/Square/Triangle and L/R. Call after swf_load, before tessellating.
