@@ -35,6 +35,7 @@ int _newlib_heap_size_user = 160 * 1024 * 1024;
 
 #define DATA_DIR "ux0:data/CastleCrashers/"
 #define SAVE_PATH DATA_DIR "save.dat"   // the game's storage (profiles, levels, unlocks)
+#define ACH_PATH DATA_DIR "achievements.dat"
 #define MAX_BATCH 65535   // u16 indices; a multiple of 3
 #define SCREEN_W 960.0f
 #define SCREEN_H 544.0f
@@ -458,14 +459,14 @@ static void map_pad(const SceCtrlData *pad, int debug, int in_game) {
 // tells the scripts through g_nPort<n>State: 2 paused, 1 playing, 3 quit to the map.
 
 typedef struct {
-    int open, sel, page;       // page 0: the menu, 1: controls
+    int open, sel, page;       // page 0: the menu, 1: controls, 2: achievements
     DrawList art;              // the pause book, drawn over the frozen game
     int have_art;
     float book[4];             // where the book is on screen
 } Pause;
 
-static const char *PAUSE_ITEMS[] = {"Resume", "Controls", "Quit to Map"};
-#define NPAUSE_ITEMS 3
+static const char *PAUSE_ITEMS[] = {"Resume", "Controls", "Achievements", "Quit to Map"};
+#define NPAUSE_ITEMS 4
 
 static int in_level(AsVm *vm) {
     int found;
@@ -519,7 +520,7 @@ static void pause_set_state(AsVm *vm, int state) { cc_set_flash_global(vm, "g_nP
 
 // one frame of the open menu: returns 1 while it stays open
 static int pause_input(Pause *ps, AsVm *vm, unsigned pressed) {
-    if (ps->page == 1) {   // controls page: any of these goes back
+    if (ps->page) {   // controls or achievements page: any of these goes back
         if (pressed & (SCE_CTRL_CIRCLE | SCE_CTRL_CROSS | SCE_CTRL_START)) ps->page = 0;
         return 1;
     }
@@ -528,7 +529,7 @@ static int pause_input(Pause *ps, AsVm *vm, unsigned pressed) {
     if (pressed & (SCE_CTRL_CIRCLE | SCE_CTRL_START)) { pause_set_state(vm, 1); return 0; }
     if (pressed & SCE_CTRL_CROSS) {
         if (ps->sel == 0) { pause_set_state(vm, 1); return 0; }
-        if (ps->sel == 1) { ps->page = 1; return 1; }
+        if (ps->sel == 1 || ps->sel == 2) { ps->page = ps->sel; return 1; }
         pause_set_state(vm, 3);   // the scripts take the party back to the map
         return 0;
     }
@@ -557,9 +558,20 @@ static void pause_draw(Pause *ps) {
         vita2d_pgf_draw_text(g_font, x0, y0 + 9 * 26 + 14, hi, 0.9f, "Circle: back");
         return;
     }
+    if (ps->page == 2) {
+        unsigned got = cc_achievements(), dim = RGBA8(150, 130, 100, 255);
+        int n = 0;
+        for (int id = 1; id <= CC_ACHIEVEMENTS; id++) n += got >> id & 1;
+        vita2d_pgf_draw_textf(g_font, x0, y0 - 30, ink, 1.0f, "Achievements  %d / %d", n, CC_ACHIEVEMENTS);
+        for (int id = 1; id <= CC_ACHIEVEMENTS; id++)
+            vita2d_pgf_draw_textf(g_font, x0, y0 + (id - 1) * 21, got >> id & 1 ? ink : dim, 0.75f, "%s %s",
+                                  got >> id & 1 ? "[x]" : "[  ]", cc_achievement_name(id));
+        vita2d_pgf_draw_text(g_font, x0, y0 + CC_ACHIEVEMENTS * 21 + 10, hi, 0.9f, "Circle: back");
+        return;
+    }
     vita2d_pgf_draw_text(g_font, x0, y0, ink, 1.2f, "Paused");
     for (int i = 0; i < NPAUSE_ITEMS; i++)
-        vita2d_pgf_draw_textf(g_font, x0 + 10, y0 + 50 + i * 40, i == ps->sel ? hi : ink, 1.1f, "%s%s",
+        vita2d_pgf_draw_textf(g_font, x0 + 10, y0 + 45 + i * 34, i == ps->sel ? hi : ink, 1.1f, "%s%s",
                               i == ps->sel ? "> " : "  ", PAUSE_ITEMS[i]);
 }
 
@@ -729,6 +741,7 @@ int main(void) {
     }
 
     cc_storage_load(SAVE_PATH);
+    cc_achievements_load(ACH_PATH);
     // the game's words (from the user's castle.exe by extract_strings.py), then Vita wording
     strtab_load(DATA_DIR "strings_en.txt");
     strtab_load(DATA_DIR "strings_vita_en.txt");
@@ -782,6 +795,7 @@ int main(void) {
     float fps = 0, tick_ms = 0, build_ms = 0, shown_tick = 0, shown_build = 0;
     int frames = 0, ticks = 0;
     unsigned heat_clock = 0;
+    int ach_shown = 0, ach_timer = 0;   // the "achievement unlocked" banner
     uint32_t last_free = 0;
     const SceUInt64 tick_us = 1000000 / 30;   // the game's frame rate
 
@@ -853,6 +867,14 @@ int main(void) {
         vita2d_set_clear_color(RGBA8(start->bg[0], start->bg[1], start->bg[2], 255));
         draw_frame(&vb, heat_clock++);
         if (pause.open) pause_draw(&pause);
+        int ach = cc_achievement_take_new();
+        if (ach) { ach_shown = ach; ach_timer = 60 * 4; }
+        if (ach_timer > 0) {   // a banner at the top for four seconds
+            ach_timer--;
+            vita2d_draw_rectangle(SCREEN_W / 2 - 230, 14, 460, 64, RGBA8(0, 0, 0, 170));
+            outlined_text(SCREEN_W / 2 - 210, 40, 0.9f, "Achievement unlocked");
+            outlined_text(SCREEN_W / 2 - 210, 68, 1.0f, cc_achievement_name(ach_shown));
+        }
         if (overlay) {
             unsigned ink = RGBA8(255, 255, 255, 255);
             vita2d_draw_rectangle(0, 0, SCREEN_W, 64, RGBA8(0, 0, 0, 150));
