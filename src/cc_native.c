@@ -332,12 +332,12 @@ static int power_rect(AsMc *panel, float r[4]) {
 
 static int hl_item;   // which button it is round
 
-// what to draw over the menu, and its matrix in the panel: the frame, or round the power
-// button (whose own glow cc_menu_power_button draws: the frame's art won't go square) its icon
+// what to draw over the menu, and its matrix in the panel: the highlight's icon (its frame's
+// art won't go round every button, so cc_menu_power_button draws the glow)
 AsMc *cc_menu_highlight_clip(AsMc *panel, Mat *m) {
     AsMc *hl = panel_child(panel, HIGHLIGHT_DEPTH);
     *m = (Mat){1, 0, 0, 1, 0, 0};
-    if (!hl || hl_item != CC_MENU_QUIT) return hl;
+    if (!hl) return NULL;
     for (int i = 0; i < hl->ndisp; i++)
         if (hl->disp[i].kind == DISP_MC && hl->disp[i].mc) {
             *m = hl->m;
@@ -348,17 +348,19 @@ AsMc *cc_menu_highlight_clip(AsMc *panel, Mat *m) {
 
 
 void cc_menu_highlight(AsVm *vm, AsMc *panel, int item) {
-    // the buttons keep their size; the file's highlight frame goes round the chosen one, with
-    // the accept button (Cross) on its corner, as the newer menu shows it
+    // the buttons keep their size; the chosen one glows (drawn, cc_menu_power_button) with the
+    // accept button (Cross) on its bottom-right corner, as the newer menu shows the power button
     AsMc *hl = panel_child(panel, HIGHLIGHT_DEPTH), *b = panel_child(panel, MENU_DEPTH[item]);
     if (!hl || !b) return;
     hl_item = item;
-    float r[4], nb[4];
-    if (item == CC_MENU_QUIT) {
-        if (!power_rect(panel, r)) return;
-    } else {
-        render_mc_bounds(b, b->m, r);
-    }
+    float r[4], pr[4], nb[4];
+    if (!power_rect(panel, pr)) return;
+    if (item == CC_MENU_QUIT) memcpy(r, pr, sizeof r);
+    else render_mc_bounds(b, b->m, r);
+    // the frame fitted to a power-button-sized square on that corner puts the icon there
+    float size = pr[2] - pr[0];
+    r[0] = r[2] - size;
+    r[1] = r[3] - size;
     r[0] -= hl_pad[0]; r[1] -= hl_pad[1]; r[2] += hl_pad[2]; r[3] += hl_pad[3];
     render_mc_shape_bounds(hl, (Mat){1, 0, 0, 1, 0, 0}, nb);   // the frame, not its icon
     if (nb[2] <= nb[0] || nb[3] <= nb[1]) return;
@@ -389,12 +391,31 @@ static void tri(Tris *t, float x0, float y0, float x1, float y1, float x2, float
     }
 }
 
-// a square with its corners cut by c, inset by e from (x, y, size)
-static void octagon(Tris *t, float x, float y, float size, float cut, float e, float dy, const uint8_t col[4]) {
-    float x0 = x + e, y0 = y + e + dy, x1 = x + size - e, y1 = y + size - e + dy, c = cut - e * 0.4f;
+// a w x h box with its corners cut by c, inset by e from (x, y)
+static void octagon_wh(Tris *t, float x, float y, float w, float h, float cut, float e, float dy, const uint8_t col[4]) {
+    float x0 = x + e, y0 = y + e + dy, x1 = x + w - e, y1 = y + h - e + dy, c = cut - e * 0.4f;
     float p[16] = {x0 + c, y0, x1 - c, y0, x1, y0 + c, x1, y1 - c, x1 - c, y1, x0 + c, y1, x0, y1 - c, x0, y0 + c};
     float cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
     for (int i = 0; i < 8; i++) tri(t, cx, cy, p[i * 2], p[i * 2 + 1], p[(i + 1) % 8 * 2], p[(i + 1) % 8 * 2 + 1], col);
+}
+
+// the band between two of those insets (e0 outside e1): a glow that leaves the inside alone
+static void band_wh(Tris *t, float x, float y, float w, float h, float cut, float e0, float e1, const uint8_t col[4]) {
+    float p[2][16];
+    for (int k = 0; k < 2; k++) {
+        float e = k ? e1 : e0, x0 = x + e, y0 = y + e, x1 = x + w - e, y1 = y + h - e, c = cut - e * 0.4f;
+        float q[16] = {x0 + c, y0, x1 - c, y0, x1, y0 + c, x1, y1 - c, x1 - c, y1, x0 + c, y1, x0, y1 - c, x0, y0 + c};
+        memcpy(p[k], q, sizeof q);
+    }
+    for (int i = 0; i < 8; i++) {
+        int j = (i + 1) % 8;
+        tri(t, p[0][i * 2], p[0][i * 2 + 1], p[0][j * 2], p[0][j * 2 + 1], p[1][j * 2], p[1][j * 2 + 1], col);
+        tri(t, p[0][i * 2], p[0][i * 2 + 1], p[1][j * 2], p[1][j * 2 + 1], p[1][i * 2], p[1][i * 2 + 1], col);
+    }
+}
+
+static void octagon(Tris *t, float x, float y, float size, float cut, float e, float dy, const uint8_t col[4]) {
+    octagon_wh(t, x, y, size, size, cut, e, dy, col);
 }
 
 static void disc(Tris *t, float cx, float cy, float r, const uint8_t col[4]) {
@@ -427,11 +448,20 @@ int cc_menu_power_button(AsMc *panel, Mat screen, CcVert *out, int max) {
     static const uint8_t outline[4] = {58, 58, 60, 255}, red[4] = {190, 78, 81, 255}, red_dark[4] = {118, 66, 68, 255},
                          rim[4] = {72, 72, 74, 255}, white[4] = {255, 255, 252, 255};
     uint8_t face[4] = {116, 116, 116, 255}, glow[4] = {124, 124, 124, 255};
-    if (lit) {   // chosen: the face lights up, in a cream glow like the other buttons' frame
+    static const uint8_t haze[4] = {255, 244, 196, 70}, ring[4] = {255, 246, 206, 255};
+    if (lit) {   // chosen: the face lights up, in the cream glow
         for (int k = 0; k < 3; k++) { face[k] = 150; glow[k] = 160; }
-        static const uint8_t haze[4] = {255, 244, 196, 70}, ring[4] = {255, 246, 206, 255};
         octagon(&t, x, y, size, cut, -size * 0.11f, 0, haze);
         octagon(&t, x, y, size, cut, -size * 0.06f, 0, ring);
+    } else {   // the same glow round the chosen one of the others (drawn over them: a band)
+        AsMc *b = panel_child(panel, MENU_DEPTH[hl_item]);
+        float bb[4];
+        if (b && (render_mc_bounds(b, b->m, bb), bb[2] > bb[0])) {
+            float bx = m.a * bb[0] + m.c * bb[1] + m.tx, by = m.b * bb[0] + m.d * bb[1] + m.ty;
+            float bw = m.a * (bb[2] - bb[0]), bh = m.d * (bb[3] - bb[1]);
+            band_wh(&t, bx, by, bw, bh, bh * 0.17f, -size * 0.11f, -size * 0.06f, haze);
+            band_wh(&t, bx, by, bw, bh, bh * 0.17f, -size * 0.06f, size * 0.01f, ring);
+        }
     }
     octagon(&t, x, y, size, cut, 0, 0, outline);
     octagon(&t, x, y, size, cut, size * 0.05f, 0, red_dark);              // the frame, darker at the bottom
