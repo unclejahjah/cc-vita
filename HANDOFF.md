@@ -108,6 +108,26 @@ Research:
 Files now on the Vita: uncut (FRESH) files except MENU, MAIN, PLAYER (originals).
 Jah asked for future work to start in a new thread to save usage; this list is the starting point.
 
+## Done in the cloud (2026-10-20 afternoon; game data in the private project folder gamedata/cc-cloud.zip)
+- Cyclops' Cave (LEVEL37) black screen: a full-screen radial vignette (shape 165, transparent
+  centre, black edge) is one rectangle; gradient colours were only taken at vertices. Gradient
+  triangles are now subdivided (render.c gradient_tri). LEVEL4 63k -> 87k triangles.
+- Pirate Ship (LEVEL40) sea over the ship: cc_repair_level added bg1_c/bg3_c on top of the game.
+  LEVEL40 is whole and names its layers b0-b3. Layer repair now only for truncated files.
+- Vita Edition badge: the Steam lettering is white loops in MENU shape 601 (dropped), no box.
+- Achievements: UnlockAchievement(port, id 1-12) -> achievements.dat, banner, pause menu page.
+- Checked OK in hosttest: LEVEL36 boss_intro cutscene ends (f_SpawnBoss); regression of all
+  levels with the 55 complete files (only new warning: LEVEL60 fp_HorseRide undefined, also on
+  LEVEL18 p1.body; the FRESH levels call it, original MAIN lacks it: mounts may need a stub).
+- Owlet (LEVEL18, animal 2 at animal_pt 3796,-230): collect needs |dx|<50, |dy|<20; the walkable
+  strip behind the bush reaches y -244, so it is reachable. Shipping PDAG BSP (bsps/BSPn.PDAG:
+  "GADP", 3 zero ints, a_BSP length, then a_BSP as float32 from offset 20, waypoints after) has
+  the same walls there as the edge-clip BSP.
+- Level map: 18 Forest Entrance, 4 Thieves' Forest, 36 Undead Cyclops, 37 Cyclops' Cave, 40 Pirate
+  Ship, 24/46-49 arenas. Arena mode needs GetGameMode()==3 (always 0 here).
+- Cloud harness: start MAIN.swf, CC_KEYS="150:83,300:2,450:49,600:2,750:83" reaches LEVEL2 on a
+  fresh save; CC_CALL "900:f_ChangeLevel:'../levelN/levelN.swf" jumps to any level.
+
 ## Next (in order)
 1. Parity sweep with the 100% Blue Knight save: shops, animal orbs, Insane Mode, Arena,
    mini-games, items (bombs, horn, boomerang, shovel), HUD, relics.
