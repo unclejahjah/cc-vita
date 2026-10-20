@@ -459,6 +459,8 @@ static Font *parse_font(const uint8_t *d, size_t len, size_t pos, size_t end, in
     return f;
 }
 
+void (*swf_bitmap_loaded)(Bitmap *bm);
+
 // DefineBitsLossless (20) / DefineBitsLossless2 (36).
 static Bitmap *parse_lossless(const uint8_t *d, size_t body, size_t len, int code) {
     if (len < 7) return NULL;
@@ -474,11 +476,15 @@ static Bitmap *parse_lossless(const uint8_t *d, size_t body, size_t len, int cod
     uint8_t *raw = malloc(raw_len);
     if (!raw) return NULL;
     if (uncompress(raw, &raw_len, p + hdr, len - hdr) != Z_OK) { free(raw); return NULL; }
-    Bitmap *bm = calloc(1, sizeof(Bitmap));
+    // 32-bit pixels are turned into RGBA where they are: a 2048x2048 sky is 16 MB, and a
+    // second buffer of that size may not be there on the Vita
+    uint8_t *rgba = fmt == 5 ? raw : malloc((size_t)w * h * 4);
+    Bitmap *bm = rgba ? calloc(1, sizeof(Bitmap)) : NULL;
+    if (!bm) { if (rgba != raw) free(rgba); free(raw); return NULL; }
     bm->id = p[0] | (p[1] << 8);
     bm->w = w;
     bm->h = h;
-    bm->rgba = malloc((size_t)w * h * 4);
+    bm->rgba = rgba;
     for (int y = 0; y < h; y++) {
         const uint8_t *row = raw + ncolors * csize + stride * y;
         for (int x = 0; x < w; x++) {
@@ -491,15 +497,16 @@ static Bitmap *parse_lossless(const uint8_t *d, size_t body, size_t len, int cod
                 int v = row[x * 2] << 8 | row[x * 2 + 1];
                 o[0] = ((v >> 10) & 31) * 255 / 31; o[1] = ((v >> 5) & 31) * 255 / 31; o[2] = (v & 31) * 255 / 31; o[3] = 255;
             } else {
-                const uint8_t *c = row + x * 4;   // A (or reserved), R, G, B
-                o[3] = alpha ? c[0] : 255;
-                o[0] = c[1]; o[1] = c[2]; o[2] = c[3];
+                const uint8_t *c = row + x * 4;   // A (or reserved), R, G, B; o is the same pixel
+                uint8_t a = c[0], r = c[1], g = c[2], b = c[3];
+                o[0] = r; o[1] = g; o[2] = b; o[3] = alpha ? a : 255;
             }
             if (alpha && o[3] && o[3] < 255)   // Lossless2 colours are premultiplied
                 for (int k = 0; k < 3; k++) { int v = o[k] * 255 / o[3]; o[k] = v > 255 ? 255 : v; }
         }
     }
-    free(raw);
+    if (rgba != raw) free(raw);
+    if (swf_bitmap_loaded) swf_bitmap_loaded(bm);
     return bm;
 }
 

@@ -183,6 +183,9 @@ typedef struct {
 } Movie;
 
 Movie *swf_load(const char *path, char *err, int errlen);
+// called for each bitmap as soon as it is decoded, so the platform can take the pixels
+// (and free rgba) before the next one: big files then never hold all their pixels at once
+extern void (*swf_bitmap_loaded)(Bitmap *bm);
 void swf_free(Movie *m);
 int sprite_frame_at(const Sprite *s, int tick);
 int sprite_find_label(const Sprite *s, const char *name);
