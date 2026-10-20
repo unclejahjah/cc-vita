@@ -2,7 +2,9 @@
 
 This is the start of a native Castle Crashers port for the PS Vita. Right now it's a renderer test: it plays any animation from PLAYER.swf on the GPU.
 
-No game data is included. At runtime the app reads the SWF files from your own copy of the game.
+No game data is included, and none may ever be committed (see `.gitignore`). At runtime the app reads the SWF files from your own copy of the game, so running or testing needs those files from the PC install.
+
+Repo layout: `src/` engine, `tools/` desktop host test and analysis scripts, `HANDOFF.md` current state, `docs/research/` research notes, `prototypes/` older cloud-built pieces (already merged or superseded).
 
 ## Build (VitaSDK)
 
