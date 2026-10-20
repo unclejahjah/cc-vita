@@ -649,6 +649,14 @@ static int in_level(AsVm *vm) {
     return found && g.t == V_OBJ && g.o->type == OBJ_MC;
 }
 
+// the world map (MAP.swf in the level slot): the executable's pause menu opens there too
+static int in_map(AsVm *vm) {
+    int found;
+    AsVal l = as_resolve_path(vm, vm->root, "loader", &found);
+    Movie *map = cached_movie("MAP.swf");
+    return found && map && l.t == V_OBJ && l.o->type == OBJ_MC && ((AsMc *)l.o)->movie == map;
+}
+
 // the pause book from PAUSE.swf, centred, about 60% of the screen wide
 static void pause_build_art(Pause *ps) {
     Movie *pm = host_movie("PAUSE.swf");
@@ -752,9 +760,9 @@ static int pause_input(Pause *ps, AsVm *vm, unsigned pressed, float dt) {
     return 0;
 }
 
-static void pause_open(Pause *ps) {
+static void pause_open(Pause *ps, int on_map) {
     ps->open = 1;
-    pause_menu_open(&ps->m);
+    pause_menu_open(&ps->m, on_map);
 }
 
 static void vita_sound_start(AsVm *vm, const char *linkage, float volume, float pan, int loops, const void *owner) {
@@ -1039,18 +1047,18 @@ new_game:   // the title again after Exit to Main Menu
         int debug = pad.buttons & SCE_CTRL_SELECT;
         if (debug && (pressed & SCE_CTRL_START)) break;
         if (debug && (pressed & SCE_CTRL_UP)) overlay = !overlay;
-        // in a level, Start is the pause menu's (the executable's in the original)
-        int level = in_level(vm);
+        // in a level and on the map, Start is the pause menu's (the executable's in the original)
+        int level = in_level(vm), on_map = !level && in_map(vm);
         map_pad(&pad, debug, level);
-        if (level) cc_keys[K_START] = 0;
+        if (level || on_map) cc_keys[K_START] = 0;
         if (pause.open) {
             float dt = (sceKernelGetProcessTimeWide() - prev) / 1000000.0f;
             int r = pause_input(&pause, vm, nav, dt > 0.1f ? 0.1f : dt);
             if (r == 2) exit_to_title = 1;
             memset(cc_keys, 0, sizeof cc_keys);
-        } else if (level && !debug && (pressed & SCE_CTRL_START) &&
+        } else if ((level || on_map) && !debug && (pressed & SCE_CTRL_START) &&
                    !as_tobool(vm, cc_flash_global(vm, "g_bNoPause"))) {
-            pause_open(&pause);
+            pause_open(&pause, on_map);
             pause_set_state(vm, 2);
             log_flush();   // the log is complete while paused (to copy it off by FTP)
             if (!pause.have_art) pause_build_art(&pause);

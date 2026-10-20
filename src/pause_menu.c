@@ -20,6 +20,8 @@ typedef struct { const char *text; int act; } Line;   // act A_NONE: not selecta
 static int page_lines(const PauseMenu *pm, const char **title, const Line **lines) {
     static const Line main_lines[] = {{"Resume Game", A_RESUME}, {"Help & Options", A_HELP}, {"Information", A_INFO},
                                       {"Exit To Map", A_MAP},    {"Exit to Main Menu", A_EXIT}};
+    static const Line map_main_lines[] = {{"Resume Game", A_RESUME}, {"Help & Options", A_HELP},
+                                          {"Information", A_INFO}, {"Exit to Main Menu", A_EXIT}};
     static const Line info_lines[] = {{"Achievements", A_ACHIEVEMENTS}};
     // page 3 of the original: the question, No, Yes, and the warning
     static const Line map_lines[] = {{"Are You Sure?", 0}, {"", 0}, {"No", A_NO}, {"Yes", A_YES},
@@ -28,6 +30,7 @@ static int page_lines(const PauseMenu *pm, const char **title, const Line **line
                                       {"Yes", A_YES}, {"", 0}, {"You will lose any", 0}, {"unsaved progress", 0}};
     *title = NULL;
     *lines = NULL;
+    if (pm->page == PG_MAIN && pm->on_map) { *title = "Paused"; *lines = map_main_lines; return 4; }
     if (pm->page == PG_MAIN) { *title = "Paused"; *lines = main_lines; return 5; }
     if (pm->page == PG_INFO) { *title = "Information"; *lines = info_lines; return 1; }
     if (pm->page == PG_CONFIRM) { *lines = pm->confirm ? exit_lines : map_lines; return 7; }
@@ -43,10 +46,11 @@ static void go(PauseMenu *pm, int page, int sel) {
     pm->flash = 0;
 }
 
-void pause_menu_open(PauseMenu *pm) {
+void pause_menu_open(PauseMenu *pm, int on_map) {
     float clock = pm->clock;
     memset(pm, 0, sizeof *pm);
     pm->clock = clock;   // the helmets drift on from where they were
+    pm->on_map = on_map;
     go(pm, PG_MAIN, 0);
 }
 
@@ -55,7 +59,7 @@ static int run(PauseMenu *pm, int act) {
     switch (act) {
     case A_BACK:
         if (pm->page == PG_INFO) { go(pm, PG_MAIN, 2); return PM_OPEN; }
-        if (pm->page == PG_CONFIRM) { go(pm, PG_MAIN, pm->confirm ? 4 : 3); return PM_OPEN; }
+        if (pm->page == PG_CONFIRM) { go(pm, PG_MAIN, pm->confirm ? 4 - pm->on_map : 3); return PM_OPEN; }
         return PM_RESUME;   // Back on the menu itself
     case A_RESUME: return PM_RESUME;
     case A_HELP: pm->back_page = PG_MAIN; go(pm, PG_CONTROLS, 0); return PM_OPEN;
@@ -63,7 +67,7 @@ static int run(PauseMenu *pm, int act) {
     case A_ACHIEVEMENTS: pm->back_page = PG_INFO; go(pm, PG_ACHIEVEMENTS, 0); return PM_OPEN;
     case A_MAP: pm->confirm = 0; go(pm, PG_CONFIRM, 2); return PM_OPEN;
     case A_EXIT: pm->confirm = 1; go(pm, PG_CONFIRM, 2); return PM_OPEN;
-    case A_NO: go(pm, PG_MAIN, pm->confirm ? 4 : 3); return PM_OPEN;
+    case A_NO: go(pm, PG_MAIN, pm->confirm ? 4 - pm->on_map : 3); return PM_OPEN;
     case A_YES: return pm->confirm ? PM_TO_TITLE : PM_TO_MAP;
     }
     return PM_OPEN;
