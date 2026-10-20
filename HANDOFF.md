@@ -162,3 +162,31 @@ Both are the same developer-settings path as the magic bug, already fixed by pin
 - Loading screen: LOADING.swf runs over the game at depth 1048500 (`cc_loading_attach`); level loads are held (`vm->hold_load`) until it sets `g_bReadyToLoad`.
 - Pause menu = castle.exe's PauseMenu (2012 build, per myuu-151's recomp: facts only) in `src/pause_menu.c`: PAUSE.swf frame 2 backdrop, game font at castle.exe's sizes (the shipped font is drawn at 60 px, the exe's sizes are for 20), lines 30 px apart, pulsing yellow pick, 0.2 s flash/fade, Abutton/Bbutton prompts. Pages: Paused (Resume Game, Help & Options, Information, Exit To Map, Exit to Main Menu), Information (Achievements), Are You Sure? (No/Yes). Words copied from Jah's castle.exe (the numbered table there isn't readable: .text is SteamStub-packed). Help & Options and Achievements still open our own book pages; Weapon/Animal Statistics books not done. Exit to Main Menu frees the game VM and its files and goes back to the title. `hosttest --pause PAUSE.swf out [backdrop.ppm]` renders the pages.
 - Renderer bug fixed: `recolour` skipped the first vertex colour when it was opaque white (0xffffffff), so white shapes under a colour transform drew transparent black (PAUSE.swf's veil, and any white shape tinted by a script).
+
+## Open bugs from Jah's Vita test of cc_vita_pause.vpk (2026-10-20 19:46), findings so far
+- Black screen for a few seconds before character select. Before the render.c recolour fix
+  (116b763) it showed MAIN.swf's blue background colour (51,153,255) instead. In hosttest
+  (`--as MAIN.swf`) frames 0-100 are black, then character select shows at ~110. Hiding
+  `fader`, `cinema_fader` or `loader.game` (AS_HIDE) at frame 50 does not change the frame, so
+  what draws the black is not yet found. Next: find the clip, then check whether the original
+  shows that long a black (likely MAIN's own start-up fade, which the PC plays behind its logos).
+- Pause takes ~3 s to open: PAUSE.swf is loaded, tessellated and uploaded on the first Start
+  (host_movie in pause_draw). Fix: load it (and pause_build_art) at game start. NOTE: the Vita
+  has the ORIGINAL-build PAUSE.swf (245,204 B, from ..\cut-files-backup), the cloud zip has the
+  FRESH one (482 KB): check the pause menu backdrop (root frame 2) with the original file.
+- Animal orbs "missing everywhere"; Jah's example: Thieves' Forest (LEVEL4), the one in the
+  water. The scripts place it: animal2, type 21, at animal_pt (5454,-894), state 150, frame
+  4/24 ("lost"), drawn at the head of the river in hosttest, also with the Vita's own
+  original-build LEVEL4.swf and ANIMALS.swf and with CC_PS_BUTTONS and CC_FREE_UNUSED on. The
+  "orb" is the animal itself floating (body_y -35); ANIMALS.swf has no other orb art. Not yet
+  reproduced: the Vita must differ (save data: a player whose pet is that animal suppresses it;
+  or something Vita-only). Next: write warnings and load errors to a log file on the Vita
+  (vita_warn only keeps the last one) and have Jah visit the spot, then FTP the log.
+- Character select shows wrong player levels (still open, not investigated this round).
+- Files on the Vita: the 55 in ..\restored_original_build.txt are the original-build (cut)
+  copies from ..\cut-files-backup, then the 20 steam-complete files over them. The cloud zip's
+  game-files has the FRESH copies of many of those: tests in the cloud must swap in the
+  cut-files-backup copies (hosttest: build a game dir of symlinks with them copied over).
+- hosttest: CC_VIEW="x,y" scrolls loader.game.game so level point x,y+240 is at screen
+  (424,240)-ish: screen = 424 + x - vx, 480 + y + vy... e.g. CC_VIEW="5454,-654" centres
+  (5454,-894).

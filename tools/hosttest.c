@@ -723,6 +723,13 @@ static int as_mode(int argc, char **argv) {
                 }
                 hide(vm->root);
             }
+            if (getenv("CC_VIEW")) {   // CC_VIEW="x,y": snapshots with the level scrolled to put x,y top left
+                float vx = 0, vy = 0;
+                sscanf(getenv("CC_VIEW"), "%f,%f", &vx, &vy);
+                int found;
+                AsVal v = as_resolve_path(vm, vm->root, "loader.game.game", &found);
+                if (v.t == V_OBJ && v.o->type == OBJ_MC) { ((AsMc *)v.o)->m.tx = -vx * 20; ((AsMc *)v.o)->m.ty = -vy * 20; }
+            }
             if (getenv("AS_HIDE")) {   // AS_HIDE="path,path": hide clips in the snapshots (finding what draws what)
                 char buf[1024];
                 snprintf(buf, sizeof buf, "%s", getenv("AS_HIDE"));
