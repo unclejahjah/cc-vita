@@ -154,4 +154,5 @@ Both are the same developer-settings path as the magic bug, already fixed by pin
 
 ### Vita trophies (NoTrpDrm), 2026-10-20
 - `src/trophies.c`: sceNpTrophy with Rinnegatamante's NoTrpDrm plugin (`*main` → `ur0:tai/NoTrpDrm.suprx` or `ux0:tai/`). Comm id `CCRV00001_00` (param.sfo NP_COMMUNICATION_ID + `sce_sys/trophy/CCRV00001_00/TROPHY.TRP`). Each newly earned in-game achievement unlocks trophy id-1 (also syncs ones earned before). Without the plugin the context fails and only the in-game list is used.
+- ON HOLD (Jah 18:44): every build with the trophy code failed to start on the Vita ("Could not prepare the application to start"), even without the pack; default build has none (`-DCC_TROPHIES=ON` to try again). Suspects: the SceNpTrophy import itself, or the pack format.
 - `tools/scripts/make_trp.py` builds the unsigned pack at build time (TRP v2 header, dev flag 1, plain XML SFMs, drawn placeholder icons; `-DTROPHY_ICONS=dir` for real ICON0.PNG / TROPnnn.PNG, never committed). The TRP layout is from the PS3 format and untested on hardware: if the setup dialog errors, try dev flag 0 or a pack from withLogic's Vita TRP Builder.
