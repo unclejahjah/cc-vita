@@ -147,3 +147,7 @@ Jah asked for future work to start in a new thread to save usage; this list is t
    is 24 MB. Overlay shows heap use. hosttest CC_FREE_UNUSED=1 does the same (ASan-checked).
 4. Remaining blank lobby text (online-only screens).
 5. Performance (needs Vita overlay numbers), then Wi-Fi co-op.
+### Arena arrows + bombs not knocking down (Jah, 2026-10-20 16:00)
+Both are the same developer-settings path as the magic bug, already fixed by pinning `console_version` in level scripts (20867b8):
+- LEVEL24 (King's Arena) `f_Init` with `console_version` false forces `arena_mode = 1` (PvP arena setup: arrow weapon, PvP boundaries). With the pin, hosttest shows `arena_mode` 0, sword melee, player grounded.
+- Knock-down in `f_Damage` needs `round(resists[type]/25) < 4`; player resist = 40 + defense/2, so the dev stats (9999) blocked every knock-down. A fresh character (resist 40.5) is juggled and knocked down in hosttest (`CC_CALL 1500:f_Damage:loader.game.game.p1|#4|#4|#1|#10|#-30`).
