@@ -19,9 +19,10 @@ typedef struct {
     float alpha, flash, time;
     int flash_on;
     float clock;               // the backdrop's animation, in game frames (30 a second)
+    int on_map;                // opened on the world map: no Exit To Map line
 } PauseMenu;
 
-void pause_menu_open(PauseMenu *pm);
+void pause_menu_open(PauseMenu *pm, int on_map);
 // One frame (dt seconds) with the buttons pressed this frame. *sound: -1 none, 0 the move
 // sound, 1 the select one (PAUSE.swf's sound_toggle_b / sound_player_select).
 int pause_menu_update(PauseMenu *pm, unsigned pressed, float dt, int *sound);

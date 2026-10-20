@@ -868,7 +868,7 @@ static int pause_mode(int argc, char **argv) {
         fclose(bf);
     }
     PauseMenu pm = {0};
-    pause_menu_open(&pm);
+    pause_menu_open(&pm, getenv("CC_PAUSE_MAP") != NULL);
     // each step: buttons, then seconds to let pass before the picture
     static const struct { unsigned b; float wait; const char *what; } steps[] = {
         {0, 0.5f, "main"}, {PM_DOWN, 0.1f, "main, Help & Options chosen"}, {PM_DOWN, 0.05f, NULL},
