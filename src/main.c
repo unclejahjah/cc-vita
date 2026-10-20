@@ -796,6 +796,7 @@ int main(void) {
     cc_host_init(vm);
     as_render_init(vm);
     vm->root = as_mc_new(vm, start, &start->root, NULL, 0);
+    cc_loading_attach(vm);   // the game's loading screen over level changes
 
     SceCtrlData pad, old = {0};
     int overlay = 0;

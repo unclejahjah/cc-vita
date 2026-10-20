@@ -46,4 +46,6 @@ int cc_repair_level(Movie *m);
 extern void (*cc_music_play)(const char *name, int loop);
 extern void (*cc_music_stop)(void);
 
+// the game's loading screen (LOADING.swf) over everything, played around level changes
+void cc_loading_attach(AsVm *vm);
 #endif

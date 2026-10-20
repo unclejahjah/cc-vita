@@ -536,6 +536,7 @@ void as_mc_get_url(AsVm *vm, AsMc *base, AsVal url, AsVal target, int flags) {
 static void do_loads(AsVm *vm) {
     while (vm->loads) {
         AsLoad *l = vm->loads;
+        if (vm->hold_load && !l->target->removed && l->url[0] && vm->hold_load(vm, l->target, l->url)) return;
         vm->loads = l->next;
         if (AS_ENV("AS_LOADS"))
             as_warn(vm, "load '%s' into %s%s", l->url, as_mc_target_path(vm, l->target)->s, l->target->removed ? " (removed)" : "");

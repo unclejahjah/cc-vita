@@ -206,6 +206,8 @@ struct AsVm {
     // each tick, after the frame scripts ran and before onEnterFrame (host work that needs
     // freshly placed clips to have run their first frame)
     void (*after_frame_scripts)(AsVm *vm);
+    // a loadMovie about to run: return 1 to hold it (and the ones after it) until a later frame
+    int (*hold_load)(AsVm *vm, AsMc *target, const char *url);
     // the executable's text by number (TextField.ntext = N), or NULL
     const char *(*text_for_number)(AsVm *vm, int n);
     // native versions of hot script functions, by name (as_override)
@@ -283,6 +285,7 @@ int as_mc_frame_of(AsMc *mc, AsVal label);            // 0-based, -1 if none
 void as_mc_remove(AsVm *vm, AsMc *mc);
 AsMc *as_mc_child(AsMc *mc, AsStr *name);
 AsMc *as_mc_attach(AsVm *vm, AsMc *mc, AsStr *linkage, AsStr *name, int depth);
+AsMc *as_mc_create_empty(AsVm *vm, AsMc *parent, AsStr *name, int depth);
 void as_tick(AsVm *vm);                               // one frame of the whole tree
 AsVal as_mc_get_prop(AsVm *vm, AsMc *mc, int index);
 void as_mc_set_prop(AsVm *vm, AsMc *mc, int index, AsVal v);
