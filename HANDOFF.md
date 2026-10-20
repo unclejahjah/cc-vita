@@ -190,3 +190,17 @@ Both are the same developer-settings path as the magic bug, already fixed by pin
 - hosttest: CC_VIEW="x,y" scrolls loader.game.game so level point x,y+240 is at screen
   (424,240)-ish: screen = 424 + x - vx, 480 + y + vy... e.g. CC_VIEW="5454,-654" centres
   (5454,-894).
+
+### Fixes for Jah's 19:46 test (2026-10-20, cloud)
+- Black screen before character select: LOADING.swf never reads g_bLoading; the executable plays
+  its `loadingScreen` clip (frame 20 "loading" sets g_bReadyToLoad, "exit" ends it). Nothing played
+  it, so every load waited out the 90-frame timeout on a black screen. Now `loading_play`
+  (cc_host.c) plays it and sends it to "exit" once the file is in: the knight-and-gems screen
+  shows for ~1 s. GetLocalSecond (its hint picker) added.
+- Character select levels all 1: the uncut LOBBY.swf calls `_root.f_SafePlayerType`, which the
+  original MAIN.swf lacks; a native one (identity for 1-31) is put on _root.
+- Pause delay: PAUSE.swf and the pause book art load at game start (main.c).
+- Animal orbs: still not reproduced (hosttest draws LEVEL4's Seahorse at the river head). The Vita
+  now writes ux0:data/CastleCrashers/log.txt (previous run: log_prev.txt): each distinct warning
+  once, files loaded/freed with heap use, and the level's animal* clips whenever they change.
+  Next: Jah walks to the Seahorse spot, then FTP the log back.

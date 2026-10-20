@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #define ARG(i) ((i) < argc ? argv[i] : as_undef())
 
@@ -70,6 +71,14 @@ static AsVal ret_false(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
 static AsVal ret_zero(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
     (void)vm; (void)this_; (void)argc; (void)argv;
     return as_num(0);
+}
+
+// GetLocalSecond(): the clock's seconds (0-59); the loading screen picks its hint with it
+static AsVal local_second(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
+    (void)vm; (void)this_; (void)argc; (void)argv;
+    time_t t = time(NULL);
+    struct tm *tm = localtime(&t);
+    return as_num(tm ? tm->tm_sec : 0);
 }
 static AsVal ret_undef(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
     (void)vm; (void)this_; (void)argc; (void)argv;
@@ -488,15 +497,25 @@ static void after_frame_scripts(AsVm *vm) {
 }
 
 // ---- the loading screen -----------------------------------------------------------
-// The executable runs LOADING.swf over the game. It watches g_bLoading: when that comes
-// on it plays its intro, sets g_bReadyToLoad once the screen is covered, and plays its exit
-// (then HideLoadingScreen) when g_bLoading goes off again. The executable sets g_bLoading
-// around a level change and holds the file until the screen is covered; so does this.
+// The executable runs LOADING.swf over the game: around a level change it sets g_bLoading,
+// plays the intro, holds the file until the intro sets g_bReadyToLoad (the screen is
+// covered), then plays the exit (which calls HideLoadingScreen). So does this.
 #define LOADING_DEPTH 1048500
 static int load_wait, loading_shown;
 
 static AsMc *loading_screen(AsVm *vm) {
     return as_mc_child(vm->root, as_atom(vm, "cc_loading"));
+}
+
+// LOADING.swf never reads g_bLoading itself: the executable plays its loadingScreen clip
+// (stopped on frame 1; frame 20 "loading" sets g_bReadyToLoad and stops) and sends it to
+// "exit" once the file is in. Without that the screen stayed black for the whole timeout.
+static void loading_play(AsVm *vm, AsMc *ls, const char *label) {
+    AsMc *scr = as_mc_child(ls, as_atom(vm, "loadingScreen"));
+    if (!scr) return;
+    if (!label) { as_mc_goto(vm, scr, 1, 1); return; }
+    int f = as_mc_frame_of(scr, as_strv(as_str(vm, label)));
+    if (f >= 0) as_mc_goto(vm, scr, f, 1);
 }
 
 void cc_loading_attach(AsVm *vm) {
@@ -522,6 +541,7 @@ static int hold_load(AsVm *vm, AsMc *target, const char *url) {
         // its hint text asks _root for f_GetHint, which its own first frame defines
         as_set(vm, as_objv(&vm->root->obj), as_atom(vm, "f_GetHint"),
                as_get(vm, as_objv(&ls->obj), as_atom(vm, "f_GetHint")));
+        loading_play(vm, ls, NULL);
     }
     // the intro takes 20 frames; don't wait forever if it never says so
     return as_tonum(vm, cc_flash_global(vm, "g_bReadyToLoad")) != 1 && ++load_wait < 90;
@@ -530,11 +550,25 @@ static int hold_load(AsVm *vm, AsMc *target, const char *url) {
 // f_LoadNewLevel waits for loader.b_loaded after a loadMovie. Menus set it from
 // their own frame script, but level files never do: the executable sets it
 // once the file is in.
+// _root.f_SafePlayerType(p_type): the uncut LOBBY.swf asks MAIN for a character number it
+// can index the save with; the original MAIN.swf doesn't have it, so the character select's
+// levels all read as 1. Every character this build has is safe as it is.
+static AsVal safe_player_type(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
+    (void)this_;
+    int t = argc > 0 ? (int)as_tonum(vm, argv[0]) : 1;
+    return as_num(t >= 1 && t <= 31 ? t : 1);
+}
+
 static void on_loaded(AsVm *vm, AsMc *target) {
+    AsStr *fsp = as_atom(vm, "f_SafePlayerType");
+    if (as_get(vm, as_objv(&vm->root->obj), fsp).t == V_UNDEF)
+        as_def_fn(vm, &vm->root->obj, "f_SafePlayerType", safe_player_type);
     as_set(vm, as_objv(&target->obj), as_atom(vm, "b_loaded"), as_bool(1));
     if (is_level_slot(vm, target) && loading_shown) {   // the loading screen plays its exit
         loading_shown = 0;
         cc_set_flash_global(vm, "g_bLoading", as_num(0));
+        AsMc *ls = loading_screen(vm);
+        if (ls) loading_play(vm, ls, "exit");
     }
 }
 
@@ -659,6 +693,7 @@ void cc_host_init(AsVm *vm) {
     as_def_fn(vm, g, "AttachSkinGraphic", ret_undef);
     as_def_fn(vm, g, "UnlockAvatarItem", ret_undef);
     as_def_fn(vm, g, "HideLoadingScreen", ret_undef);
+    as_def_fn(vm, g, "GetLocalSecond", local_second);
     as_def_fn(vm, g, "InterpolationOff", ret_undef);
     as_def_fn(vm, g, "SetFlashController", ret_undef);
     as_def_fn(vm, g, "CheckSlowest", ret_undef);
