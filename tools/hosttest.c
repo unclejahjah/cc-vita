@@ -366,10 +366,10 @@ static int sprite_mode(int argc, char **argv) {
     return 0;
 }
 
-// CC_PS_BUTTONS: "dark", "grey", or anything else for the coloured balls
+// CC_PS_BUTTONS: "dark", "coloured" (the game's balls), or anything else for grey, as the Vita
 static int btn_style(void) {
     const char *v = getenv("CC_PS_BUTTONS");
-    return !strcmp(v, "dark") ? CC_BTN_STYLE_DARK : !strcmp(v, "grey") ? CC_BTN_STYLE_GREY : CC_BTN_STYLE_COLOURED;
+    return !strcmp(v, "dark") ? CC_BTN_STYLE_DARK : !strcmp(v, "coloured") ? CC_BTN_STYLE_COLOURED : CC_BTN_STYLE_GREY;
 }
 
 // Several clips' first frames in a row: --clips file.swf cid,cid,... out_prefix [cell_px] [art_px]
@@ -899,7 +899,7 @@ static int pause_mode(int argc, char **argv) {
     char err[256];
     Movie *m = swf_load(argv[2], err, sizeof err);
     if (!m) { fprintf(stderr, "%s\n", err); return 1; }
-    cc_buttons_playstation(m, CC_BTN_STYLE_COLOURED);
+    cc_buttons_playstation(m, CC_BTN_STYLE_GREY);
     if (getenv("CC_FONT_DIR")) {
         char fnt[600], dds[600];
         snprintf(fnt, sizeof fnt, "%s/synjUnicode_20.fnt", getenv("CC_FONT_DIR"));
