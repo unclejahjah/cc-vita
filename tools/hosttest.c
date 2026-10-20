@@ -719,8 +719,8 @@ static int as_mode(int argc, char **argv) {
                        prof_ms / (f - prof_from + 1), prof_max, prof_ops / (f - prof_from + 1));
         }
         if (f % every == 0 || f == frames - 1) {
+            static AsMc *panel;
             if (getenv("CC_MENU") && f == atoi(getenv("CC_MENU"))) {   // CC_MENU=frame: the Vita's title menu
-                static AsMc *panel;
                 if (!panel) {
                     cc_native_root_functions(vm, &vm->root->obj);
                     panel = cc_menu_attach(vm, vm->root->movie->stage_w * 0.226f, vm->root->movie->stage_h * 0.635f);
@@ -761,6 +761,20 @@ static int as_mode(int argc, char **argv) {
                 printf("  [heat] items 0..%d shimmer in %.0f,%.0f - %.0f,%.0f\n", vb.heat_at, vb.heat[0], vb.heat[1],
                        vb.heat[2], vb.heat[3]);
             rasterise(&vb);
+            if (panel) {   // the title's power sign, drawn over the frame as the Vita does
+                float dots[48 * 3], bar[4];
+                int n = cc_menu_power_icon(panel, screen, dots, 48, bar);
+                for (int d = 0; d < n; d++)
+                    for (int y = (int)(dots[d * 3 + 1] - dots[d * 3 + 2]); y <= dots[d * 3 + 1] + dots[d * 3 + 2]; y++)
+                        for (int x = (int)(dots[d * 3] - dots[d * 3 + 2]); x <= dots[d * 3] + dots[d * 3 + 2]; x++) {
+                            float dx = x - dots[d * 3], dy = y - dots[d * 3 + 1];
+                            if (x >= 0 && y >= 0 && x < W && y < H && dx * dx + dy * dy <= dots[d * 3 + 2] * dots[d * 3 + 2])
+                                memset(px + (y * W + x) * 3, 255, 3);
+                        }
+                for (int y = (int)bar[1]; y < bar[1] + bar[3]; y++)
+                    for (int x = (int)bar[0]; x < bar[0] + bar[2]; x++)
+                        if (x >= 0 && y >= 0 && x < W && y < H) memset(px + (y * W + x) * 3, 255, 3);
+            }
             write_frame(argv[4], shot++);
             printf("tick %d: %.1f ms, %lld actions, heap %zu objects, root frame %d\n", f, ms, vm->ops - ops0,
                    vm->heap_count, vm->root->frame + 1);

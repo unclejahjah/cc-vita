@@ -910,6 +910,12 @@ static void title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, si
         vita2d_start_drawing();
         vita2d_clear_screen();
         draw_list(vb);
+        if (panel) {   // the power sign on the Quit tile
+            float k = SCREEN_W / m->stage_w, dots[48 * 3], bar[4];
+            int n = cc_menu_power_icon(panel, (Mat){k / 20, 0, 0, k / 20, 0, 0}, dots, 48, bar);
+            for (int d = 0; d < n; d++) vita2d_draw_fill_circle(dots[d * 3], dots[d * 3 + 1], dots[d * 3 + 2], RGBA8(255, 255, 255, 255));
+            if (n) vita2d_draw_rectangle(bar[0], bar[1], bar[2], bar[3], RGBA8(255, 255, 255, 255));
+        }
         frame++;
         if (!panel && (frame / 30) % 2 == 0) {   // blinking, over the news box at the bottom left
             int w = vita2d_pgf_text_width(g_font, 1.2f, prompt);

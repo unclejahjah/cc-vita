@@ -6,6 +6,7 @@
 #include <stdlib.h>
 
 #include "cc_host.h"
+#include "as_render.h"
 
 // ---- collision: f_BSPHitTest(x1, y1, x2, y2) and its helpers ------------------------
 // a_BSP is a flat array of nodes: [i+1..i+4] the splitting segment, [i+5] its type,
@@ -193,6 +194,7 @@ static AsVal native_get_button_art(AsVm *vm, AsVal this_, int argc, AsVal *argv)
 // (the online, download, leaderboard and store buttons are hidden), evenly spaced in the
 // panel's own top three slots. Buttons by timeline depth; labels in panel.txtClip.
 static const int MENU_DEPTH[CC_MENU_ITEMS] = {9, 13, 17};
+#define POWER_XSCALE 55   // the half-width Quit button squeezed to a square tile
 
 static AsMc *panel_child(AsMc *panel, int depth) {
     for (int i = 0; panel && i < panel->ndisp; i++)
@@ -246,13 +248,18 @@ AsMc *cc_menu_attach(AsVm *vm, float x, float y) {
         double ly = local->m.ty / 20, dy = ly + 57 - opt->m.ty / 20;
         set_num(vm, opt, "_y", opt->m.ty / 20 + dy);
         set_num(vm, topt, "_y", topt->m.ty / 20 + dy);
-        if (quit && tquit) {
-            // Quit is a half-width button drawn left of its origin: centre it under the others
-            double qdy = ly + 114 - quit->m.ty / 20, qdx = local->m.tx / 20 - quit->m.tx / 20 + 68;
+        if (quit) {
+            // Quit becomes the power button at the bottom left (as on the newer menu): its grey
+            // half-width button, square, with no label, under the others; the power sign is
+            // drawn over it (cc_menu_power_icon)
+            double qdy = ly + 114 - quit->m.ty / 20;
             set_num(vm, quit, "_y", quit->m.ty / 20 + qdy);
-            set_num(vm, quit, "_x", quit->m.tx / 20 + qdx);
-            set_num(vm, tquit, "_y", tquit->m.ty / 20 + qdy);
-            set_num(vm, tquit, "_x", tquit->m.tx / 20 + qdx);
+            set_num(vm, quit, "_xscale", POWER_XSCALE);
+            if (tquit) tquit->visible = 0;
+            float lb[4], qb[4];   // its left edge in line with Local Game's
+            render_mc_bounds(local, local->m, lb);
+            render_mc_bounds(quit, quit->m, qb);
+            if (lb[2] > lb[0] && qb[2] > qb[0]) set_num(vm, quit, "_x", (quit->m.tx + lb[0] - qb[0]) / 20);
         }
     }
     return panel;
@@ -261,9 +268,35 @@ AsMc *cc_menu_attach(AsVm *vm, float x, float y) {
 void cc_menu_highlight(AsVm *vm, AsMc *panel, int item) {
     for (int i = 0; i < CC_MENU_ITEMS; i++) {
         AsMc *b = panel_child(panel, MENU_DEPTH[i]);
-        set_num(vm, b, "_xscale", i == item ? 112 : 100);
-        set_num(vm, b, "_yscale", i == item ? 112 : 100);
+        float k = i == item ? 1.12f : 1;
+        set_num(vm, b, "_xscale", (i == CC_MENU_QUIT ? POWER_XSCALE : 100) * k);
+        set_num(vm, b, "_yscale", 100 * k);
     }
+}
+
+int cc_menu_power_icon(AsMc *panel, Mat screen, float *dots, int max, float bar[4]) {
+    AsMc *b = panel_child(panel, MENU_DEPTH[CC_MENU_QUIT]);
+    if (!b || !b->visible || max < 1) return 0;
+    Mat m = mat_mul(screen, mat_mul(panel->parent ? panel->parent->m : (Mat){1, 0, 0, 1, 0, 0}, panel->m));
+    float bb[4];
+    render_mc_bounds(b, mat_mul(m, b->m), bb);
+    if (bb[2] <= bb[0]) return 0;
+    float cx = (bb[0] + bb[2]) / 2, cy = (bb[1] + bb[3]) / 2 + (bb[3] - bb[1]) * 0.02f;
+    float size = bb[2] - bb[0] < bb[3] - bb[1] ? bb[2] - bb[0] : bb[3] - bb[1];
+    float r = size * 0.24f, t = size * 0.085f;   // the ring's radius and stroke
+    // the ring, open 60 degrees at the top, as overlapping dots (clockwise from 1 o'clock)
+    int n = max;
+    for (int i = 0; i < n; i++) {
+        float a = (30 + 300.0f * i / (n > 1 ? n - 1 : 1)) * 3.14159265f / 180;
+        dots[i * 3] = cx + sinf(a) * r;
+        dots[i * 3 + 1] = cy - cosf(a) * r;
+        dots[i * 3 + 2] = t / 2;
+    }
+    bar[0] = cx - t / 2;
+    bar[1] = cy - r * 1.3f;
+    bar[2] = t;
+    bar[3] = r * 1.15f;
+    return n;
 }
 
 void cc_native_root_functions(AsVm *vm, AsObj *root) {
