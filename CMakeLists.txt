@@ -56,7 +56,7 @@ target_link_libraries(${PROJECT_NAME}
   ScePgf_stub
   ScePvf_stub
   SceCommonDialog_stub
-  SceNpTrophy_stub
+  SceNpTrophy_stub_weak
   SceAppMgr_stub
   ScePower_stub
   freetype
@@ -69,15 +69,20 @@ target_link_libraries(${PROJECT_NAME}
 
 # Vita trophies (need the NoTrpDrm plugin): an unsigned trophy pack and its NP communication id.
 # TROPHY_ICONS=dir: your own ICON0.PNG / TROPnnn.PNG instead of the drawn ones.
+# -DCC_TROPHIES=OFF: no pack and no NP id (the Vita won't start an app with them unless NoTrpDrm is running)
+option(CC_TROPHIES "add the trophy pack" ON)
 set(TROPHY_ICONS "" CACHE PATH "folder with trophy icons")
+if(CC_TROPHIES)
 add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/TROPHY.TRP
   COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/tools/scripts/make_trp.py ${CMAKE_CURRENT_BINARY_DIR}/TROPHY.TRP ${TROPHY_ICONS}
   DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/tools/scripts/make_trp.py)
 set(VITA_MKSFOEX_FLAGS "${VITA_MKSFOEX_FLAGS} -s NP_COMMUNICATION_ID=CCVITA001_00")
+set(TROPHY_FILES FILE ${CMAKE_CURRENT_BINARY_DIR}/TROPHY.TRP sce_sys/trophy/CCVITA001_00/TROPHY.TRP)
+endif()
 
 vita_create_self(${PROJECT_NAME}.self ${PROJECT_NAME})
 vita_create_vpk(${PROJECT_NAME}.vpk ${VITA_TITLEID} ${PROJECT_NAME}.self
   VERSION ${VITA_VERSION}
   NAME ${VITA_APP_NAME}
-  FILE ${CMAKE_CURRENT_BINARY_DIR}/TROPHY.TRP sce_sys/trophy/CCVITA001_00/TROPHY.TRP
+  ${TROPHY_FILES}
 )
