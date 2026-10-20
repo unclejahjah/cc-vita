@@ -29,7 +29,9 @@
 #include "hostfont.h"
 #include "render.h"
 #include "strtab.h"
+#ifdef CC_TROPHIES
 #include "trophies.h"
+#endif
 
 // parsed SWFs and the script heap (meshes live in GPU memory blocks outside it)
 int _newlib_heap_size_user = 160 * 1024 * 1024;
@@ -743,7 +745,11 @@ int main(void) {
 
     cc_storage_load(SAVE_PATH);
     cc_achievements_load(ACH_PATH);
+#ifdef CC_TROPHIES
     int trophies = trophies_init();   // with NoTrpDrm; earned achievements are synced below
+#else
+    int trophies = 0;
+#endif
     unsigned trophies_synced = 0;
     // the game's words (from the user's castle.exe by extract_strings.py), then Vita wording
     strtab_load(DATA_DIR "strings_en.txt");
@@ -872,8 +878,10 @@ int main(void) {
         if (pause.open) pause_draw(&pause);
         int ach = cc_achievement_take_new();
         if (trophies && cc_achievements() != trophies_synced) {
+#ifdef CC_TROPHIES
             for (int id = 1; id <= CC_ACHIEVEMENTS; id++)
                 if ((cc_achievements() & ~trophies_synced) >> id & 1) trophies_unlock(id);
+#endif
             trophies_synced = cc_achievements();
         }
         if (ach) { ach_shown = ach; ach_timer = 60 * 4; }

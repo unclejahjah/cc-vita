@@ -25,7 +25,7 @@ option(CC_VIEWER "build the level and animation viewer" OFF)
 if(CC_VIEWER)
   set(APP_SOURCES src/viewer.c src/level.c src/player.c src/enemy.c)
 else()
-  set(APP_SOURCES src/main.c src/as_core.c src/as_mc.c src/as_lib.c src/as_render.c src/cc_host.c src/cc_native.c src/hostfont.c src/audio.c src/strtab.c src/cc_buttons.c src/trophies.c)
+  set(APP_SOURCES src/main.c src/as_core.c src/as_mc.c src/as_lib.c src/as_render.c src/cc_host.c src/cc_native.c src/hostfont.c src/audio.c src/strtab.c src/cc_buttons.c)
 endif()
 
 add_executable(${PROJECT_NAME}
@@ -56,7 +56,6 @@ target_link_libraries(${PROJECT_NAME}
   ScePgf_stub
   ScePvf_stub
   SceCommonDialog_stub
-  SceNpTrophy_stub_weak
   SceAppMgr_stub
   ScePower_stub
   freetype
@@ -69,10 +68,14 @@ target_link_libraries(${PROJECT_NAME}
 
 # Vita trophies (need the NoTrpDrm plugin): an unsigned trophy pack and its NP communication id.
 # TROPHY_ICONS=dir: your own ICON0.PNG / TROPnnn.PNG instead of the drawn ones.
-# -DCC_TROPHIES=OFF: no pack and no NP id (the Vita won't start an app with them unless NoTrpDrm is running)
-option(CC_TROPHIES "add the trophy pack" ON)
+# On hold (2026-10-20): every build with the trophy code, even without the pack, failed to start
+# on Jah's Vita ("Could not prepare the application to start") with NoTrpDrm installed.
+option(CC_TROPHIES "Vita trophies through NoTrpDrm (experimental)" OFF)
 set(TROPHY_ICONS "" CACHE PATH "folder with trophy icons")
 if(CC_TROPHIES)
+target_sources(${PROJECT_NAME} PRIVATE src/trophies.c)
+target_compile_definitions(${PROJECT_NAME} PRIVATE CC_TROPHIES)
+target_link_libraries(${PROJECT_NAME} SceNpTrophy_stub_weak)
 add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/TROPHY.TRP
   COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/tools/scripts/make_trp.py ${CMAKE_CURRENT_BINARY_DIR}/TROPHY.TRP ${TROPHY_ICONS}
   DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/tools/scripts/make_trp.py)
