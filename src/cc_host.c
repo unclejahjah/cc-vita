@@ -214,6 +214,60 @@ static AsVal gamer_tag(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
 // AddShader(name), from a clip's frame script: a screen effect on that clip. "Heat" (lava
 // world's haze) makes the picture behind the clip shimmer, which the Vita renderer draws;
 // "RasterHack" (the skies) only hides seams in the cloud loops, so there's nothing to do.
+// ---- achievements ----------------------------------------------------------------------
+// The original's executable gives them to Steam/Xbox Live/PSN. Here they're kept in
+// achievements.dat (one 32-bit little-endian word: bit n = id n) and shown by the platform.
+static const char *ACH[CC_ACHIEVEMENTS + 1][2] = {
+    {"", ""},
+    {"Kay Eye Ess Ess", "Collect all 4 princesses' kisses in a multiplayer game"},
+    {"Traditional", "Complete the game using any character"},
+    {"The Traitor", "Defeat any boss by playing one of his own minions"},
+    {"Deer Trainer", "Navigate the Abandoned Mill without hitting any obstacles"},
+    {"Conscientious Objector", "Complete Home Castle through Barbarian Boss without attacking any foes"},
+    {"Maximum Firepower", "Using a catapult, fling a knight with maximum power"},
+    {"Animal Handler", "Collect all the animal orbs"},
+    {"Arena Master", "Win 40 online Arena matches (online play isn't on the Vita)"},
+    {"Glork", "Win 20 ranked All You Can Quaff matches (online play isn't on the Vita)"},
+    {"Melee Is Best", "Defeat any end boss without using any magic"},
+    {"Treasure Hunter", "Find and dig up ten buried items"},
+    {"Medic!", "In a 4-player game, revive each fallen comrade at least once"},
+};
+static unsigned ach_bits;
+static int ach_new;
+static char ach_path[256];
+
+const char *cc_achievement_name(int id) { return id >= 1 && id <= CC_ACHIEVEMENTS ? ACH[id][0] : ""; }
+const char *cc_achievement_how(int id) { return id >= 1 && id <= CC_ACHIEVEMENTS ? ACH[id][1] : ""; }
+unsigned cc_achievements(void) { return ach_bits; }
+int cc_achievement_take_new(void) { int id = ach_new; ach_new = 0; return id; }
+
+void cc_achievements_load(const char *path) {
+    snprintf(ach_path, sizeof ach_path, "%s", path);
+    FILE *f = fopen(path, "rb");
+    uint8_t b[4] = {0};
+    if (f) {
+        if (fread(b, 1, 4, f) == 4) ach_bits = b[0] | b[1] << 8 | b[2] << 16 | (unsigned)b[3] << 24;
+        fclose(f);
+    }
+}
+
+static AsVal unlock_achievement(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
+    (void)this_;
+    int id = as_toint32(vm, ARG(1));
+    if (id < 1 || id > CC_ACHIEVEMENTS || (ach_bits >> id & 1)) return as_undef();
+    ach_bits |= 1u << id;
+    ach_new = id;
+    if (ach_path[0]) {
+        FILE *f = fopen(ach_path, "wb");
+        if (f) {
+            uint8_t b[4] = {ach_bits & 255, ach_bits >> 8 & 255, ach_bits >> 16 & 255, ach_bits >> 24};
+            fwrite(b, 1, 4, f);
+            fclose(f);
+        }
+    }
+    return as_undef();
+}
+
 static AsVal add_shader(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
     if (this_.t == V_OBJ && this_.o->type == OBJ_MC && !strcmp(as_tostr(vm, ARG(0))->s, "Heat"))
         ((AsMc *)this_.o)->shader = 1;
@@ -542,7 +596,7 @@ void cc_host_init(AsVm *vm) {
     // (they can't see _root's functions): this is the full game
     as_def_fn(vm, g, "IsFullGame", ret_true);
     as_def_fn(vm, g, "RichPresence", ret_undef);       // platform presence text
-    as_def_fn(vm, g, "UnlockAchievement", ret_undef);  // no achievements on the Vita (yet)
+    as_def_fn(vm, g, "UnlockAchievement", unlock_achievement);
     as_def_fn(vm, g, "VibrateController", ret_undef);  // the Vita has no rumble
     as_def_fn(vm, g, "HiFps_SetEnabled", ret_undef);
     as_def_fn(vm, g, "HiFps_Loop", ret_undef);

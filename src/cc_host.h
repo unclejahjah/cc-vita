@@ -30,6 +30,15 @@ extern int cc_save_requested;           // WriteSaveGame was called: write the s
 int cc_storage_save(const char *path);  // 1 on success
 int cc_storage_load(const char *path);  // 1 if a save was read
 
+// In-game achievements: the game calls UnlockAchievement(port, id) with the Xbox/Steam ids
+// 1..12. Unlocked ones are a bit set kept in a file of their own (not in the game's save).
+#define CC_ACHIEVEMENTS 12
+const char *cc_achievement_name(int id);        // id 1..12
+const char *cc_achievement_how(int id);         // what it asks for
+unsigned cc_achievements(void);                 // bit id set: unlocked
+int cc_achievement_take_new(void);              // an id unlocked since the last call, or 0
+void cc_achievements_load(const char *path);    // also where unlocks are written
+
 // Puts back layer placements a cut-short level file lost; returns how many. Call after swf_load.
 int cc_repair_level(Movie *m);
 
