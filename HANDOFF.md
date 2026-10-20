@@ -151,3 +151,7 @@ Jah asked for future work to start in a new thread to save usage; this list is t
 Both are the same developer-settings path as the magic bug, already fixed by pinning `console_version` in level scripts (20867b8):
 - LEVEL24 (King's Arena) `f_Init` with `console_version` false forces `arena_mode = 1` (PvP arena setup: arrow weapon, PvP boundaries). With the pin, hosttest shows `arena_mode` 0, sword melee, player grounded.
 - Knock-down in `f_Damage` needs `round(resists[type]/25) < 4`; player resist = 40 + defense/2, so the dev stats (9999) blocked every knock-down. A fresh character (resist 40.5) is juggled and knocked down in hosttest (`CC_CALL 1500:f_Damage:loader.game.game.p1|#4|#4|#1|#10|#-30`).
+
+### Vita trophies (NoTrpDrm), 2026-10-20
+- `src/trophies.c`: sceNpTrophy with Rinnegatamante's NoTrpDrm plugin (`*main` → `ur0:tai/NoTrpDrm.suprx` or `ux0:tai/`). Comm id `CCVITA001_00` (param.sfo NP_COMMUNICATION_ID + `sce_sys/trophy/CCVITA001_00/TROPHY.TRP`). Each newly earned in-game achievement unlocks trophy id-1 (also syncs ones earned before). Without the plugin the context fails and only the in-game list is used.
+- `tools/scripts/make_trp.py` builds the unsigned pack at build time (TRP v2 header, dev flag 1, plain XML SFMs, drawn placeholder icons; `-DTROPHY_ICONS=dir` for real ICON0.PNG / TROPnnn.PNG, never committed). The TRP layout is from the PS3 format and untested on hardware: if the setup dialog errors, try dev flag 0 or a pack from withLogic's Vita TRP Builder.
