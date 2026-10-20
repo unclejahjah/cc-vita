@@ -355,11 +355,11 @@ static int offscreen(const float bb[4], Mat m, const float view[4]) {
 // The mesh's vertex colours with cx applied (positions are untouched: they stay where
 // they were uploaded and only this colour array changes).
 static void recolour(const Mesh *mesh, const CXform *cx, uint32_t *out) {
-    uint32_t last_in = 0xffffffffu, last_out = 0;
+    uint32_t last_in = 0, last_out = 0;
     for (int i = 0; i < mesh->nverts; i++) {
         uint32_t in;
         memcpy(&in, mesh->rgba + i * 4, 4);
-        if (in != last_in) {   // most shapes are a handful of flat colours
+        if (!i || in != last_in) {   // most shapes are a handful of flat colours
             const uint8_t *p = (const uint8_t *)&in;
             uint8_t c[4] = {clamp8(p[0] * cx->mul[0] + cx->add[0]), clamp8(p[1] * cx->mul[1] + cx->add[1]),
                             clamp8(p[2] * cx->mul[2] + cx->add[2]), clamp8(p[3] * cx->mul[3] + cx->add[3])};

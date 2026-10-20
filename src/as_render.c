@@ -2,6 +2,7 @@
 #include "as_render.h"
 #include "hostfont.h"
 
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -126,6 +127,42 @@ static void draw_line(const TextFont *t, const char *s, const char *end, float x
         x += tf_advance(t, code);
     }
 }
+
+// A line of the executable's own menu text, as castle.exe draws it: (x, y) in stage pixels
+// through m, y the middle of the lines; align 0 ends at x, 1 starts there, 2 centres;
+// sx/sy scale the font pixels. cx colours the white glyphs. The executable's sizes are for
+// the 20 pixel font (synjUnicode_20); newer copies of the game ship it drawn at 60, so its
+// pixels are scaled to 20.
+static float host_unit(void) { return g_host_font->size > 0 ? 20.0f / g_host_font->size : 1; }
+
+void as_render_host_text(const char *s, float x, float y, float sx, float sy, int align, Mat m, CXform cx,
+                         DrawList *out) {
+    if (!g_host_font || !s || !*s) return;
+    sx *= host_unit();
+    sy *= host_unit();
+    TextFont t = {g_host_font, NULL, 1};
+    int lines = 1;
+    for (const char *p = s; *p; p++) lines += *p == '\n';
+    float top = y + roundf((g_host_font->line_height + 1) * lines * -0.5f) * sy;
+    while (*s) {
+        const char *e = s;
+        while (*e && *e != '\n') e++;
+        float w = line_width(&t, s, e) * sx;
+        float lx = align == 0 ? x - w : align == 2 ? x - roundf(w / sx * 0.5f) * sx : x;
+        Mat lm = mat_mul(m, (Mat){sx, 0, 0, sy, lx, top});
+        draw_line(&t, s, e, 0, 0, 0, lm, cx, out);
+        top += g_host_font->line_height * sy;
+        s = *e ? e + 1 : e;
+    }
+}
+
+float as_render_host_text_width(const char *s) {
+    if (!g_host_font || !s) return 0;
+    TextFont t = {g_host_font, NULL, 1};
+    return line_width(&t, s, s + strlen(s)) * host_unit();
+}
+
+float as_render_host_line_height(void) { return g_host_font ? g_host_font->line_height * host_unit() : 0; }
 
 static void draw_text(AsMc *tf, Mat m, CXform cx, DrawList *out) {
     const EditText *et = tf->text;
