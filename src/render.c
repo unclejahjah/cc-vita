@@ -51,6 +51,36 @@ static void gradient_color(const FillStyle *f, float x, float y, uint8_t out[4])
     memcpy(out, f->stop[f->nstops - 1], 4);
 }
 
+// A gradient-filled triangle, split into four until its edges are short next to the gradient.
+static void gradient_tri(const FillStyle *f, const float *t, float lim, int depth, MeshBuf *mb) {
+    float e = 0;
+    for (int k = 0; k < 3; k++) {
+        float dx = t[(k + 1) % 3 * 2] - t[k * 2], dy = t[(k + 1) % 3 * 2 + 1] - t[k * 2 + 1];
+        float l = dx * dx + dy * dy;
+        if (l > e) e = l;
+    }
+    if (depth < 6 && lim > 0 && e > lim * lim) {
+        float m[6];
+        for (int k = 0; k < 3; k++) {
+            m[k * 2] = (t[k * 2] + t[(k + 1) % 3 * 2]) * 0.5f;
+            m[k * 2 + 1] = (t[k * 2 + 1] + t[(k + 1) % 3 * 2 + 1]) * 0.5f;
+        }
+        float a[6] = {t[0], t[1], m[0], m[1], m[4], m[5]};
+        float b[6] = {m[0], m[1], t[2], t[3], m[2], m[3]};
+        float c[6] = {m[4], m[5], m[2], m[3], t[4], t[5]};
+        gradient_tri(f, a, lim, depth + 1, mb);
+        gradient_tri(f, b, lim, depth + 1, mb);
+        gradient_tri(f, c, lim, depth + 1, mb);
+        gradient_tri(f, m, lim, depth + 1, mb);
+        return;
+    }
+    for (int k = 0; k < 3; k++) {
+        uint8_t c[4];
+        gradient_color(f, t[k * 2], t[k * 2 + 1], c);
+        mesh_push(mb, t[k * 2], t[k * 2 + 1], c);
+    }
+}
+
 static void tessellate_fill(TESStesselator *tess, const ShapeFill *sf, MeshBuf *mb) {
     for (int l = 0; l < sf->nloops; l++) {
         int s = sf->loop_start[l], e = sf->loop_start[l + 1];
@@ -60,16 +90,18 @@ static void tessellate_fill(TESStesselator *tess, const ShapeFill *sf, MeshBuf *
     const float *verts = tessGetVertices(tess);
     const TESSindex *elems = tessGetElements(tess);
     int ne = tessGetElementCount(tess);
+    int grad = sf->style.type == FILL_LINEAR || sf->style.type == FILL_RADIAL;
+    // Colours are per vertex, so a gradient across a big triangle needs smaller ones: a
+    // radial vignette over a plain rectangle (Cyclops' Cave) would otherwise take the edge
+    // colour at all four corners and cover the screen.
+    float lim = grad ? sqrtf(fabsf(sf->style.gmat.a * sf->style.gmat.d - sf->style.gmat.b * sf->style.gmat.c)) * 32768.0f / 12 : 0;
     for (int i = 0; i < ne; i++) {
         const TESSindex *tri = &elems[i * 3];
         if (tri[0] == TESS_UNDEF || tri[1] == TESS_UNDEF || tri[2] == TESS_UNDEF) continue;
-        for (int k = 0; k < 3; k++) {
-            float x = verts[tri[k] * 2], y = verts[tri[k] * 2 + 1];
-            uint8_t c[4];
-            if (sf->style.type == FILL_LINEAR || sf->style.type == FILL_RADIAL) gradient_color(&sf->style, x, y, c);
-            else memcpy(c, sf->style.color, 4);
-            mesh_push(mb, x, y, c);
-        }
+        float t[6];
+        for (int k = 0; k < 3; k++) { t[k * 2] = verts[tri[k] * 2]; t[k * 2 + 1] = verts[tri[k] * 2 + 1]; }
+        if (grad) { gradient_tri(&sf->style, t, lim, 0, mb); continue; }
+        for (int k = 0; k < 3; k++) mesh_push(mb, t[k * 2], t[k * 2 + 1], sf->style.color);
     }
 }
 
