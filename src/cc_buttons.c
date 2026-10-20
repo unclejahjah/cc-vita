@@ -221,8 +221,8 @@ static const uint8_t SYMBOL_COLOUR[][4] = {
 static const uint8_t GREY_SHADE[4] = {0x86, 0x88, 0x8e, 255}, GREY_BASE[4] = {0xb4, 0xb6, 0xbc, 255},
                      GREY_LIGHT[4] = {0xe2, 0xe3, 0xe6, 255};
 static const uint8_t GREY_SYMBOL[][4] = {
-    [CC_BTN_CROSS] = {0x3a, 0x6e, 0xd0, 255}, [CC_BTN_CIRCLE] = {0xe0, 0x30, 0x3c, 255},
-    [CC_BTN_SQUARE] = {0xd0, 0x5a, 0xb0, 255}, [CC_BTN_TRIANGLE] = {0x1c, 0xa0, 0x78, 255},
+    [CC_BTN_CROSS] = {0x48, 0x6d, 0xb1, 255}, [CC_BTN_CIRCLE] = {0xbb, 0x40, 0x49, 255},
+    [CC_BTN_SQUARE] = {0xba, 0x67, 0xa4, 255}, [CC_BTN_TRIANGLE] = {0x36, 0x93, 0x77, 255},
 };
 
 static void make_ball(Shape *s, int which, int style) {
