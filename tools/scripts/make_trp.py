@@ -6,7 +6,7 @@ import hashlib, io, struct, sys
 from xml.sax.saxutils import escape
 from PIL import Image, ImageDraw, ImageFont
 
-NPCOMMID = "CCVITA001_00"
+NPCOMMID = "CCRV00001_00"
 TITLE = "Castle Crashers"
 # name, detail, grade (B/S/G), hidden
 TROPHIES = [
