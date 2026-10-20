@@ -1036,6 +1036,7 @@ new_game:   // the title again after Exit to Main Menu
     unsigned heat_clock = 0;
     int ach_shown = 0, ach_timer = 0;   // the "achievement unlocked" banner
     uint32_t last_free = 0;
+    int last_free_count = -1;   // the files kept after the last pass
     const SceUInt64 tick_us = 1000000 / 30;   // the game's frame rate
     int exit_to_title = 0;
     pause.open = 0;
@@ -1097,9 +1098,13 @@ new_game:   // the title again after Exit to Main Menu
             // map or replaying a level doesn't load them again.
             if (vm->tick % 30 == 0) log_animals(vm);
             if (vm->tick % 150 == 0) log_flush();
-            if (vm->tick - last_free >= 90 && mallinfo().uordblks > (size_t)_newlib_heap_size_user / 2) {
+            // Only after a new file came in: once over half, a pass every 3 s that finds the
+            // rest still in use costs frames for nothing (the map dropped to 45 fps).
+            if (vm->tick - last_free >= 90 && g_nmovies != last_free_count &&
+                mallinfo().uordblks > (size_t)_newlib_heap_size_user / 2) {
                 last_free = vm->tick;
                 free_unused_movies(vm, &cache, cache_mem, cache_bytes);
+                last_free_count = g_nmovies;
             }
             // a full recolour cache stops helping: start it over (after the GPU is done with it)
             if (cache.used > cache.cap * 9 / 10 || cache.entries * 4 >= cache.table_size * 3) {

@@ -194,7 +194,9 @@ static AsVal native_get_button_art(AsVm *vm, AsVal this_, int argc, AsVal *argv)
 // (the online, download, leaderboard and store buttons are hidden), evenly spaced in the
 // panel's own top three slots. Buttons by timeline depth; labels in panel.txtClip.
 static const int MENU_DEPTH[CC_MENU_ITEMS] = {9, 13, 17};
-#define POWER_XSCALE 55   // the half-width Quit button squeezed to a square tile
+#define MENU_SCALE 125     // the panel, larger than the original's
+// per item: its width (_xscale), where it sits (_x) and its left edge from its origin
+static float item_w[CC_MENU_ITEMS] = {100, 100, 100}, item_x[CC_MENU_ITEMS], item_left[CC_MENU_ITEMS];
 
 static AsMc *panel_child(AsMc *panel, int depth) {
     for (int i = 0; panel && i < panel->ndisp; i++)
@@ -213,6 +215,7 @@ static AsMc *panel_path(AsVm *vm, AsMc *panel, const char *path) {
 }
 
 AsMc *cc_menu_attach(AsVm *vm, float x, float y) {
+    for (int i = 0; i < CC_MENU_ITEMS; i++) item_w[i] = 100;
     AsVal args[3] = {as_strv(as_str(vm, "buttonchoices")), as_strv(as_str(vm, "menupanel")), as_num(5000)};
     AsVal p = as_call_method(vm, as_objv(&vm->root->obj), "attachMovie", 3, args);
     if (p.t != V_OBJ || p.o->type != OBJ_MC) return NULL;
@@ -240,27 +243,64 @@ AsMc *cc_menu_attach(AsVm *vm, float x, float y) {
         AsMc *t = panel_path(vm, panel, hide_text[i]);
         if (t) t->visible = 0;
     }
-    // Help & Options and Quit move up into the 2nd and 3rd slots (57 px apart), labels with them
-    AsMc *opt = panel_child(panel, 13), *quit = panel_child(panel, 17), *local = panel_child(panel, 9);
+    // Help & Options moves up into the 2nd slot (57 px apart), its label with it, in line
+    // with Local Game's left edge
+    AsMc *opt = panel_child(panel, 13), *tile = panel_child(panel, 17), *local = panel_child(panel, 9);
     AsMc *topt = panel_path(vm, panel, "txtClip.textOptions"), *tquit = panel_path(vm, panel, "txtClip.textQuit");
     AsMc *tlocal = panel_path(vm, panel, "txtClip.textLocalGame");
+    if (tquit) tquit->visible = 0;
     if (opt && local && topt && tlocal) {
         double ly = local->m.ty / 20, dy = ly + 57 - opt->m.ty / 20;
+        float lb[4], ob[4], tb[4];
+        render_mc_bounds(local, local->m, lb);
+        render_mc_bounds(opt, opt->m, ob);
+        double dx = lb[2] > lb[0] && ob[2] > ob[0] ? (lb[0] - ob[0]) / 20 : 0;
         set_num(vm, opt, "_y", opt->m.ty / 20 + dy);
+        set_num(vm, opt, "_x", opt->m.tx / 20 + dx);
+        // and as wide as Local Game (its art is a little narrower)
+        if (lb[2] > lb[0] && ob[2] > ob[0]) item_w[CC_MENU_OPTIONS] = 100 * (lb[2] - lb[0]) / (ob[2] - ob[0]);
         set_num(vm, topt, "_y", topt->m.ty / 20 + dy);
-        if (quit) {
-            // Quit becomes the power button at the bottom left (as on the newer menu): its grey
-            // half-width button, square, with no label, under the others; the power sign is
-            // drawn over it (cc_menu_power_icon)
-            double qdy = ly + 114 - quit->m.ty / 20;
-            set_num(vm, quit, "_y", quit->m.ty / 20 + qdy);
-            set_num(vm, quit, "_xscale", POWER_XSCALE);
-            if (tquit) tquit->visible = 0;
-            float lb[4], qb[4];   // its left edge in line with Local Game's
-            render_mc_bounds(local, local->m, lb);
-            render_mc_bounds(quit, quit->m, qb);
-            if (lb[2] > lb[0] && qb[2] > qb[0]) set_num(vm, quit, "_x", (quit->m.tx + lb[0] - qb[0]) / 20);
+        set_num(vm, topt, "_x", topt->m.tx / 20 + dx);
+        if (tile) {
+            // Quit is the power button at the bottom left, as on the newer menu: its grey
+            // button without the label, under the others, with the power sign drawn over it
+            // (cc_menu_power_icon)
+            render_mc_bounds(tile, tile->m, tb);
+            if (lb[2] > lb[0] && tb[2] > tb[0]) {
+                set_num(vm, tile, "_x", (tile->m.tx + lb[0] - tb[0]) / 20);
+                set_num(vm, tile, "_y", (tile->m.ty + (lb[3] - lb[1]) * 2 + 8 * 20 + lb[1] - tb[1]) / 20 + 6);
+            }
         }
+    }
+    // larger, and in the bottom left corner: what's left of the panel, MENU_SCALE %, its
+    // bottom-left corner a margin in from the screen's
+    if (item_w[CC_MENU_OPTIONS] != 100) set_num(vm, opt, "_xscale", item_w[CC_MENU_OPTIONS]);
+    float bb[4] = {1e30f, 1e30f, -1e30f, -1e30f};
+    for (int i = 0; i < CC_MENU_ITEMS; i++) {
+        AsMc *b = panel_child(panel, MENU_DEPTH[i]);
+        if (!b) continue;
+        float ib[4];
+        render_mc_bounds(b, b->m, ib);
+        if (ib[2] <= ib[0]) continue;
+        if (ib[0] < bb[0]) bb[0] = ib[0];
+        if (ib[1] < bb[1]) bb[1] = ib[1];
+        if (ib[2] > bb[2]) bb[2] = ib[2];
+        if (ib[3] > bb[3]) bb[3] = ib[3];
+    }
+    if (bb[2] > bb[0] && vm->root->movie) {
+        float k = MENU_SCALE / 100.0f, sh = vm->root->movie->stage_h, margin = sh * 0.06f;
+        set_num(vm, panel, "_xscale", MENU_SCALE);
+        set_num(vm, panel, "_yscale", MENU_SCALE);
+        set_num(vm, panel, "_x", margin - bb[0] / 20 * k);
+        set_num(vm, panel, "_y", sh - margin - bb[3] / 20 * k);
+    }
+    for (int i = 0; i < CC_MENU_ITEMS; i++) {   // for cc_menu_highlight: each item's left edge
+        AsMc *b = panel_child(panel, MENU_DEPTH[i]);
+        if (!b) continue;
+        float ib[4];
+        render_mc_bounds(b, (Mat){1, 0, 0, 1, 0, 0}, ib);
+        item_x[i] = b->m.tx / 20;
+        item_left[i] = ib[2] > ib[0] ? ib[0] / 20 : 0;
     }
     return panel;
 }
@@ -268,9 +308,12 @@ AsMc *cc_menu_attach(AsVm *vm, float x, float y) {
 void cc_menu_highlight(AsVm *vm, AsMc *panel, int item) {
     for (int i = 0; i < CC_MENU_ITEMS; i++) {
         AsMc *b = panel_child(panel, MENU_DEPTH[i]);
+        if (!b) continue;
         float k = i == item ? 1.12f : 1;
-        set_num(vm, b, "_xscale", (i == CC_MENU_QUIT ? POWER_XSCALE : 100) * k);
+        set_num(vm, b, "_xscale", item_w[i] * k);
         set_num(vm, b, "_yscale", 100 * k);
+        // the chosen one grows from its left edge, so the column stays in line
+        set_num(vm, b, "_x", item_x[i] + item_left[i] * item_w[i] / 100 * (1 - k));
     }
 }
 
