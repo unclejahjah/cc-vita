@@ -573,6 +573,7 @@ static AsVal as_call_body(AsVm *vm, AsVal fv, AsVal this_, int argc, AsVal *argv
     c.movie = f->code_movie;
     c.pc = f->code_off;
     c.end = f->code_off + f->code_len;
+    if (c.end > f->code_movie->len) c.end = (uint32_t)f->code_movie->len;
     c.pool = f->pool;
     c.scope = scope;
     c.this_ = this_;
@@ -897,6 +898,7 @@ static void run(AsVm *vm, Ctx *c) {
         if (op >= 0x80) { len = rd16(d + c->pc); c->pc += 2; }
         const uint8_t *body = d + c->pc;
         uint32_t next = c->pc + len;
+        if (next > c->end) break;   // runs past its block (a file cut short): what follows isn't code
         vm->ops++;
         switch (op) {
         case 0x04: if (c->target) as_mc_goto(vm, c->target, c->target->frame + 1, 0); break;   // NextFrame
@@ -1205,6 +1207,7 @@ void as_run_block(AsVm *vm, const Movie *m, uint32_t off, uint32_t len, AsMc *ta
     c.movie = m;
     c.pc = off;
     c.end = off + len;
+    if (c.end > m->len) c.end = (uint32_t)m->len;   // the file may be cut short inside it
     c.regs = vm->global_regs;
     c.nregs = 4;
     c.target = target;

@@ -594,14 +594,27 @@ static int as_mode(int argc, char **argv) {
     for (int f = 0; f < frames; f++) {
         if (getenv("CC_RESTART_AT") && f == atoi(getenv("CC_RESTART_AT"))) {   // the Vita's Exit to Main Menu
             as_free(vm);
+            Movie *first = start;
+            if (getenv("CC_RESTART_MENU")) {   // as the Vita does: every file but MAIN goes, then the title
+                int n = 0;
+                for (int i = 0; i < nmovie_cache; i++) {
+                    if (movie_cache[i].m == start) { movie_cache[n++] = movie_cache[i]; continue; }
+                    printf("  [free] %s\n", movie_cache[i].name);
+                    as_forget_movie(movie_cache[i].m);
+                    swf_free(movie_cache[i].m);
+                }
+                nmovie_cache = n;
+                first = host_loader(NULL, "MENU.swf");
+            }
             vm = as_new(host_loader);
             vm->warn = host_warn;
             vm->trace = host_trace;
             vm->sound_start = host_sound;
             cc_host_init(vm);
             as_render_init(vm);
-            vm->root = as_mc_new(vm, start, &start->root, NULL, 0);
-            if (!strcasecmp(argv[3], "MAIN.swf") && !getenv("CC_NO_LOADING")) cc_loading_attach(vm);
+            vm->root = as_mc_new(vm, first, &first->root, NULL, 0);
+            if (first != start) cc_native_root_functions(vm, &vm->root->obj);
+            else if (!strcasecmp(argv[3], "MAIN.swf") && !getenv("CC_NO_LOADING")) cc_loading_attach(vm);
             render_begin(&vb);
             printf("  [restart at %d]\n", f);
         }
