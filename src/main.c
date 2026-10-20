@@ -13,6 +13,7 @@
 #include <psp2/kernel/processmgr.h>
 #include <psp2/kernel/sysmem.h>
 #include <psp2/power.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <malloc.h>
@@ -323,6 +324,47 @@ static struct { char name[64]; Movie *m; GpuBlock gpu; int keep; } g_movies[MAX_
 static int g_nmovies;
 static char g_last_error[256];
 
+// ---- the log file -------------------------------------------------------------------
+// ux0:data/CastleCrashers/log.txt: each distinct warning once, the files loaded and freed,
+// and the animal orbs each level places, for bugs that only show on the Vita. The run
+// before is kept as log_prev.txt.
+#define LOG_PATH DATA_DIR "log.txt"
+#define LOG_MAX (1 << 20)
+static SceUID g_log = -1;
+static int g_log_bytes;
+static uint32_t g_log_seen[2048];
+static int g_log_nseen;
+
+static void log_open(void) {
+    sceIoRemove(DATA_DIR "log_prev.txt");
+    sceIoRename(LOG_PATH, DATA_DIR "log_prev.txt");
+    g_log = sceIoOpen(LOG_PATH, SCE_O_WRONLY | SCE_O_CREAT | SCE_O_TRUNC, 0666);
+}
+
+static void log_line(const char *fmt, ...) {
+    if (g_log < 0 || g_log_bytes > LOG_MAX) return;
+    char buf[640];
+    va_list ap;
+    va_start(ap, fmt);
+    int n = vsnprintf(buf, sizeof buf - 1, fmt, ap);
+    va_end(ap);
+    if (n < 0) return;
+    if (n > (int)sizeof buf - 2) n = sizeof buf - 2;
+    buf[n++] = '\n';
+    sceIoWrite(g_log, buf, n);
+    g_log_bytes += n;
+}
+
+// 1 the first time a message is seen
+static int log_first(const char *msg) {
+    uint32_t h = 2166136261u;
+    for (const char *c = msg; *c; c++) h = (h ^ (uint8_t)*c) * 16777619u;
+    for (int i = 0; i < g_log_nseen; i++)
+        if (g_log_seen[i] == h) return 0;
+    if (g_log_nseen < (int)(sizeof g_log_seen / sizeof g_log_seen[0])) g_log_seen[g_log_nseen++] = h;
+    return 1;
+}
+
 // the recolour cache, for freeing files from inside a load (main sets these)
 static RecolourCache *g_cache;
 static void *g_cache_mem;
@@ -368,8 +410,11 @@ static Movie *vita_loader(AsVm *vm, const char *url) {
             m = swf_load(path, err, sizeof err);   // out of memory: try again without the old files
         if (!m) {
             snprintf(g_last_error, sizeof g_last_error, "%s: %s", base, err);
+            log_line("load %s FAILED: %s", path, err);
             return NULL;
         }
+        log_line("load %s%s (heap %u KB used)", path, m->truncated ? " (cut short)" : "",
+                 (unsigned)(mallinfo().uordblks >> 10));
         m->is_level = i == 1;   // levels/: console_version reads true in its scripts (cc_host.c)
         cc_repair_level(m);
         cc_buttons_playstation(m, CC_BTN_STYLE_COLOURED);   // the game's button art as PlayStation buttons
@@ -383,6 +428,7 @@ static Movie *vita_loader(AsVm *vm, const char *url) {
         return m;
     }
     snprintf(g_last_error, sizeof g_last_error, "missing %s", base);
+    log_line("load %s: MISSING", base);
     return NULL;
 }
 
@@ -413,6 +459,7 @@ static int free_unused_movies(AsVm *vm, RecolourCache *cache, void *cache_mem, s
     for (int i = 0; i < g_nmovies; i++) {
         if (used[i] || g_movies[i].keep) { g_movies[n++] = g_movies[i]; continue; }
         Movie *m = g_movies[i].m;
+        log_line("free %s", g_movies[i].name);
         for (int c = 0; c < 65536; c++)
             if (m->chars[c].type == CHAR_BITMAP && ((Bitmap *)m->chars[c].ptr)->tex)
                 vita2d_free_texture(((Bitmap *)m->chars[c].ptr)->tex);
@@ -607,8 +654,33 @@ static void vita_sound_stop(AsVm *vm, const void *owner) {
 }
 
 static void vita_warn(AsVm *vm, const char *msg) {
-    (void)vm;
     snprintf(g_last_error, sizeof g_last_error, "%s", msg);
+    if (log_first(msg)) log_line("[%u] %s", vm ? (unsigned)vm->tick : 0, msg);
+}
+
+// the level's animal orbs (animal1, animal2... on the game layer), logged when they change:
+// they show in the PC harness but not on the Vita
+static void log_animals(AsVm *vm) {
+    static char last[512];
+    char now[512];
+    int len = 0, found;
+    now[0] = 0;
+    AsVal g = as_resolve_path(vm, vm->root, "loader.game.game", &found);
+    if (found && g.t == V_OBJ && g.o->type == OBJ_MC) {
+        AsMc *game = (AsMc *)g.o;
+        for (int i = 0; i < game->ndisp && len < (int)sizeof now - 96; i++) {
+            AsMc *c = game->disp[i].mc;
+            if (!c || !c->name || strncasecmp(c->name->s, "animal", 6)) continue;
+            len += snprintf(now + len, sizeof now - len, " %s(frame %d/%d at %.0f,%.0f depth %d%s%s%s alpha %.0f)",
+                            c->name->s, c->frame + 1, c->def ? c->def->nframes : 0, c->m.tx / 20, c->m.ty / 20,
+                            c->depth, c->visible ? "" : " hidden", c->removed ? " removed" : "",
+                            c->ndisp ? "" : " empty", c->alpha);
+        }
+    }
+    if (strcmp(now, last)) {
+        log_line("[%u] animals:%s", (unsigned)vm->tick, now[0] ? now : " none");
+        snprintf(last, sizeof last, "%s", now);
+    }
 }
 
 // ---- title screen and main menu --------------------------------------------------------
@@ -747,6 +819,8 @@ int main(void) {
     g_indices = gpu_alloc(sizeof(uint16_t) * MAX_BATCH, &g_index_block);
     for (int i = 0; g_indices && i < MAX_BATCH; i++) g_indices[i] = i;
     sceCtrlSetSamplingMode(SCE_CTRL_MODE_ANALOG);
+    log_open();
+    log_line("cc_vita started");
 
     Movie *start = host_movie("MAIN.swf");
     if (!start) {
@@ -833,6 +907,9 @@ new_game:   // the title again after Exit to Main Menu
     const SceUInt64 tick_us = 1000000 / 30;   // the game's frame rate
     int exit_to_title = 0;
     pause.open = 0;
+    // PAUSE.swf is read, tessellated and uploaded now: on the first Start that took ~3 s
+    host_movie("PAUSE.swf");
+    if (!pause.have_art) pause_build_art(&pause);
 
     while (!exit_to_title) {
         sceCtrlPeekBufferPositive(0, &pad, 1);
@@ -885,6 +962,7 @@ new_game:   // the title again after Exit to Main Menu
             // every few seconds, once the heap is half full: let go of the files left behind
             // (levels played earlier, the title). Below that they stay, so going back to the
             // map or replaying a level doesn't load them again.
+            if (vm->tick % 30 == 0) log_animals(vm);
             if (vm->tick - last_free >= 90 && mallinfo().uordblks > (size_t)_newlib_heap_size_user / 2) {
                 last_free = vm->tick;
                 free_unused_movies(vm, &cache, cache_mem, cache_bytes);
