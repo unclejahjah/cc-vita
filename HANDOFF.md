@@ -77,5 +77,10 @@ Desktop\Castle Mod Tool\castlecrashers-main\pak (pak_list.txt); outputs go to pa
    files broke the title menu (different MENU layout), hitched character select and crashed the
    stat screen. Never mix builds: a file is usable only if its first bytes equal the original's.
    The cut-short repairs are active again for the truncated originals.
+3b. Memory (2026-10-15): the stat screen crashes were the 160 MB newlib heap running out
+   (dumps in ..\crashdumps; read with scratchpad core.py/mods.py: cc_vita's base from MODULE_INFO,
+   PC - base + 0x81000000 for addr2line). Loaded SWFs were kept forever; now free_unused_movies
+   (main.c) frees files no live clip/function uses once the heap is half full, and the sfx cache
+   is 24 MB. Overlay shows heap use. hosttest CC_FREE_UNUSED=1 does the same (ASan-checked).
 4. Remaining blank lobby text (online-only screens).
 5. Performance (needs Vita overlay numbers), then Wi-Fi co-op.
