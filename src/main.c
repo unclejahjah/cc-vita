@@ -414,7 +414,7 @@ static Movie *prepare_movie(const char *path, int is_level, char *err, size_t n)
     if (!m) return NULL;
     m->is_level = is_level;
     cc_repair_level(m);
-    cc_buttons_playstation(m, CC_BTN_STYLE_COLOURED);   // the game's button art as PlayStation buttons
+    cc_buttons_playstation(m, CC_BTN_STYLE_GREY);   // the game's button art as PlayStation buttons
     cc_menu_vita_badge(m);                              // "Vita Edition" on the title
     render_tessellate_all(m);
     return m;
