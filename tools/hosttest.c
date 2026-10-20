@@ -564,6 +564,7 @@ static int as_mode(int argc, char **argv) {
         }
     }
     vm->root = as_mc_new(vm, start, &start->root, NULL, 0);
+    if (!strcasecmp(argv[3], "MAIN.swf") && !getenv("CC_NO_LOADING")) cc_loading_attach(vm);
     W = MAX_W; H = MAX_H;
     DrawList vb = {0};
     vb.view[2] = W;
@@ -762,7 +763,11 @@ static int as_mode(int argc, char **argv) {
         void dump(AsMc *mc, int d) {
             for (int i = 0; i < mc->ndisp; i++) {
                 AsDisp *e = &mc->disp[i];
-                if (e->kind == DISP_SHAPE) continue;
+                if (e->kind == DISP_SHAPE) {   // AS_TREE_SHAPES: list shapes too
+                    if (getenv("AS_TREE_SHAPES"))
+                        printf("%*sshape [cid %d depth %d] x %.0f y %.0f\n", d * 2, "", e->cid, e->depth, e->m.tx / 20, e->m.ty / 20);
+                    continue;
+                }
                 AsMc *c = e->mc;
                 if (!c) continue;
                 printf("%*s%s [cid %d depth %d%s] frame %d/%d x %.0f y %.0f%s%s%s\n", d * 2, "",

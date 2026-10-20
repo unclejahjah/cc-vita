@@ -487,11 +487,55 @@ static void after_frame_scripts(AsVm *vm) {
     if (pg.t == V_OBJ && pg.o->type == OBJ_MC) as_mc_goto(vm, (AsMc *)pg.o, 2, 0);
 }
 
+// ---- the loading screen -----------------------------------------------------------
+// The executable runs LOADING.swf over the game. It watches g_bLoading: when that comes
+// on it plays its intro, sets g_bReadyToLoad once the screen is covered, and plays its exit
+// (then HideLoadingScreen) when g_bLoading goes off again. The executable sets g_bLoading
+// around a level change and holds the file until the screen is covered; so does this.
+#define LOADING_DEPTH 1048500
+static int load_wait, loading_shown;
+
+static AsMc *loading_screen(AsVm *vm) {
+    return as_mc_child(vm->root, as_atom(vm, "cc_loading"));
+}
+
+void cc_loading_attach(AsVm *vm) {
+    Movie *m = vm->loader ? vm->loader(vm, "LOADING.swf") : NULL;
+    if (!m) return;
+    AsMc *mc = as_mc_create_empty(vm, vm->root, as_atom(vm, "cc_loading"), LOADING_DEPTH);
+    as_mc_load_movie(vm, mc, m);
+}
+
+static int is_level_slot(AsVm *vm, AsMc *target) {
+    return target->parent == vm->root && target->name && !strcmp(target->name->s, "loader");
+}
+
+static int hold_load(AsVm *vm, AsMc *target, const char *url) {
+    (void)url;
+    AsMc *ls = loading_screen(vm);
+    if (!ls || !is_level_slot(vm, target) || as_tobool(vm, cc_flash_global(vm, "g_bNoLoadingScreen"))) return 0;
+    if (!loading_shown) {
+        loading_shown = 1;
+        load_wait = 0;
+        cc_set_flash_global(vm, "g_bLoading", as_num(1));
+        cc_set_flash_global(vm, "g_bReadyToLoad", as_num(0));
+        // its hint text asks _root for f_GetHint, which its own first frame defines
+        as_set(vm, as_objv(&vm->root->obj), as_atom(vm, "f_GetHint"),
+               as_get(vm, as_objv(&ls->obj), as_atom(vm, "f_GetHint")));
+    }
+    // the intro takes 20 frames; don't wait forever if it never says so
+    return as_tonum(vm, cc_flash_global(vm, "g_bReadyToLoad")) != 1 && ++load_wait < 90;
+}
+
 // f_LoadNewLevel waits for loader.b_loaded after a loadMovie. Menus set it from
 // their own frame script, but level files never do: the executable sets it
 // once the file is in.
 static void on_loaded(AsVm *vm, AsMc *target) {
     as_set(vm, as_objv(&target->obj), as_atom(vm, "b_loaded"), as_bool(1));
+    if (is_level_slot(vm, target) && loading_shown) {   // the loading screen plays its exit
+        loading_shown = 0;
+        cc_set_flash_global(vm, "g_bLoading", as_num(0));
+    }
 }
 
 static const char *text_for_number(AsVm *vm, int n) {
@@ -501,6 +545,7 @@ static const char *text_for_number(AsVm *vm, int n) {
 
 void cc_host_init(AsVm *vm) {
     vm->loaded = on_loaded;
+    vm->hold_load = hold_load;
     vm->text_for_number = text_for_number;
     vm->after_frame_scripts = after_frame_scripts;
     cc_native_init(vm);
