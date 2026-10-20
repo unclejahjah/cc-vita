@@ -445,12 +445,15 @@ int cc_menu_power_button(AsMc *panel, Mat screen, CcVert *out, int max) {
     float x = m.a * pr[0] + m.c * pr[1] + m.tx, y = m.b * pr[0] + m.d * pr[1] + m.ty;
     float size = m.a * (pr[2] - pr[0]), cut = size * 0.17f;
     Tris t = {out, 0, max};
-    static const uint8_t outline[4] = {58, 58, 60, 255}, red[4] = {190, 78, 81, 255}, red_dark[4] = {118, 66, 68, 255},
-                         rim[4] = {72, 72, 74, 255}, white[4] = {255, 255, 252, 255};
-    uint8_t face[4] = {116, 116, 116, 255}, glow[4] = {124, 124, 124, 255};
+    // colours read off the newer menu's tile: a red frame lit along the top, a dark well, and
+    // in it a raised grey key (its top face, and its front below that), a faint ring on it
+    static const uint8_t outline[4] = {64, 54, 52, 255}, red[4] = {190, 80, 79, 255}, red_dark[4] = {115, 64, 61, 255},
+                         red_light[4] = {231, 129, 125, 255}, well[4] = {88, 90, 87, 255}, white[4] = {255, 255, 252, 255};
+    uint8_t top[4] = {120, 120, 118, 255}, front[4] = {98, 97, 95, 255}, edge[4] = {132, 132, 130, 255},
+            halo[4] = {134, 134, 132, 255};
     static const uint8_t haze[4] = {255, 244, 196, 70}, ring[4] = {255, 246, 206, 255};
     if (lit) {   // chosen: the face lights up, in the cream glow
-        for (int k = 0; k < 3; k++) { face[k] = 150; glow[k] = 160; }
+        for (int k = 0; k < 3; k++) { top[k] += 30; front[k] += 24; edge[k] += 30; halo[k] += 30; }
         octagon(&t, x, y, size, cut, -size * 0.11f, 0, haze);
         octagon(&t, x, y, size, cut, -size * 0.06f, 0, ring);
     } else {   // the same glow round the chosen one of the others (drawn over them: a band)
@@ -464,20 +467,38 @@ int cc_menu_power_button(AsMc *panel, Mat screen, CcVert *out, int max) {
         }
     }
     octagon(&t, x, y, size, cut, 0, 0, outline);
-    octagon(&t, x, y, size, cut, size * 0.05f, 0, red_dark);              // the frame, darker at the bottom
-    octagon(&t, x, y, size, cut, size * 0.05f, -size * 0.03f, red);
-    octagon(&t, x, y, size, cut, size * 0.13f, 0, rim);
-    octagon(&t, x, y, size, cut, size * 0.155f, 0, face);
-    float cx = x + size / 2, cy = y + size / 2 + size * 0.01f;
-    disc(&t, cx, cy, size * 0.3f, glow);                                     // the faint disc behind the sign
-    float gx = x + size - size * 0.155f - cut * 0.55f, gy = y + size * 0.155f;   // the glint, top right
-    tri(&t, gx - size * 0.09f, gy, gx, gy, gx + cut * 0.55f, gy + cut * 0.55f, white);
-    tri(&t, gx - size * 0.09f, gy, gx + cut * 0.55f, gy + cut * 0.55f, gx + cut * 0.55f, gy + cut * 0.55f + size * 0.09f, white);
+    octagon(&t, x, y, size, cut, size * 0.045f, 0, red_dark);               // the frame: dark at the bottom,
+    octagon(&t, x, y, size, cut, size * 0.045f, -size * 0.035f, red_light);  // lit along the top
+    octagon(&t, x, y, size, cut, size * 0.07f, -size * 0.02f, red);
+    octagon(&t, x, y, size, cut, size * 0.12f, 0, well);
+    float kc = size * 0.1f;   // the key: its front (the side you see below it), then its top face
+    octagon_wh(&t, x + size * 0.155f, y + size * 0.15f, size * 0.715f, size * 0.73f, kc, 0, 0, front);
+    octagon_wh(&t, x + size * 0.155f, y + size * 0.15f, size * 0.715f, size * 0.63f, kc, 0, 0, edge);
+    octagon_wh(&t, x + size * 0.155f, y + size * 0.15f, size * 0.715f, size * 0.63f, kc, size * 0.018f, 0, top);
+    float cx = x + size * 0.512f, cy = y + size * 0.45f;
+    for (int i = 0; i < 40; i++) {   // the faint ring round the sign
+        float a0 = i * 6.2831853f / 40, a1 = (i + 1) * 6.2831853f / 40, r0 = size * 0.252f, r1 = size * 0.277f;
+        float c0 = cosf(a0), s0 = sinf(a0), c1 = cosf(a1), s1 = sinf(a1);
+        tri(&t, cx + c0 * r0, cy + s0 * r0, cx + c0 * r1, cy + s0 * r1, cx + c1 * r1, cy + s1 * r1, halo);
+        tri(&t, cx + c0 * r0, cy + s0 * r0, cx + c1 * r1, cy + s1 * r1, cx + c1 * r0, cy + s1 * r0, halo);
+    }
+    // the glint: a white stripe in the well's top-right corner
+    float gx0 = x + size - size * 0.12f - cut + size * 0.03f, gy0 = y + size * 0.12f;
+    float gx1 = x + size - size * 0.12f, gy1 = y + size * 0.12f + cut - size * 0.03f;
+    float gw = size * 0.06f;
+    tri(&t, gx0 - gw, gy0, gx0, gy0, gx1, gy1 + gw, white);
+    tri(&t, gx0, gy0, gx1, gy1, gx1, gy1 + gw, white);
     // the sign: a ring open at the top and a bar, round-ended
-    float r = size * 0.205f, w = size * 0.07f;
-    for (int i = 0; i < 24; i++) {
-        float a0 = (40 + 280.0f * i / 24) * 3.14159265f / 180, a1 = (40 + 280.0f * (i + 1) / 24) * 3.14159265f / 180;
-        stroke(&t, cx + sinf(a0) * r, cy - cosf(a0) * r, cx + sinf(a1) * r, cy - cosf(a1) * r, w, white);
+    float r = size * 0.175f, w = size * 0.05f;
+    for (int i = 0; i < 28; i++) {   // the ring as a band, round at its two ends
+        float a0 = (40 + 280.0f * i / 28) * 3.14159265f / 180, a1 = (40 + 280.0f * (i + 1) / 28) * 3.14159265f / 180;
+        float r0 = r - w / 2, r1 = r + w / 2, s0 = sinf(a0), c0 = cosf(a0), s1 = sinf(a1), c1 = cosf(a1);
+        tri(&t, cx + s0 * r0, cy - c0 * r0, cx + s0 * r1, cy - c0 * r1, cx + s1 * r1, cy - c1 * r1, white);
+        tri(&t, cx + s0 * r0, cy - c0 * r0, cx + s1 * r1, cy - c1 * r1, cx + s1 * r0, cy - c1 * r0, white);
+    }
+    for (int k = 0; k < 2; k++) {
+        float a = (k ? 320 : 40) * 3.14159265f / 180;
+        disc(&t, cx + sinf(a) * r, cy - cosf(a) * r, w / 2, white);
     }
     stroke(&t, cx, cy - r * 1.28f, cx, cy - r * 0.2f, w, white);
     return t.n;

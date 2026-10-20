@@ -366,6 +366,12 @@ static int sprite_mode(int argc, char **argv) {
     return 0;
 }
 
+// CC_PS_BUTTONS: "dark", "grey", or anything else for the coloured balls
+static int btn_style(void) {
+    const char *v = getenv("CC_PS_BUTTONS");
+    return !strcmp(v, "dark") ? CC_BTN_STYLE_DARK : !strcmp(v, "grey") ? CC_BTN_STYLE_GREY : CC_BTN_STYLE_COLOURED;
+}
+
 // Several clips' first frames in a row: --clips file.swf cid,cid,... out_prefix [cell_px] [art_px]
 static int clips_mode(int argc, char **argv) {
     if (argc < 5) { fprintf(stderr, "usage: %s --clips file.swf cid,cid,... out_prefix [cell_px] [art_px]\n", argv[0]); return 1; }
@@ -376,7 +382,7 @@ static int clips_mode(int argc, char **argv) {
     float art = argc > 6 ? (float)atof(argv[6]) : 60;
     if (getenv("CC_PS_BUTTONS"))   // "coloured" or "dark"
         printf("PlayStation buttons: %d clips\n",
-               cc_buttons_playstation(m, !strcmp(getenv("CC_PS_BUTTONS"), "dark") ? CC_BTN_STYLE_DARK : CC_BTN_STYLE_COLOURED));
+               cc_buttons_playstation(m, btn_style()));
     W = MAX_W; H = cell;
     static const uint8_t paper[3] = {60, 60, 70};
     clear(paper);
@@ -486,7 +492,7 @@ static Movie *host_loader(AsVm *vm, const char *url) {
     }
     if (m && getenv("CC_PS_BUTTONS")) cc_menu_vita_badge(m);
     if (m && getenv("CC_PS_BUTTONS"))   // as the Vita does for every file it loads
-        cc_buttons_playstation(m, !strcmp(getenv("CC_PS_BUTTONS"), "dark") ? CC_BTN_STYLE_DARK : CC_BTN_STYLE_COLOURED);
+        cc_buttons_playstation(m, btn_style());
                 printf("  [load] %s%s", base, m ? "" : " FAILED");
                 if (fixed) printf(" (put back %d layer%s the file lost)", fixed, fixed > 1 ? "s" : "");
                 printf("\n");

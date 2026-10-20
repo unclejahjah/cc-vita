@@ -162,9 +162,10 @@ static ShapeFill fill_from(Poly *p, const uint8_t colour[4]) {
 // Drops every loop that lies inside box b and is no bigger than max_area from every fill:
 // the letter, its black outline (part of the button's outline fill) and the hole it cuts
 // in the colour fills. The button's own body loops are bigger, so they stay.
-static void remove_loops_in(Shape *s, Box b, float max_area) {
+static void remove_loops_in(Shape *s, Box b, float max_area, int black_only) {
     for (int f = 0; f < s->nfills; f++) {
         ShapeFill *sf = &s->fills[f];
+        if (black_only && !is_black(sf->style.color)) continue;
         int out_pts = 0, out_loops = 0;
         for (int l = 0; l < sf->nloops; l++) {
             int a = sf->loop_start[l], e = sf->loop_start[l + 1];
@@ -216,6 +217,14 @@ static const uint8_t SYMBOL_COLOUR[][4] = {
     [CC_BTN_SQUARE] = {0xff, 0x8c, 0xd9, 255}, [CC_BTN_TRIANGLE] = {0x4c, 0xe0, 0xae, 255},
 };
 
+// the grey of PlayStation's face buttons, and the symbols in their own colours
+static const uint8_t GREY_SHADE[4] = {0x86, 0x88, 0x8e, 255}, GREY_BASE[4] = {0xb4, 0xb6, 0xbc, 255},
+                     GREY_LIGHT[4] = {0xe2, 0xe3, 0xe6, 255};
+static const uint8_t GREY_SYMBOL[][4] = {
+    [CC_BTN_CROSS] = {0x3a, 0x6e, 0xd0, 255}, [CC_BTN_CIRCLE] = {0xe0, 0x30, 0x3c, 255},
+    [CC_BTN_SQUARE] = {0xd0, 0x5a, 0xb0, 255}, [CC_BTN_TRIANGLE] = {0x1c, 0xa0, 0x78, 255},
+};
+
 static void make_ball(Shape *s, int which, int style) {
     // the letter: the white fill; the ball: the coloured fills, darkest to lightest
     int letter_i = -1, ncol = 0, col[8];
@@ -231,6 +240,7 @@ static void make_ball(Shape *s, int which, int style) {
     for (int k = 0; k < ncol; k++) {
         const uint8_t *to;
         if (style == CC_BTN_STYLE_DARK) to = k == 0 ? DARK_SHADE : k == ncol - 1 ? DARK_LIGHT : DARK_BASE;
+        else if (style == CC_BTN_STYLE_GREY) to = k == 0 ? GREY_SHADE : k == ncol - 1 ? GREY_LIGHT : GREY_BASE;
         else to = k == 0 ? COLOURED[which].shade : k == ncol - 1 ? COLOURED[which].light : COLOURED[which].base;
         memcpy(s->fills[col[k]].style.color, to, 3);
     }
@@ -238,11 +248,15 @@ static void make_ball(Shape *s, int which, int style) {
     // the symbol goes where the ball's colour is, sized like the letter
     Box lb = fill_box(&s->fills[letter_i]), bb = ncol ? fill_box(&s->fills[col[0]]) : lb;
     float size = fmaxf(lb.x1 - lb.x0, lb.y1 - lb.y0) * 1.0f;
-    remove_loops_in(s, grow_box(lb, 0.6f), (lb.x1 - lb.x0) * (lb.y1 - lb.y0) * 1.6f);
+    // the letter's black outline goes; the letter itself (the colour fills have its shape cut
+    // out) turns the ball's colour, so the ball is whole under the symbol
+    remove_loops_in(s, grow_box(lb, 0.6f), (lb.x1 - lb.x0) * (lb.y1 - lb.y0) * 1.6f, 1);
+    if (ncol) memcpy(s->fills[letter_i].style.color, s->fills[col[ncol / 2]].style.color, 3);
     Poly p = {0};
     symbol(&p, which, (lb.x0 + lb.x1) / 2, (lb.y0 + lb.y1) / 2, size);
     (void)bb;
-    append_fill(s, fill_from(&p, style == CC_BTN_STYLE_DARK ? SYMBOL_COLOUR[which] : COLOURED[which].symbol));
+    append_fill(s, fill_from(&p, style == CC_BTN_STYLE_DARK ? SYMBOL_COLOUR[which]
+                                 : style == CC_BTN_STYLE_GREY ? GREY_SYMBOL[which] : COLOURED[which].symbol));
 }
 
 // one closed loop: a box with its own radius per corner (tl, tr, br, bl)

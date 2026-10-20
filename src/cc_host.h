@@ -22,7 +22,7 @@ enum { CC_MENU_PLAY, CC_MENU_OPTIONS, CC_MENU_QUIT, CC_MENU_ITEMS };
 AsMc *cc_menu_attach(AsVm *vm, float x, float y);
 void cc_menu_highlight(AsVm *vm, AsMc *panel, int item);
 // The power button that stands for Quit, as triangles in screen pixels through screen (stage
-// twips -> screen); lit when chosen. Returns the vertices written (up to max; it needs about 3400).
+// twips -> screen); lit when chosen. Returns the vertices written (up to max; it needs about 1200).
 typedef struct { float x, y; uint8_t rgba[4]; } CcVert;
 int cc_menu_power_button(AsMc *panel, Mat screen, CcVert *out, int max);
 // The chosen button's highlight frame: hidden in the panel, the app draws it last (over the
