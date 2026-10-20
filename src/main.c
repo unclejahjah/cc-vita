@@ -11,6 +11,7 @@
 #include <psp2/ctrl.h>
 #include <psp2/io/fcntl.h>
 #include <psp2/kernel/processmgr.h>
+#include <psp2/kernel/threadmgr.h>
 #include <psp2/kernel/sysmem.h>
 #include <psp2/power.h>
 #include <stdarg.h>
@@ -301,8 +302,6 @@ static void draw_frame(const DrawList *vb, unsigned clock) {
     draw_list_range(vb, vb->heat_end, vb->n);
 }
 
-static int g_show_loads;   // the debug overlay (SELECT+UP) is on
-
 static void show_message(const char *line1, const char *line2) {
     vita2d_set_clear_color(RGBA8(20, 20, 24, 255));
     vita2d_start_drawing();
@@ -394,52 +393,157 @@ static void bitmap_to_texture(Bitmap *bm) {
     bm->rgba = NULL;
 }
 
-static Movie *vita_loader(AsVm *vm, const char *url) {
-    const char *base = strrchr(url, '/');
-    base = base ? base + 1 : url;
-    for (int i = 0; i < g_nmovies; i++)
-        if (!strcasecmp(g_movies[i].name, base)) return g_movies[i].m;
-    if (g_nmovies == MAX_MOVIES) return NULL;
+// ux0:data/CastleCrashers/{game,levels}/<base>: 1 and the path if it's there
+static int find_file(const char *base, char *path, size_t n, int *is_level) {
     static const char *dirs[] = {"game", "levels"};
     for (int i = 0; i < 2; i++) {
-        char path[256], err[256];
-        snprintf(path, sizeof path, DATA_DIR "%s/%s", dirs[i], base);
+        snprintf(path, n, DATA_DIR "%s/%s", dirs[i], base);
         SceUID fd = sceIoOpen(path, SCE_O_RDONLY, 0);
         if (fd < 0) continue;
         sceIoClose(fd);
-        if (g_show_loads) {   // debug overlay on: say which file is loading
-            char msg[128];
-            snprintf(msg, sizeof msg, "Loading %s...", base);
-            show_message(msg, NULL);
-        }   // otherwise the last frame stays up; the game shows its own loading screen
-        // a big file (a sky is up to 34 MB of pixels) after a long session: make room first
-        if (vm && g_cache && mallinfo().uordblks > (size_t)_newlib_heap_size_user / 2)
-            free_unused_movies(vm, g_cache, g_cache_mem, g_cache_bytes);
-        Movie *m = swf_load(path, err, sizeof err);
-        if (!m && vm && g_cache && free_unused_movies(vm, g_cache, g_cache_mem, g_cache_bytes))
-            m = swf_load(path, err, sizeof err);   // out of memory: try again without the old files
-        if (!m) {
-            snprintf(g_last_error, sizeof g_last_error, "%s: %s", base, err);
-            log_line("load %s FAILED: %s", path, err);
-            return NULL;
-        }
-        log_line("load %s%s (heap %u KB used)", path, m->truncated ? " (cut short)" : "",
-                 (unsigned)(mallinfo().uordblks >> 10));
-        m->is_level = i == 1;   // levels/: console_version reads true in its scripts (cc_host.c)
-        cc_repair_level(m);
-        cc_buttons_playstation(m, CC_BTN_STYLE_COLOURED);   // the game's button art as PlayStation buttons
-        cc_menu_vita_badge(m);                              // "Vita Edition" on the title
-        GpuBlock *blk = &g_movies[g_nmovies].gpu;
-        blk->uid = -1;
-        render_tessellate_all(m);
-        if (render_upload(m, mesh_alloc, blk)) render_release_cpu(m);
-        snprintf(g_movies[g_nmovies].name, sizeof g_movies[0].name, "%s", base);
-        g_movies[g_nmovies++].m = m;
-        return m;
+        *is_level = i == 1;   // levels/: console_version reads true in its scripts (cc_host.c)
+        return 1;
     }
-    snprintf(g_last_error, sizeof g_last_error, "missing %s", base);
-    log_line("load %s: MISSING", base);
+    return 0;
+}
+
+// the CPU side of a load: parse, repair, PlayStation buttons, tessellate (no GPU work but the
+// bitmaps' textures, which swf_bitmap_loaded makes as they are decoded)
+static Movie *prepare_movie(const char *path, int is_level, char *err, size_t n) {
+    Movie *m = swf_load(path, err, n);
+    if (!m) return NULL;
+    m->is_level = is_level;
+    cc_repair_level(m);
+    cc_buttons_playstation(m, CC_BTN_STYLE_COLOURED);   // the game's button art as PlayStation buttons
+    cc_menu_vita_badge(m);                              // "Vita Edition" on the title
+    render_tessellate_all(m);
+    return m;
+}
+
+// uploads its meshes and keeps it
+static Movie *register_movie(const char *base, const char *path, Movie *m) {
+    log_line("load %s%s (heap %u KB used)", path, m->truncated ? " (cut short)" : "",
+             (unsigned)(mallinfo().uordblks >> 10));
+    GpuBlock *blk = &g_movies[g_nmovies].gpu;
+    blk->uid = -1;
+    if (render_upload(m, mesh_alloc, blk)) render_release_cpu(m);
+    snprintf(g_movies[g_nmovies].name, sizeof g_movies[0].name, "%s", base);
+    g_movies[g_nmovies++].m = m;
+    return m;
+}
+
+// a big file (a sky is up to 34 MB of pixels) after a long session: make room first
+static void make_room(AsVm *vm) {
+    if (vm && g_cache && mallinfo().uordblks > (size_t)_newlib_heap_size_user / 2)
+        free_unused_movies(vm, g_cache, g_cache_mem, g_cache_bytes);
+}
+
+// ---- loading in the background ----
+// The original keeps the game (and its loading screen, the knight walking) running while a
+// file loads. Here one file at a time is parsed and tessellated on a thread of its own while
+// the scripts hold its loadMovie (vm->prefetch); the upload and the bookkeeping stay on this
+// thread. vita_loader picks the finished file up.
+enum { BG_IDLE, BG_RUNNING, BG_DONE };
+static struct {
+    char base[64], path[256], err[256];
+    int is_level;
+    volatile int state;
+    Movie *m;
+} g_bg;
+static SceUID g_bg_sema = -1;
+
+static int bg_thread(SceSize args, void *argp) {
+    (void)args; (void)argp;
+    for (;;) {
+        sceKernelWaitSema(g_bg_sema, 1, NULL);
+        g_bg.m = prepare_movie(g_bg.path, g_bg.is_level, g_bg.err, sizeof g_bg.err);
+        __sync_synchronize();
+        g_bg.state = BG_DONE;
+    }
+    return 0;
+}
+
+static void bg_init(void) {
+    g_bg_sema = sceKernelCreateSema("cc_load", 0, 0, 1, NULL);
+    SceUID th = sceKernelCreateThread("cc_load", bg_thread, 0x10000100 + 20, 1024 * 1024, 0, 0, NULL);
+    if (g_bg_sema < 0 || th < 0 || sceKernelStartThread(th, 0, NULL) < 0) g_bg_sema = -1;
+}
+
+// the running job's file, once the thread is done with it: kept, or NULL (failed)
+static Movie *bg_finish(void) {
+    while (g_bg.state == BG_RUNNING) sceKernelDelayThread(1000);
+    __sync_synchronize();
+    Movie *m = g_bg.m;
+    g_bg.state = BG_IDLE;
+    if (!m) {
+        log_line("background load %s failed (%s): trying again", g_bg.path, g_bg.err);
+        return NULL;
+    }
+    if (g_nmovies == MAX_MOVIES) { swf_free(m); return NULL; }
+    return register_movie(g_bg.base, g_bg.path, m);
+}
+
+static Movie *cached_movie(const char *base) {
+    for (int i = 0; i < g_nmovies; i++)
+        if (!strcasecmp(g_movies[i].name, base)) return g_movies[i].m;
     return NULL;
+}
+
+static int vita_prefetch(AsVm *vm, const char *url) {
+    const char *base = strrchr(url, '/');
+    base = base ? base + 1 : url;
+    if (g_bg_sema < 0 || cached_movie(base)) return 0;
+    if (g_bg.state != BG_IDLE) {
+        if (strcasecmp(g_bg.base, base)) {   // another file's job (its load was dropped): finish it
+            if (g_bg.state == BG_DONE) bg_finish();
+            return 1;
+        }
+        if (g_bg.state == BG_RUNNING) return 1;
+        bg_finish();   // done: a failure falls back to vita_loader's own load
+        return 0;
+    }
+    char path[256];
+    int is_level;
+    if (g_nmovies == MAX_MOVIES || !find_file(base, path, sizeof path, &is_level)) return 0;
+    make_room(vm);
+    snprintf(g_bg.base, sizeof g_bg.base, "%s", base);
+    snprintf(g_bg.path, sizeof g_bg.path, "%s", path);
+    g_bg.is_level = is_level;
+    g_bg.m = NULL;
+    g_bg.state = BG_RUNNING;
+    __sync_synchronize();
+    sceKernelSignalSema(g_bg_sema, 1);
+    return 1;
+}
+
+static Movie *vita_loader(AsVm *vm, const char *url) {
+    const char *base = strrchr(url, '/');
+    base = base ? base + 1 : url;
+    Movie *m = cached_movie(base);
+    if (m) return m;
+    if (g_bg.state != BG_IDLE) {   // never two loads at once (the tessellator is shared)
+        int same = !strcasecmp(g_bg.base, base);
+        m = bg_finish();
+        if (same && m) return m;
+    }
+    if (g_nmovies == MAX_MOVIES) return NULL;
+    char path[256], err[256];
+    int is_level;
+    if (!find_file(base, path, sizeof path, &is_level)) {
+        snprintf(g_last_error, sizeof g_last_error, "missing %s", base);
+        log_line("load %s: MISSING", base);
+        return NULL;
+    }
+    make_room(vm);   // the last frame stays up meanwhile; the game shows its own loading screen
+    m = prepare_movie(path, is_level, err, sizeof err);
+    if (!m && vm && g_cache && free_unused_movies(vm, g_cache, g_cache_mem, g_cache_bytes))
+        m = prepare_movie(path, is_level, err, sizeof err);   // out of memory: try again without the old files
+    if (!m) {
+        snprintf(g_last_error, sizeof g_last_error, "%s: %s", base, err);
+        log_line("load %s FAILED: %s", path, err);
+        return NULL;
+    }
+    return register_movie(base, path, m);
 }
 
 // a file the port itself draws from (MAIN, the pause book): never freed
@@ -832,6 +936,7 @@ int main(void) {
     sceCtrlSetSamplingMode(SCE_CTRL_MODE_ANALOG);
     log_open();
     log_line("cc_vita started");
+    bg_init();
 
     Movie *start = host_movie("MAIN.swf");
     if (!start) {
@@ -902,6 +1007,7 @@ new_game:   // the title again after Exit to Main Menu
     vm->sound_start = vita_sound_start;
     vm->sound_stop = vita_sound_stop;
     vm->warn = vita_warn;
+    vm->prefetch = vita_prefetch;   // files load on a second thread while the game runs
     cc_host_init(vm);
     as_render_init(vm);
     vm->root = as_mc_new(vm, start, &start->root, NULL, 0);
@@ -932,7 +1038,7 @@ new_game:   // the title again after Exit to Main Menu
         old = pad;
         int debug = pad.buttons & SCE_CTRL_SELECT;
         if (debug && (pressed & SCE_CTRL_START)) break;
-        if (debug && (pressed & SCE_CTRL_UP)) g_show_loads = overlay = !overlay;
+        if (debug && (pressed & SCE_CTRL_UP)) overlay = !overlay;
         // in a level, Start is the pause menu's (the executable's in the original)
         int level = in_level(vm);
         map_pad(&pad, debug, level);

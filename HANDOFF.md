@@ -204,3 +204,10 @@ Both are the same developer-settings path as the magic bug, already fixed by pin
   now writes ux0:data/CastleCrashers/log.txt (previous run: log_prev.txt): each distinct warning
   once, files loaded/freed with heap use, and the level's animal* clips whenever they change.
   Next: Jah walks to the Seahorse spot, then FTP the log back.
+- Background loads (20:55): files are parsed and tessellated on a "cc_load" thread (main.c
+  vita_prefetch / bg_thread) while hold_load holds their loadMovie, so the game and the loading
+  screen keep animating; upload stays on the main thread. The loading screen's exit waits until no
+  load is pending for 2 frames; HideLoadingScreen hides the clip. The "Loading X.swf" text with the
+  overlay on is gone. hosttest CC_PREFETCH=N fakes an N-frame background load.
+- ANIMALS.swf was simply missing from the Vita's game folder (log.txt showed MISSING); uploaded
+  20:45 (complete 64,676-byte copy). Orbs show now.
