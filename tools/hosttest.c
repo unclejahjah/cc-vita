@@ -761,19 +761,37 @@ static int as_mode(int argc, char **argv) {
                 printf("  [heat] items 0..%d shimmer in %.0f,%.0f - %.0f,%.0f\n", vb.heat_at, vb.heat[0], vb.heat[1],
                        vb.heat[2], vb.heat[3]);
             rasterise(&vb);
-            if (panel) {   // the title's power sign, drawn over the frame as the Vita does
-                float dots[48 * 3], bar[4];
-                int n = cc_menu_power_icon(panel, screen, dots, 48, bar);
-                for (int d = 0; d < n; d++)
-                    for (int y = (int)(dots[d * 3 + 1] - dots[d * 3 + 2]); y <= dots[d * 3 + 1] + dots[d * 3 + 2]; y++)
-                        for (int x = (int)(dots[d * 3] - dots[d * 3 + 2]); x <= dots[d * 3] + dots[d * 3 + 2]; x++) {
-                            float dx = x - dots[d * 3], dy = y - dots[d * 3 + 1];
-                            if (x >= 0 && y >= 0 && x < W && y < H && dx * dx + dy * dy <= dots[d * 3 + 2] * dots[d * 3 + 2])
-                                memset(px + (y * W + x) * 3, 255, 3);
+            if (panel) {   // the title's power button, drawn over the frame as the Vita does
+                static CcVert t[4096];
+                int n = cc_menu_power_button(panel, screen, t, 4096);
+                for (int i = 0; i + 2 < n; i += 3) {
+                    const CcVert *a = &t[i], *b = &t[i + 1], *c = &t[i + 2];
+                    float area = (b->x - a->x) * (c->y - a->y) - (b->y - a->y) * (c->x - a->x);
+                    if (area == 0) continue;
+                    int x0 = (int)fminf(a->x, fminf(b->x, c->x)), x1 = (int)fmaxf(a->x, fmaxf(b->x, c->x)) + 1;
+                    int y0 = (int)fminf(a->y, fminf(b->y, c->y)), y1 = (int)fmaxf(a->y, fmaxf(b->y, c->y)) + 1;
+                    for (int y = y0 < 0 ? 0 : y0; y < y1 && y < H; y++)
+                        for (int x = x0 < 0 ? 0 : x0; x < x1 && x < W; x++) {
+                            float px_ = x + 0.5f, py_ = y + 0.5f;
+                            float w0 = ((b->x - px_) * (c->y - py_) - (b->y - py_) * (c->x - px_)) / area;
+                            float w1 = ((c->x - px_) * (a->y - py_) - (c->y - py_) * (a->x - px_)) / area;
+                            if (w0 < 0 || w1 < 0 || w0 + w1 > 1) continue;
+                            uint8_t *d = px + (y * W + x) * 3;
+                            for (int k = 0; k < 3; k++) d[k] = (a->rgba[k] * a->rgba[3] + d[k] * (255 - a->rgba[3])) / 255;
                         }
-                for (int y = (int)bar[1]; y < bar[1] + bar[3]; y++)
-                    for (int x = (int)bar[0]; x < bar[0] + bar[2]; x++)
-                        if (x >= 0 && y >= 0 && x < W && y < H) memset(px + (y * W + x) * 3, 255, 3);
+                }
+                Mat hm;
+                AsMc *hl = cc_menu_highlight_clip(panel, &hm);   // the chosen button's frame, over all that
+                if (hl) {
+                    DrawList hvb = {0};
+                    render_begin(&hvb);
+                    hvb.view[2] = W;
+                    hvb.view[3] = H;
+                    hl->visible = 1;
+                    as_render_mc(hl, mat_mul(screen, mat_mul(vm->root->m, mat_mul(panel->m, hm))), CX_IDENTITY, &hvb);
+                    hl->visible = 0;
+                    rasterise(&hvb);
+                }
             }
             write_frame(argv[4], shot++);
             printf("tick %d: %.1f ms, %lld actions, heap %zu objects, root frame %d\n", f, ms, vm->ops - ops0,

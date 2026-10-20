@@ -3,6 +3,7 @@
 // the game's variables), only without the interpreter. They're attached by name when
 // MAIN.swf defines the function (as_override).
 #include <math.h>
+#include <string.h>
 #include <stdlib.h>
 
 #include "cc_host.h"
@@ -195,8 +196,10 @@ static AsVal native_get_button_art(AsVm *vm, AsVal this_, int argc, AsVal *argv)
 // panel's own top three slots. Buttons by timeline depth; labels in panel.txtClip.
 static const int MENU_DEPTH[CC_MENU_ITEMS] = {9, 13, 17};
 #define MENU_SCALE 125     // the panel, larger than the original's
-// per item: its width (_xscale), where it sits (_x) and its left edge from its origin
-static float item_w[CC_MENU_ITEMS] = {100, 100, 100}, item_x[CC_MENU_ITEMS], item_left[CC_MENU_ITEMS];
+// per item: its width (_xscale) and where it sits (_x)
+static float item_w[CC_MENU_ITEMS] = {100, 100, 100}, item_x[CC_MENU_ITEMS];
+#define HIGHLIGHT_DEPTH 21   // the chosen button's glowing frame and its button icon
+static float hl_pad[4];      // how far it reaches past a button: left, top, right, bottom (twips)
 
 static AsMc *panel_child(AsMc *panel, int depth) {
     for (int i = 0; panel && i < panel->ndisp; i++)
@@ -233,6 +236,16 @@ AsMc *cc_menu_attach(AsVm *vm, float x, float y) {
         AsMc *frame = panel_child((AsMc *)body.o, 63);
         if (frame) frame->visible = 0;
     }
+    // the highlight frame (with its button icon) sits over Local Game in the file: how far it
+    // reaches past the button, to put it around whichever is chosen (cc_menu_highlight)
+    AsMc *hl = panel_child(panel, HIGHLIGHT_DEPTH), *lg = panel_child(panel, 9);
+    if (hl && lg) {
+        float hb[4], gb[4];
+        render_mc_shape_bounds(hl, hl->m, hb);
+        render_mc_bounds(lg, lg->m, gb);
+        float p[4] = {gb[0] - hb[0], gb[1] - hb[1], hb[2] - gb[2], hb[3] - gb[3]};
+        memcpy(hl_pad, p, sizeof p);
+    }
     static const int hide[] = {11, 15, 3, 5, 7, 19, 21, 24, 26, 28};   // online (+ its icon), download, the 3 icon buttons (+ icons), merch
     for (size_t i = 0; i < sizeof hide / sizeof *hide; i++) {
         AsMc *b = panel_child(panel, hide[i]);
@@ -262,14 +275,14 @@ AsMc *cc_menu_attach(AsVm *vm, float x, float y) {
         set_num(vm, topt, "_y", topt->m.ty / 20 + dy);
         set_num(vm, topt, "_x", topt->m.tx / 20 + dx);
         if (tile) {
-            // Quit is the power button at the bottom left, as on the newer menu: its grey
-            // button without the label, under the others, with the power sign drawn over it
-            // (cc_menu_power_icon)
+            // Quit is the power button at the bottom left, as on the newer menu: its button
+            // stays as the place (hidden) and the tile is drawn there (cc_menu_power_button)
             render_mc_bounds(tile, tile->m, tb);
             if (lb[2] > lb[0] && tb[2] > tb[0]) {
                 set_num(vm, tile, "_x", (tile->m.tx + lb[0] - tb[0]) / 20);
                 set_num(vm, tile, "_y", (tile->m.ty + (lb[3] - lb[1]) * 2 + 8 * 20 + lb[1] - tb[1]) / 20 + 6);
             }
+            tile->visible = 0;
         }
     }
     // larger, and in the bottom left corner: what's left of the panel, MENU_SCALE %, its
@@ -294,52 +307,150 @@ AsMc *cc_menu_attach(AsVm *vm, float x, float y) {
         set_num(vm, panel, "_x", margin - bb[0] / 20 * k);
         set_num(vm, panel, "_y", sh - margin - bb[3] / 20 * k);
     }
-    for (int i = 0; i < CC_MENU_ITEMS; i++) {   // for cc_menu_highlight: each item's left edge
+    for (int i = 0; i < CC_MENU_ITEMS; i++) {   // for cc_menu_highlight
         AsMc *b = panel_child(panel, MENU_DEPTH[i]);
-        if (!b) continue;
-        float ib[4];
-        render_mc_bounds(b, (Mat){1, 0, 0, 1, 0, 0}, ib);
-        item_x[i] = b->m.tx / 20;
-        item_left[i] = ib[2] > ib[0] ? ib[0] / 20 : 0;
+        if (b) item_x[i] = b->m.tx / 20;
     }
     return panel;
 }
 
+// the power button's square, in the panel's twips: on the (hidden) Quit button's bottom-left
+// corner, a little taller than the buttons
+static int power_rect(AsMc *panel, float r[4]) {
+    AsMc *b = panel_child(panel, MENU_DEPTH[CC_MENU_QUIT]);
+    if (!b) return 0;
+    float bb[4];
+    render_mc_bounds(b, b->m, bb);
+    if (bb[2] <= bb[0]) return 0;
+    float size = (bb[3] - bb[1]) * 1.15f;
+    r[0] = bb[0];
+    r[1] = bb[3] - size;
+    r[2] = bb[0] + size;
+    r[3] = bb[3];
+    return 1;
+}
+
+static int hl_item;   // which button it is round
+
+// what to draw over the menu, and its matrix in the panel: the frame, or round the power
+// button (whose own glow cc_menu_power_button draws: the frame's art won't go square) its icon
+AsMc *cc_menu_highlight_clip(AsMc *panel, Mat *m) {
+    AsMc *hl = panel_child(panel, HIGHLIGHT_DEPTH);
+    *m = (Mat){1, 0, 0, 1, 0, 0};
+    if (!hl || hl_item != CC_MENU_QUIT) return hl;
+    for (int i = 0; i < hl->ndisp; i++)
+        if (hl->disp[i].kind == DISP_MC && hl->disp[i].mc) {
+            *m = hl->m;
+            return hl->disp[i].mc;
+        }
+    return NULL;
+}
+
+
 void cc_menu_highlight(AsVm *vm, AsMc *panel, int item) {
-    for (int i = 0; i < CC_MENU_ITEMS; i++) {
-        AsMc *b = panel_child(panel, MENU_DEPTH[i]);
-        if (!b) continue;
-        float k = i == item ? 1.12f : 1;
-        set_num(vm, b, "_xscale", item_w[i] * k);
-        set_num(vm, b, "_yscale", 100 * k);
-        // the chosen one grows from its left edge, so the column stays in line
-        set_num(vm, b, "_x", item_x[i] + item_left[i] * item_w[i] / 100 * (1 - k));
+    // the buttons keep their size; the file's highlight frame goes round the chosen one, with
+    // the accept button (Cross) on its corner, as the newer menu shows it
+    AsMc *hl = panel_child(panel, HIGHLIGHT_DEPTH), *b = panel_child(panel, MENU_DEPTH[item]);
+    if (!hl || !b) return;
+    hl_item = item;
+    float r[4], nb[4];
+    if (item == CC_MENU_QUIT) {
+        if (!power_rect(panel, r)) return;
+    } else {
+        render_mc_bounds(b, b->m, r);
+    }
+    r[0] -= hl_pad[0]; r[1] -= hl_pad[1]; r[2] += hl_pad[2]; r[3] += hl_pad[3];
+    render_mc_shape_bounds(hl, (Mat){1, 0, 0, 1, 0, 0}, nb);   // the frame, not its icon
+    if (nb[2] <= nb[0] || nb[3] <= nb[1]) return;
+    float sx = (r[2] - r[0]) / (nb[2] - nb[0]), sy = (r[3] - r[1]) / (nb[3] - nb[1]);
+    set_num(vm, hl, "_xscale", sx * 100);
+    set_num(vm, hl, "_yscale", sy * 100);
+    set_num(vm, hl, "_x", (r[0] - nb[0] * sx) / 20);
+    set_num(vm, hl, "_y", (r[1] - nb[1] * sy) / 20);
+    for (int i = 0; i < hl->ndisp; i++) {   // the icon stays round, and shows Cross
+        AsMc *icon = hl->disp[i].mc;
+        if (!icon) continue;
+        set_num(vm, icon, "_xscale", 100 * sy / sx);
+        as_mc_goto(vm, icon, button_frame(16) - 1, 0);
     }
 }
 
-int cc_menu_power_icon(AsMc *panel, Mat screen, float *dots, int max, float bar[4]) {
-    AsMc *b = panel_child(panel, MENU_DEPTH[CC_MENU_QUIT]);
-    if (!b || !b->visible || max < 1) return 0;
-    Mat m = mat_mul(screen, mat_mul(panel->parent ? panel->parent->m : (Mat){1, 0, 0, 1, 0, 0}, panel->m));
-    float bb[4];
-    render_mc_bounds(b, mat_mul(m, b->m), bb);
-    if (bb[2] <= bb[0]) return 0;
-    float cx = (bb[0] + bb[2]) / 2, cy = (bb[1] + bb[3]) / 2 + (bb[3] - bb[1]) * 0.02f;
-    float size = bb[2] - bb[0] < bb[3] - bb[1] ? bb[2] - bb[0] : bb[3] - bb[1];
-    float r = size * 0.24f, t = size * 0.085f;   // the ring's radius and stroke
-    // the ring, open 60 degrees at the top, as overlapping dots (clockwise from 1 o'clock)
-    int n = max;
-    for (int i = 0; i < n; i++) {
-        float a = (30 + 300.0f * i / (n > 1 ? n - 1 : 1)) * 3.14159265f / 180;
-        dots[i * 3] = cx + sinf(a) * r;
-        dots[i * 3 + 1] = cy - cosf(a) * r;
-        dots[i * 3 + 2] = t / 2;
+// ---- the power button (the newer menu's, drawn: the original file has no art for it) ----
+typedef struct { CcVert *v; int n, max; } Tris;
+
+static void tri(Tris *t, float x0, float y0, float x1, float y1, float x2, float y2, const uint8_t c[4]) {
+    if (t->n + 3 > t->max) return;
+    float xy[6] = {x0, y0, x1, y1, x2, y2};
+    for (int k = 0; k < 3; k++) {
+        CcVert *v = &t->v[t->n++];
+        v->x = xy[k * 2];
+        v->y = xy[k * 2 + 1];
+        memcpy(v->rgba, c, 4);
     }
-    bar[0] = cx - t / 2;
-    bar[1] = cy - r * 1.3f;
-    bar[2] = t;
-    bar[3] = r * 1.15f;
-    return n;
+}
+
+// a square with its corners cut by c, inset by e from (x, y, size)
+static void octagon(Tris *t, float x, float y, float size, float cut, float e, float dy, const uint8_t col[4]) {
+    float x0 = x + e, y0 = y + e + dy, x1 = x + size - e, y1 = y + size - e + dy, c = cut - e * 0.4f;
+    float p[16] = {x0 + c, y0, x1 - c, y0, x1, y0 + c, x1, y1 - c, x1 - c, y1, x0 + c, y1, x0, y1 - c, x0, y0 + c};
+    float cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
+    for (int i = 0; i < 8; i++) tri(t, cx, cy, p[i * 2], p[i * 2 + 1], p[(i + 1) % 8 * 2], p[(i + 1) % 8 * 2 + 1], col);
+}
+
+static void disc(Tris *t, float cx, float cy, float r, const uint8_t col[4]) {
+    for (int i = 0; i < 20; i++) {
+        float a0 = i * 6.2831853f / 20, a1 = (i + 1) * 6.2831853f / 20;
+        tri(t, cx, cy, cx + cosf(a0) * r, cy + sinf(a0) * r, cx + cosf(a1) * r, cy + sinf(a1) * r, col);
+    }
+}
+
+// a thick line with round ends
+static void stroke(Tris *t, float x0, float y0, float x1, float y1, float w, const uint8_t col[4]) {
+    float dx = x1 - x0, dy = y1 - y0, l = sqrtf(dx * dx + dy * dy);
+    if (l > 0) {
+        float nx = -dy / l * w / 2, ny = dx / l * w / 2;
+        tri(t, x0 + nx, y0 + ny, x1 + nx, y1 + ny, x1 - nx, y1 - ny, col);
+        tri(t, x0 + nx, y0 + ny, x1 - nx, y1 - ny, x0 - nx, y0 - ny, col);
+    }
+    disc(t, x0, y0, w / 2, col);
+    disc(t, x1, y1, w / 2, col);
+}
+
+int cc_menu_power_button(AsMc *panel, Mat screen, CcVert *out, int max) {
+    int lit = hl_item == CC_MENU_QUIT;
+    float pr[4];
+    if (!power_rect(panel, pr)) return 0;
+    Mat m = mat_mul(screen, mat_mul(panel->parent ? panel->parent->m : (Mat){1, 0, 0, 1, 0, 0}, panel->m));
+    float x = m.a * pr[0] + m.c * pr[1] + m.tx, y = m.b * pr[0] + m.d * pr[1] + m.ty;
+    float size = m.a * (pr[2] - pr[0]), cut = size * 0.17f;
+    Tris t = {out, 0, max};
+    static const uint8_t outline[4] = {58, 58, 60, 255}, red[4] = {190, 78, 81, 255}, red_dark[4] = {118, 66, 68, 255},
+                         rim[4] = {72, 72, 74, 255}, white[4] = {255, 255, 252, 255};
+    uint8_t face[4] = {116, 116, 116, 255}, glow[4] = {124, 124, 124, 255};
+    if (lit) {   // chosen: the face lights up, in a cream glow like the other buttons' frame
+        for (int k = 0; k < 3; k++) { face[k] = 150; glow[k] = 160; }
+        static const uint8_t haze[4] = {255, 244, 196, 70}, ring[4] = {255, 246, 206, 255};
+        octagon(&t, x, y, size, cut, -size * 0.11f, 0, haze);
+        octagon(&t, x, y, size, cut, -size * 0.06f, 0, ring);
+    }
+    octagon(&t, x, y, size, cut, 0, 0, outline);
+    octagon(&t, x, y, size, cut, size * 0.05f, 0, red_dark);              // the frame, darker at the bottom
+    octagon(&t, x, y, size, cut, size * 0.05f, -size * 0.03f, red);
+    octagon(&t, x, y, size, cut, size * 0.13f, 0, rim);
+    octagon(&t, x, y, size, cut, size * 0.155f, 0, face);
+    float cx = x + size / 2, cy = y + size / 2 + size * 0.01f;
+    disc(&t, cx, cy, size * 0.3f, glow);                                     // the faint disc behind the sign
+    float gx = x + size - size * 0.155f - cut * 0.55f, gy = y + size * 0.155f;   // the glint, top right
+    tri(&t, gx - size * 0.09f, gy, gx, gy, gx + cut * 0.55f, gy + cut * 0.55f, white);
+    tri(&t, gx - size * 0.09f, gy, gx + cut * 0.55f, gy + cut * 0.55f, gx + cut * 0.55f, gy + cut * 0.55f + size * 0.09f, white);
+    // the sign: a ring open at the top and a bar, round-ended
+    float r = size * 0.205f, w = size * 0.07f;
+    for (int i = 0; i < 24; i++) {
+        float a0 = (40 + 280.0f * i / 24) * 3.14159265f / 180, a1 = (40 + 280.0f * (i + 1) / 24) * 3.14159265f / 180;
+        stroke(&t, cx + sinf(a0) * r, cy - cosf(a0) * r, cx + sinf(a1) * r, cy - cosf(a1) * r, w, white);
+    }
+    stroke(&t, cx, cy - r * 1.28f, cx, cy - r * 0.2f, w, white);
+    return t.n;
 }
 
 void cc_native_root_functions(AsVm *vm, AsObj *root) {

@@ -910,11 +910,28 @@ static void title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, si
         vita2d_start_drawing();
         vita2d_clear_screen();
         draw_list(vb);
-        if (panel) {   // the power sign on the Quit tile
-            float k = SCREEN_W / m->stage_w, dots[48 * 3], bar[4];
-            int n = cc_menu_power_icon(panel, (Mat){k / 20, 0, 0, k / 20, 0, 0}, dots, 48, bar);
-            for (int d = 0; d < n; d++) vita2d_draw_fill_circle(dots[d * 3], dots[d * 3 + 1], dots[d * 3 + 2], RGBA8(255, 255, 255, 255));
-            if (n) vita2d_draw_rectangle(bar[0], bar[1], bar[2], bar[3], RGBA8(255, 255, 255, 255));
+        if (panel) {   // the power button that stands for Quit
+            static CcVert tris[4096];
+            float k = SCREEN_W / m->stage_w;
+            int n = cc_menu_power_button(panel, (Mat){k / 20, 0, 0, k / 20, 0, 0}, tris, 4096);
+            vita2d_color_vertex *v = n ? vita2d_pool_memalign(n * sizeof *v, sizeof *v) : NULL;
+            for (int i = 0; v && i < n; i++)
+                v[i] = (vita2d_color_vertex){tris[i].x, tris[i].y, 0.5f,
+                                             RGBA8(tris[i].rgba[0], tris[i].rgba[1], tris[i].rgba[2], tris[i].rgba[3])};
+            if (v) vita2d_draw_array(SCE_GXM_PRIMITIVE_TRIANGLES, v, n);
+            Mat hm;
+            AsMc *hl = cc_menu_highlight_clip(panel, &hm);   // the chosen button's frame, over all that
+            if (hl) {
+                static DrawList hvb;
+                Mat pm = mat_mul((Mat){k / 20, 0, 0, k / 20, 0, 0}, mat_mul(t->root->m, mat_mul(panel->m, hm)));
+                render_begin(&hvb);
+                hvb.view[2] = SCREEN_W;
+                hvb.view[3] = SCREEN_H;
+                hl->visible = 1;
+                as_render_mc(hl, pm, CX_IDENTITY, &hvb);
+                hl->visible = 0;
+                draw_list(&hvb);
+            }
         }
         frame++;
         if (!panel && (frame / 30) % 2 == 0) {   // blinking, over the news box at the bottom left

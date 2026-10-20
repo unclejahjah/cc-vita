@@ -296,3 +296,14 @@ void render_mc_bounds(AsMc *mc, Mat m, float out[4]) {
     out[2] = out[3] = -1e30f;
     bounds_into(mc, m, out);
 }
+
+// Bounds (twips) of a clip's own shapes only, not its child clips, through matrix m.
+void render_mc_shape_bounds(AsMc *mc, Mat m, float out[4]) {
+    out[0] = out[1] = 1e30f;
+    out[2] = out[3] = -1e30f;
+    for (int i = 0; i < mc->ndisp; i++) {
+        const AsDisp *e = &mc->disp[i];
+        const Character *c = &mc->movie->chars[e->cid];
+        if (e->kind == DISP_SHAPE && c->type == CHAR_SHAPE) grow(out, render_shape_bounds(c->ptr), mat_mul(m, e->m));
+    }
+}
