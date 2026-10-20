@@ -36,6 +36,10 @@ music}/, strings_en.txt, strings_vita_en.txt, save.dat. VPK to ux0:downloads via
   f_HudWaitEnd, f_Depth, f_RemovePlayer (death -> map), f_Walk (full tilt runs, light tilt walks:
   keys 37-40 run, 117-120 walk). Pinning it everywhere breaks the script front end; pinning
   f_MoveCharH/V broke movement.
+- console_version also reads true in every script of a level file (as_pin_in_levels, Movie.is_level):
+  each level's f_Init writes it false and then gives p1 developer stats (magic/strength/punch 9999,
+  magic_chain 2000; Final Battle enemies 3 health). That was the 999-damage / magic-maxing /
+  endless-cast bug (fixed 2026-10-20). Loaded saves reset stats over 25 to 1, as the exe does.
 - The decompiled "Raw Game Files CC/Game Files/Source Code/*Actionscript.txt" ignores opcode
   0x70, so many if-conditions there are inverted. Check P-Code.txt.
 - About 60 of the user's .swf files are missing their last 125-128 bytes (PAUSE.swf half).
@@ -72,7 +76,8 @@ fresh character, but that character still sits on the same save.dat, so first re
 (Jah's own backup save_backup_20261015.dat, or none) and re-test before debugging:
 - Animal orbs missing (animals 8-11 marked owned), key items unobtainable (items 12-35 owned).
   Jah also wants "some key items removed" (ask which: probably online/DLC-only ones).
-- Magic 999 damage / magic maxing itself / some attacks max damage / magic animation not ending.
+- DONE 2026-10-20: Magic 999 damage / magic maxing itself / some attacks max damage / magic
+  animation not ending (level developer stats, see Facts).
 - Character levels wrong on character select.
 Engine/file bugs:
 - Bosses don't die and vanish: UFO (first boss, locks progression), Corn boss; boss death
