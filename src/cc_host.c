@@ -310,7 +310,9 @@ int cc_repair_level(Movie *m) {
         for (int k = 0; k < 5; k++)
             if (f->places[i].name && !strcmp(m->names[f->places[i].name], layers[k][0])) model = &f->places[i];
     }
-    if (!model) return 0;   // not a level, or nothing to copy from
+    // Only a file that lost its tail can be missing layers. LEVEL40 (Pirate Ship) is whole and
+    // names its layers b0-b3; adding bg1_c/bg3_c on top of the game drew the sea over the ship.
+    if (!model || !m->truncated) return 0;   // not a level, nothing to copy from, or a whole file
     Place tmpl = *model;
     for (int k = 0; k < 5; k++) {
         int present = 0;
