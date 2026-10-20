@@ -765,8 +765,8 @@ static int as_mode(int argc, char **argv) {
                 if (e->kind == DISP_SHAPE) continue;
                 AsMc *c = e->mc;
                 if (!c) continue;
-                printf("%*s%s [depth %d%s] frame %d/%d x %.0f y %.0f%s%s%s\n", d * 2, "",
-                       c->name ? c->name->s : "(unnamed)", e->depth, c->text ? " text" : "", c->frame + 1,
+                printf("%*s%s [cid %d depth %d%s] frame %d/%d x %.0f y %.0f%s%s%s\n", d * 2, "",
+                       c->name ? c->name->s : "(unnamed)", e->cid, e->depth, c->text ? " text" : "", c->frame + 1,
                        c->def ? c->def->nframes : 0, c->m.tx / 20, c->m.ty / 20, c->visible ? "" : " hidden",
                        c->alpha < 100 ? " translucent" : "", c->events_len ? " events" : "");
                 if (d < maxd) dump(c, d + 1);
