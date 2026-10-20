@@ -197,6 +197,7 @@ struct AsVm {
     long long ops;              // actions executed (profiling)
     uint32_t tick;              // frames run so far
     uint32_t rand_state;
+    int fixed_clock;            // getTimer counts ticks (30 a second), not real time: network games
     void (*trace)(AsVm *vm, const char *msg);
     void (*loaded)(AsVm *vm, AsMc *target);    // after a loadMovie finished (its first frame has run)
     void (*warn)(AsVm *vm, const char *msg);   // missing functions and other surprises

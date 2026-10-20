@@ -25,7 +25,8 @@ option(CC_VIEWER "build the level and animation viewer" OFF)
 if(CC_VIEWER)
   set(APP_SOURCES src/viewer.c src/level.c src/player.c src/enemy.c)
 else()
-  set(APP_SOURCES src/main.c src/as_core.c src/as_mc.c src/as_lib.c src/as_render.c src/cc_host.c src/cc_native.c src/hostfont.c src/audio.c src/strtab.c src/cc_buttons.c)
+  set(APP_SOURCES src/main.c src/as_core.c src/as_mc.c src/as_lib.c src/as_render.c src/cc_host.c src/cc_native.c src/hostfont.c src/audio.c src/strtab.c src/cc_buttons.c
+      src/netplay.c src/cc_net.c src/net_vita.c)
 endif()
 
 add_executable(${PROJECT_NAME}
@@ -58,6 +59,8 @@ target_link_libraries(${PROJECT_NAME}
   SceCommonDialog_stub
   SceAppMgr_stub
   ScePower_stub
+  SceNet_stub
+  SceNetCtl_stub
   freetype
   png
   jpeg

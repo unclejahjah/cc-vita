@@ -57,9 +57,10 @@ against the original. Status key: [x] works on Vita, [~] partly, [ ] not done / 
 - [ ] Achievements / trophies-equivalent progress (local only)
 
 ## Multiplayer
-- [ ] Up to 4 players (game supports 4 controller ports)
+- [~] Up to 4 players (game supports 4 controller ports): per-port buttons done; ports 2-4 key codes still to copy from f_GetButtons
 - [ ] Local co-op on one Vita with extra Bluetooth pads, if feasible
-- [ ] Vita-to-Vita Wi-Fi co-op (custom netcode)
+- [~] Vita-to-Vita Wi-Fi co-op (custom netcode): lockstep netplay written and tested on PC, not yet on hardware (HANDOFF.md)
+- [~] Ad hoc Vita-to-Vita: written, experimental, untested
 
 ## Presentation
 - [~] Menu text and button prompts (cc-vita-text merge in progress)

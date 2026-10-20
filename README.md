@@ -28,6 +28,9 @@ Enemies (`src/enemy.c`) are the player rig with different parts, as in the game.
 
 `src/player.c` holds the knight's state machine (idle, walk, attack, jump, land, block). Each animation is a root label whose `body` clip plays it. The clip's stop() frame ends the animation, and its `fin` label is the first frame from which the next light hit may start; a press before that is queued. Jumps use the game's player values: `speed_launch` −20 px/frame and `gravity` 2 at 30 frames a second. Like the game, only the `body` child is lifted by `body_y`, so the shadow stays on the ground. `Actor.body_frame` can pin the body clip to one frame (the jump kick's "kick" frame), as `gotoAndStop` does. The stats line updates once a second and shows that second's average and peak build time and peak triangle count.
 
+## Multiplayer
+After the title's Play: play on this Vita, or host/join over Wi-Fi or ad hoc (experimental). Up to 4 Vitas run the game in lockstep (only the buttons travel); see `HANDOFF.md` for the design and what's left. On the same network a client finds the host by itself; for internet play put `join=<host IP>` in `ux0:data/CastleCrashers/net.txt` and forward UDP 47310 on the host's router. `tools/nettest.c` tests the protocol on a PC.
+
 ## Levels
 `src/level.c` draws a level's parallax layers (`bg3_c`, `bg2_c`, `bg1_c`, `game`, `bg0_c`) using the camera rules from the game's `f_UpdateCamera` in MAIN.swf. Each container sits at (424, 480) on the 848×480 stage and is scaled around that point. Its child scrolls by camera × factor: 0.1, 0.25, 0.5 and 1.0 for the play layer, and 1.5 for the foreground. The vertical camera is offset by −100. The knight spawns at `p1_start`, and the camera stops at `edge_left`/`edge_right`. Editor markers that the game's scripts would hide (doorN portals, spawn points, waypoints, cutscene "guide" cameras, `invisObject`s) are removed from the play layer. Shapes entirely off screen are culled.
 

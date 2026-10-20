@@ -17,6 +17,19 @@
 
 uint8_t cc_keys[256];
 
+// The key codes per port and button. Port 1's are from f_GetButtons; ports 2-4 have codes
+// of their own there that are still to be copied in (they stay 0, pressing nothing, until
+// then).
+uint8_t cc_port_keys[4][CCB_COUNT] = {
+    {37, 38, 39, 40, 117, 118, 119, 120, 2, 3, 49, 53, 65, 87, 83, 68, 81, 69, 67, 66},
+};
+
+void cc_press(int port, uint32_t buttons) {
+    if (port < 0 || port > 3) return;
+    for (int b = 0; b < CCB_COUNT; b++)
+        if ((buttons >> b & 1) && cc_port_keys[port][b]) cc_keys[cc_port_keys[port][b]] = 1;
+}
+
 static AsVal key_isdown(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
     (void)this_;
     int code = as_toint32(vm, ARG(0));
@@ -146,25 +159,84 @@ static AsVal write_save_game(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
 
 // Save file: "CCS2", count, then (port, address, value) for each non-zero slot.
 // ("CCSV" files came from a build that put values in the wrong slots: they're ignored.)
+// In a network game (cc_storage_net_begin) the file's port 0 is this console's player,
+// wherever they play, and its ports 1-3 stay as they were before the session.
+static int net_local = -1;
+static uint8_t *net_home[4];   // the file's own ports 1-3 during a network game (packed)
+static int net_home_len[4];
+
+static void put_slot(FILE *f, int p, int a, double v) {
+    uint32_t key = (uint32_t)p << 16 | a;
+    fwrite(&key, 4, 1, f);
+    fwrite(&v, 8, 1, f);
+}
+
 int cc_storage_save(const char *path) {
     FILE *f = fopen(path, "wb");
     if (!f) return 0;
     uint32_t n = 0;
-    for (int p = 0; p < 4; p++)
-        for (int a = 0; a < STORAGE_SIZE; a++) n += storage[p][a] != 0;
+    for (int p = 0; p < 4; p++) {
+        if (net_local >= 0 && p > 0) { n += net_home_len[p] / 10; continue; }
+        const double *s = storage[net_local >= 0 ? net_local : p];
+        for (int a = 0; a < STORAGE_SIZE; a++) n += s[a] != 0;
+    }
     fwrite("CCS2", 1, 4, f);
     fwrite(&n, 4, 1, f);
-    for (int p = 0; p < 4; p++)
-        for (int a = 0; a < STORAGE_SIZE; a++)
-            if (storage[p][a] != 0) {
-                uint32_t key = (uint32_t)p << 16 | a;
-                fwrite(&key, 4, 1, f);
-                fwrite(&storage[p][a], 8, 1, f);
+    for (int p = 0; p < 4; p++) {
+        if (net_local >= 0 && p > 0) {
+            for (int i = 0; i + 10 <= net_home_len[p]; i += 10) {
+                double v;
+                memcpy(&v, net_home[p] + i + 2, 8);
+                put_slot(f, p, net_home[p][i] | net_home[p][i + 1] << 8, v);
             }
+            continue;
+        }
+        const double *s = storage[net_local >= 0 ? net_local : p];
+        for (int a = 0; a < STORAGE_SIZE; a++)
+            if (s[a] != 0) put_slot(f, p, a, s[a]);
+    }
     int ok = !ferror(f);
     fclose(f);
     cc_storage_dirty = 0;
     return ok;
+}
+
+// A port's save data as (address u16, value f64) pairs for the non-zero slots, to send to
+// the other consoles; -1 if it doesn't fit in cap bytes.
+int cc_storage_pack(int port, uint8_t *out, int cap) {
+    if (port < 0 || port > 3) return -1;
+    int n = 0;
+    for (int a = 0; a < STORAGE_SIZE; a++) {
+        if (storage[port][a] == 0) continue;
+        if (n + 10 > cap) return -1;
+        out[n] = (uint8_t)a;
+        out[n + 1] = (uint8_t)(a >> 8);
+        memcpy(out + n + 2, &storage[port][a], 8);
+        n += 10;
+    }
+    return n;
+}
+
+void cc_storage_unpack(int port, const uint8_t *in, int len) {
+    if (port < 0 || port > 3) return;
+    memset(storage[port], 0, sizeof storage[port]);
+    for (int i = 0; i + 10 <= len; i += 10) memcpy(&storage[port][in[i] | in[i + 1] << 8], in + i + 2, 8);
+}
+
+int cc_storage_net_begin(int local_port) {
+    static uint8_t buf[STORAGE_SIZE * 10];
+    for (int p = 1; p < 4; p++) {
+        free(net_home[p]);
+        net_home[p] = NULL;
+        int n = cc_storage_pack(p, buf, sizeof buf);
+        if (n < 0) return 0;
+        net_home[p] = malloc(n ? n : 1);
+        if (!net_home[p]) return 0;
+        memcpy(net_home[p], buf, n);
+        net_home_len[p] = n;
+    }
+    net_local = local_port;
+    return 1;
 }
 
 int cc_storage_load(const char *path) {

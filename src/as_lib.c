@@ -393,10 +393,14 @@ static AsVal g_parsefloat(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
 static AsVal g_isnan(AsVm *vm, AsVal this_, int argc, AsVal *argv) { (void)this_; return as_bool(isnan(as_tonum(vm, ARG(0)))); }
 static AsVal g_isfinite(AsVm *vm, AsVal this_, int argc, AsVal *argv) { (void)this_; return as_bool(isfinite(as_tonum(vm, ARG(0)))); }
 static AsVal g_string(AsVm *vm, AsVal this_, int argc, AsVal *argv) { (void)this_; return as_strv(as_tostr(vm, ARG(0))); }
-static AsVal g_gettimer(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
-    (void)vm; (void)this_; (void)argc; (void)argv;
+// getTimer: real time, or in a network game the ticks run (the same on every console)
+double as_game_ms(AsVm *vm) {
     extern double as_time_ms(void);
-    return as_num(floor(as_time_ms()));
+    return vm->fixed_clock ? floor(vm->tick * 1000.0 / 30) : as_time_ms();
+}
+static AsVal g_gettimer(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
+    (void)this_; (void)argc; (void)argv;
+    return as_num(floor(as_game_ms(vm)));
 }
 
 // ---- MovieClip --------------------------------------------------------------------

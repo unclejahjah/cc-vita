@@ -26,7 +26,9 @@
 #include "audio.h"
 #include "cc_buttons.h"
 #include "cc_host.h"
+#include "cc_net.h"
 #include "hostfont.h"
+#include "net_vita.h"
 #include "render.h"
 #include "strtab.h"
 
@@ -407,49 +409,43 @@ static int free_unused_movies(AsVm *vm, RecolourCache *cache, void *cache_mem, s
     return unused;
 }
 
-// ---- controls -> the key codes f_GetButtons gives port 1 ---------------------------
-
-enum {
-    K_ACCEPT = 2, K_BACK = 3, K_LEFT = 37, K_UP = 38, K_RIGHT = 39, K_DOWN = 40,
-    K_START = 49, K_SELECT = 53, K_PUNCH1 = 65, K_R2 = 66, K_L2 = 67, K_PROJECTILE = 68,
-    K_MAGIC = 69, K_SHIELD = 81, K_JUMP = 83, K_PUNCH2 = 87,
-    // the light-tilt directions (f_Walk: these walk, the full ones above run)
-    K_WALK_LEFT = 117, K_WALK_UP = 118, K_WALK_RIGHT = 119, K_WALK_DOWN = 120,
-};
+// ---- controls -> buttons (cc_press turns them into the key codes f_GetButtons gives a port)
 
 #define STICK_DEAD 40   // of 128: below this the stick is centred
 #define STICK_RUN 100   // at or beyond this it's a full tilt
 
-static void map_pad(const SceCtrlData *pad, int debug, int in_game) {
-    memset(cc_keys, 0, sizeof cc_keys);
-    if (debug) return;
+#define B(x) (1u << CCB_##x)
+static uint32_t pad_buttons(const SceCtrlData *pad, int debug, int in_game) {
+    uint32_t k = 0;
+    if (debug) return 0;
     unsigned b = pad->buttons;
     int lx = pad->lx - 128, ly = pad->ly - 128;
     // the console scripts run on a full tilt and walk on a light one; the D-pad runs. Outside a
     // level (map, stat screen, menus) only the full directions mean anything: any tilt is one.
     int run = in_game ? STICK_RUN : STICK_DEAD;
-    if ((b & SCE_CTRL_LEFT) || lx <= -run) cc_keys[K_LEFT] = 1;
-    else if (lx <= -STICK_DEAD) cc_keys[K_WALK_LEFT] = 1;
-    if ((b & SCE_CTRL_RIGHT) || lx >= run) cc_keys[K_RIGHT] = 1;
-    else if (lx >= STICK_DEAD) cc_keys[K_WALK_RIGHT] = 1;
-    if ((b & SCE_CTRL_UP) || ly <= -run) cc_keys[K_UP] = 1;
-    else if (ly <= -STICK_DEAD) cc_keys[K_WALK_UP] = 1;
-    if ((b & SCE_CTRL_DOWN) || ly >= run) cc_keys[K_DOWN] = 1;
-    else if (ly >= STICK_DEAD) cc_keys[K_WALK_DOWN] = 1;
+    if ((b & SCE_CTRL_LEFT) || lx <= -run) k |= B(LEFT);
+    else if (lx <= -STICK_DEAD) k |= B(WALK_LEFT);
+    if ((b & SCE_CTRL_RIGHT) || lx >= run) k |= B(RIGHT);
+    else if (lx >= STICK_DEAD) k |= B(WALK_RIGHT);
+    if ((b & SCE_CTRL_UP) || ly <= -run) k |= B(UP);
+    else if (ly <= -STICK_DEAD) k |= B(WALK_UP);
+    if ((b & SCE_CTRL_DOWN) || ly >= run) k |= B(DOWN);
+    else if (ly >= STICK_DEAD) k |= B(WALK_DOWN);
     // the right stick stands in for L2/R2 (switching items). The script steps once per
     // press and waits for the release, so a flick past the deadzone is one step and the
     // stick re-arms when it comes back to the centre.
     int rx = pad->rx - 128;
-    if (rx <= -STICK_RUN + 20) cc_keys[K_L2] = 1;
-    if (rx >= STICK_RUN - 20) cc_keys[K_R2] = 1;
-    if (b & SCE_CTRL_CROSS) cc_keys[K_ACCEPT] = cc_keys[K_JUMP] = 1;
-    if (b & SCE_CTRL_CIRCLE) cc_keys[K_BACK] = cc_keys[K_PROJECTILE] = 1;
-    if (b & SCE_CTRL_SQUARE) cc_keys[K_PUNCH1] = 1;
-    if (b & SCE_CTRL_TRIANGLE) cc_keys[K_PUNCH2] = 1;
+    if (rx <= -STICK_RUN + 20) k |= B(L2);
+    if (rx >= STICK_RUN - 20) k |= B(R2);
+    if (b & SCE_CTRL_CROSS) k |= B(ACCEPT) | B(JUMP);
+    if (b & SCE_CTRL_CIRCLE) k |= B(BACK) | B(PROJECTILE);
+    if (b & SCE_CTRL_SQUARE) k |= B(PUNCH1);
+    if (b & SCE_CTRL_TRIANGLE) k |= B(PUNCH2);
     // the PlayStation layout's sides: block on the left (L2), magic on the right (R2)
-    if (b & SCE_CTRL_LTRIGGER) cc_keys[K_SHIELD] = 1;
-    if (b & SCE_CTRL_RTRIGGER) cc_keys[K_MAGIC] = 1;
-    if (b & SCE_CTRL_START) cc_keys[K_START] = 1;
+    if (b & SCE_CTRL_LTRIGGER) k |= B(SHIELD);
+    if (b & SCE_CTRL_RTRIGGER) k |= B(MAGIC);
+    if (b & SCE_CTRL_START) k |= B(START);
+    return k;
 }
 
 // ---- pause menu ----------------------------------------------------------------------
@@ -700,6 +696,125 @@ static void title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, si
     if (cc_music_stop) cc_music_stop();
     memset(cc_keys, 0, sizeof cc_keys);
 }
+// ---- network games -----------------------------------------------------------------
+// After the title's Play: play on this Vita, or host or join a game with other Vitas over
+// Wi-Fi (the same network; or the internet with join=<host IP> in net.txt and the host's
+// UDP port forwarded) or ad hoc. Every console runs the whole game in lockstep (cc_net.h).
+
+static Netplay g_np;
+#define NET_TXT DATA_DIR "net.txt"
+
+// net.txt's join=<address>, if any
+static void net_join_address(char *out, int outlen) {
+    out[0] = 0;
+    FILE *f = fopen(NET_TXT, "r");
+    if (!f) return;
+    char line[160];
+    while (fgets(line, sizeof line, f)) {
+        if (strncmp(line, "join=", 5)) continue;
+        snprintf(out, outlen, "%s", line + 5);
+        out[strcspn(out, " \r\n")] = 0;
+    }
+    fclose(f);
+}
+
+static double now_ms(void) { return sceKernelGetProcessTimeWide() / 1000.0; }
+
+static void net_screen(const char *title, const char *const *lines, int nlines, int sel, const char *foot) {
+    vita2d_set_clear_color(RGBA8(20, 16, 12, 255));
+    vita2d_start_drawing();
+    vita2d_clear_screen();
+    outlined_text(60, 80, 1.5f, title);
+    for (int i = 0; i < nlines; i++)
+        vita2d_pgf_draw_textf(g_font, 80, 150 + i * 40, i == sel ? RGBA8(255, 220, 90, 255) : RGBA8(255, 255, 255, 255),
+                              1.1f, "%s%s", sel >= 0 && i == sel ? "> " : sel >= 0 ? "  " : "", lines[i]);
+    if (foot) vita2d_pgf_draw_text(g_font, 60, SCREEN_H - 30, RGBA8(200, 200, 200, 255), 0.9f, foot);
+    vita2d_end_drawing();
+    vita2d_swap_buffers();
+}
+
+// a lobby until the game starts (1) or the player backs out (0)
+static int net_lobby(int host, int kind) {
+    char err[160] = "", addr[64], me[32];
+    NpTransport t = {0};
+    int ok = net_vita_init(err, sizeof err);
+    if (ok && host) ok = net_vita_host(&t, kind, err, sizeof err);
+    if (ok && !host) {
+        net_join_address(addr, sizeof addr);
+        ok = net_vita_join(&t, kind, kind == NET_WIFI ? addr : NULL, err, sizeof err);
+    }
+    if (ok) ok = cc_net_prepare(&g_np, err, sizeof err);
+    if (ok) {
+        if (host) np_host(&g_np, t, 3);
+        else np_join(&g_np, t);
+    }
+    net_vita_address(kind, me, sizeof me);
+    SceCtrlData pad, old;
+    sceCtrlPeekBufferPositive(0, &old, 1);
+    for (;;) {
+        sceCtrlPeekBufferPositive(0, &pad, 1);
+        unsigned pressed = pad.buttons & ~old.buttons;
+        old = pad;
+        if (ok) np_poll(&g_np, now_ms());
+        if (ok && g_np.state == NP_FAILED) {
+            snprintf(err, sizeof err, "%s", g_np.error);
+            ok = 0;
+        }
+        if (ok && g_np.state == NP_RUNNING) {
+            if (!cc_net_begin(&g_np, err, sizeof err)) ok = 0;
+            else return 1;
+        }
+        if (pressed & SCE_CTRL_CIRCLE) break;
+        char l0[160], l1[160];
+        const char *lines[2] = {l0, l1};
+        if (!ok) {
+            snprintf(l0, sizeof l0, "%s", err);
+            snprintf(l1, sizeof l1, " ");
+        } else if (host) {
+            int n = np_clients(&g_np);
+            snprintf(l0, sizeof l0, "Hosting%s%s - %d player%s", me[0] ? " at " : "", me, n + 1, n ? "s" : "");
+            snprintf(l1, sizeof l1, "%s", n && !np_lobby_ready(&g_np) ? "Receiving the players' saves..."
+                                         : n ? "Press CROSS to start" : "Waiting for players to join...");
+            if ((pressed & SCE_CTRL_CROSS) && n && np_lobby_ready(&g_np))
+                np_start(&g_np, (uint32_t)sceKernelGetProcessTimeWide());
+        } else {
+            if (!net_vita_found_host(&t)) snprintf(l0, sizeof l0, "Looking for a game on this network...");
+            else if (g_np.local_port < 0) snprintf(l0, sizeof l0, "Found a game: joining...");
+            else snprintf(l0, sizeof l0, "Joined as player %d", g_np.local_port + 1);
+            snprintf(l1, sizeof l1, "%s", g_np.local_port < 0 ? " " : "Waiting for the host to start");
+        }
+        net_screen(host ? "Host a game" : "Join a game", lines, 2, -1, "CIRCLE: back");
+    }
+    if (t.ctx) net_vita_close(&t);
+    memset(&g_np, 0, sizeof g_np);
+    return 0;
+}
+
+// 1 for a network game (g_np running), 0 to play on this Vita alone
+static int play_menu(void) {
+    static const char *items[] = {"Play on this Vita", "Host a game (Wi-Fi)", "Join a game (Wi-Fi)",
+                                  "Host a game (ad hoc, experimental)", "Join a game (ad hoc, experimental)"};
+    int sel = 0;
+    SceCtrlData pad, old;
+    sceCtrlPeekBufferPositive(0, &old, 1);
+    for (;;) {
+        sceCtrlPeekBufferPositive(0, &pad, 1);
+        unsigned pressed = pad.buttons & ~old.buttons;
+        int ly = pad.ly - 128, oly = old.ly - 128;
+        if (ly < -80 && oly >= -80) pressed |= SCE_CTRL_UP;
+        if (ly > 80 && oly <= 80) pressed |= SCE_CTRL_DOWN;
+        old = pad;
+        if (pressed & SCE_CTRL_UP) sel = (sel + 4) % 5;
+        if (pressed & SCE_CTRL_DOWN) sel = (sel + 1) % 5;
+        if (pressed & (SCE_CTRL_CROSS | SCE_CTRL_START)) {
+            if (sel == 0) return 0;
+            if (net_lobby(sel == 1 || sel == 3, sel <= 2 ? NET_WIFI : NET_ADHOC)) return 1;
+            sceCtrlPeekBufferPositive(0, &old, 1);
+        }
+        net_screen("Play", items, 5, sel, "Online: put join=<host IP> in " NET_TXT " (the host forwards UDP 47310)");
+    }
+}
+
 int main(void) {
     scePowerSetArmClockFrequency(444);
     scePowerSetBusClockFrequency(222);
@@ -764,9 +879,11 @@ int main(void) {
     vb.cache = &cache;
 
     title_screen(&vb, &cache, cache_mem, cache_bytes);
+    int net = play_menu();
 
     AsVm *vm = as_new(vita_loader);
     vm->rand_state = (uint32_t)sceKernelGetProcessTimeWide() ^ 0x9E3779B9u;   // Flash's random() differs each session
+    if (net) cc_net_vm(&g_np, vm);   // the host's seed and the tick clock
     vm->sound_start = vita_sound_start;
     vm->sound_stop = vita_sound_stop;
     vm->warn = vita_warn;
@@ -793,11 +910,15 @@ int main(void) {
         if (debug && (pressed & SCE_CTRL_UP)) g_show_loads = overlay = !overlay;
         // in a level, Start is the pause menu's (the executable's in the original)
         int level = in_level(vm);
-        map_pad(&pad, debug, level);
-        if (level) cc_keys[K_START] = 0;
-        if (pause.open) {
+        uint32_t mine = pad_buttons(&pad, debug, level);
+        if (level) mine &= ~B(START);
+        memset(cc_keys, 0, sizeof cc_keys);
+        // a network game doesn't stop for one player's menu (it isn't in step with the others)
+        if (net) {
+            np_poll(&g_np, now_ms());
+        } else if (pause.open) {
             pause.open = pause_input(&pause, vm, pressed);
-            memset(cc_keys, 0, sizeof cc_keys);
+            mine = 0;
         } else if (level && !debug && (pressed & SCE_CTRL_START) &&
                    !as_tobool(vm, cc_flash_global(vm, "g_bNoPause"))) {
             pause.open = 1;
@@ -805,6 +926,7 @@ int main(void) {
             pause_set_state(vm, 2);
             if (!pause.have_art) pause_build_art(&pause);
         }
+        if (!net) cc_press(0, mine);
 
         // run the game's frames that are due (at most two, so a slow frame doesn't snowball)
         SceUInt64 now = sceKernelGetProcessTimeWide();
@@ -814,8 +936,17 @@ int main(void) {
         if (pause.open) acc = 0;   // the game stands still under the menu
         int ticked = 0;
         while (acc >= tick_us) {
+            if (net) {   // a tick runs once every player's buttons for it are in
+                np_local_input(&g_np, mine);
+                if (!np_ready(&g_np)) break;
+                cc_net_keys(&g_np);
+            }
             SceUInt64 t0 = sceKernelGetProcessTimeWide();
             as_tick(vm);
+            if (net) {
+                cc_net_after_tick(&g_np, vm);
+                np_advance(&g_np);
+            }
             as_gc(vm);
             tick_ms += (sceKernelGetProcessTimeWide() - t0) / 1000.0f;
             ticks++;
@@ -852,6 +983,13 @@ int main(void) {
         vita2d_set_clear_color(RGBA8(start->bg[0], start->bg[1], start->bg[2], 255));
         draw_frame(&vb, heat_clock++);
         if (pause.open) pause_draw(&pause);
+        if (net && (g_np.state == NP_FAILED || g_np.desync_tick >= 0)) {
+            char msg[160];
+            if (g_np.state == NP_FAILED) snprintf(msg, sizeof msg, "%s   (SELECT+START: quit)", g_np.error);
+            else snprintf(msg, sizeof msg, "The games went out of step at tick %d", (int)g_np.desync_tick);
+            vita2d_draw_rectangle(0, SCREEN_H - 40, SCREEN_W, 40, RGBA8(0, 0, 0, 180));
+            vita2d_pgf_draw_text(g_font, 12, SCREEN_H - 12, RGBA8(255, 120, 100, 255), 1.0f, msg);
+        }
         if (overlay) {
             unsigned ink = RGBA8(255, 255, 255, 255);
             vita2d_draw_rectangle(0, 0, SCREEN_W, 64, RGBA8(0, 0, 0, 150));

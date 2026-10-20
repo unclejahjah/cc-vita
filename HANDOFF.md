@@ -83,4 +83,42 @@ Desktop\Castle Mod Tool\castlecrashers-main\pak (pak_list.txt); outputs go to pa
    (main.c) frees files no live clip/function uses once the heap is half full, and the sfx cache
    is 24 MB. Overlay shows heap use. hosttest CC_FREE_UNUSED=1 does the same (ASan-checked).
 4. Remaining blank lobby text (online-only screens).
-5. Performance (needs Vita overlay numbers), then Wi-Fi co-op.
+5. Performance (needs Vita overlay numbers).
+6. Multiplayer: finish what the 2026-10-20 netplay work left (see below).
+
+## Multiplayer (2026-10-20, built in the cloud: no game files, no VitaSDK there)
+Lockstep: every Vita runs the whole game; only buttons travel. Tick N runs once all ports'
+buttons for N are in. A local press is used 3 ticks later (100 ms) to hide the round trip.
+- `src/netplay.c/.h` – the protocol (no sockets): lobby, save data exchange, seed, inputs and
+  frames with resends, timeouts, desync check (a hash every 30 ticks, compared by the host).
+- `src/net_vita.c` – UDP over Wi-Fi (the host broadcasts a beacon; clients find it, or use
+  join=<IP> from ux0:data/CastleCrashers/net.txt for internet play with UDP 47310 forwarded)
+  and ad hoc (P2P socket, same code). Compile-checked against vita-headers only, not built
+  with the real toolchain, not run on hardware. Ad hoc has no "join a network" call in
+  vita-headers; it refuses unless sceNetCtlAdhocGetState says a link is up. Experimental.
+- `src/cc_net.c` – game glue: every port's save data from its owner (cc_storage_pack/unpack),
+  the host's seed into rand_state, vm->fixed_clock (getTimer and opcode 0x34 count ticks),
+  per-port buttons into cc_keys, the hash (rand_state + actions run).
+- `src/cc_host.c` – cc_port_keys[port][button] + cc_press. Saving in a network game writes
+  this console's player as the file's port 0 and keeps the file's ports 1-3 as they were.
+- `src/main.c` – Play menu after the title (this Vita / host / join, Wi-Fi or ad hoc), lobby
+  screen, gated tick loop, a red line when the connection drops or the games go out of step.
+  The pause menu is off in network games (it would freeze one console only).
+- `tools/nettest.c` – 4 consoles over localhost UDP with packet loss: same ticks, same
+  inputs, saves intact, a planted desync caught. Passes at 0-50% loss.
+- hosttest: `CC_NET=host:PORT:CLIENTS` / `CC_NET=join:ADDR:PORT` (+ CC_NET_DELAY). CC_KEYS
+  are that console's buttons. Two/three hosttests on a test SWF ran 120 ticks in step with
+  identical traces. Build line: hosttest.c + swf render level player enemy as_core as_mc
+  as_lib as_render cc_host cc_native cc_buttons hostfont strtab netplay cc_net net_posix
+  + libtess2, -lm -lz.
+
+To do (in order):
+1. Ports 2-4 key codes: copy them from f_GetButtons (MAIN.swf) into cc_port_keys[1..3]
+   (cc_host.c). Until then the other players' buttons press nothing.
+2. Build the VPK with VitaSDK; fix anything the real toolchain finds.
+3. Two hosttests on the real MAIN.swf with CC_NET, then two Vitas on Wi-Fi: menu, character
+   select joins, a level, the map, saving. Any "out of step" message: find what differs
+   (the hash is coarse: add positions/levels to cc_net_after_tick to narrow it down).
+4. A network pause/quit (send it as a button so every console acts on the same tick).
+5. Ad hoc on hardware; then local multiplayer on one console with extra pads (PS TV,
+   ds34vita: sceCtrlPeekBufferPositiveExt2 ports 1-4 -> cc_press(port, ...)).

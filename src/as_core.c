@@ -930,7 +930,7 @@ static void run(AsVm *vm, Ctx *c) {
             push(vm, as_num(n > 0 ? (int)((vm->rand_state >> 8) % (uint32_t)n) : 0));
             break;
         }
-        case 0x34: { extern double as_time_ms(void); push(vm, as_num(as_time_ms())); break; }
+        case 0x34: { extern double as_game_ms(AsVm *vm); push(vm, as_num(as_game_ms(vm))); break; }
         case 0x3C: {   // DefineLocal
             AsVal v = pop(vm);
             AsStr *n = as_intern(vm, as_tostr(vm, pop(vm)));

@@ -15,6 +15,9 @@
 #include "../src/hostfont.h"
 #include "../src/cc_buttons.h"
 #include "../src/cc_host.h"
+#include "../src/cc_net.h"
+#include "../src/net_posix.h"
+#include <unistd.h>
 #include "../src/enemy.h"
 
 #define MAX_W 960
@@ -542,6 +545,46 @@ static int as_mode(int argc, char **argv) {
     // CC_SAVE=path: start from a save file (cc_host.c's "CCS2" format), like the Vita's save.dat
     if (getenv("CC_SAVE") && !cc_storage_load(getenv("CC_SAVE")))
         printf("  couldn't read save %s\n", getenv("CC_SAVE"));
+    // CC_NET=host:PORT:CLIENTS or join:ADDRESS:PORT: a network game with other hosttests
+    // (lockstep, see netplay.h). CC_KEYS are this console's buttons; CC_NET_DELAY ticks.
+    static Netplay np;
+    int net = 0;
+    if (getenv("CC_NET")) {
+        char mode[8] = "", addr[128] = "";
+        int nport = 0, clients = 1;
+        const char *spec = getenv("CC_NET");
+        NpTransport t;
+        char err[160] = "";
+        int ok = 0;
+        if (sscanf(spec, "host:%d:%d", &nport, &clients) >= 1) {
+            snprintf(mode, sizeof mode, "host");
+            ok = net_udp_host(&t, nport, err, sizeof err);
+        } else if (sscanf(spec, "join:%127[^:]:%d", addr, &nport) == 2) {
+            snprintf(mode, sizeof mode, "join");
+            ok = net_udp_join(&t, addr, nport, err, sizeof err);
+        } else {
+            snprintf(err, sizeof err, "CC_NET should be host:PORT:CLIENTS or join:ADDRESS:PORT");
+        }
+        if (ok) ok = cc_net_prepare(&np, err, sizeof err);
+        if (!ok) { printf("net: %s\n", err); return 1; }
+        int delay = getenv("CC_NET_DELAY") ? atoi(getenv("CC_NET_DELAY")) : 3;
+        if (mode[0] == 'h') np_host(&np, t, delay);
+        else np_join(&np, t);
+        printf("net: %s, waiting for %s\n", spec, mode[0] == 'h' ? "the players" : "the host to start");
+        for (;;) {
+            extern double as_time_ms(void);
+            np_poll(&np, as_time_ms());
+            if (np.state == NP_FAILED) { printf("net: %s\n", np.error); return 1; }
+            if (np.is_host && np.state == NP_LOBBY && np_clients(&np) >= clients && np_lobby_ready(&np))
+                np_start(&np, (uint32_t)time(NULL));
+            if (np.state == NP_RUNNING) break;
+            usleep(1000);
+        }
+        if (!cc_net_begin(&np, err, sizeof err)) { printf("net: %s\n", err); return 1; }
+        cc_net_vm(&np, vm);
+        printf("net: running as port %d of ports 0x%x, seed %u, delay %d\n", np.local_port + 1, np.ports, np.seed, np.delay);
+        net = 1;
+    }
     as_render_init(vm);
     if (getenv("CC_STRINGS")) {   // strings_en.txt from extract_strings.py
         extern int strtab_load(const char *path);
@@ -628,9 +671,26 @@ static int as_mode(int argc, char **argv) {
         if (getenv("CC_SAVE_AT") && getenv("CC_SAVE") && f == atoi(getenv("CC_SAVE_AT")))
             cc_storage_load(getenv("CC_SAVE"));
         extern double as_time_ms(void);
+        if (net) {   // wait for every port's buttons for this tick
+            uint32_t mine = cc_buttons_from_keys();
+            for (;;) {
+                np_poll(&np, as_time_ms());
+                np_local_input(&np, mine);
+                if (np.state == NP_FAILED) { printf("net: %s\n", np.error); return 1; }
+                if (np_ready(&np)) break;
+                usleep(500);
+            }
+            cc_net_keys(&np);
+        }
         double t0 = as_time_ms();
         long long ops0 = vm->ops;
         as_tick(vm);
+        if (net) {
+            cc_net_after_tick(&np, vm);
+            np_advance(&np);
+            static int told;
+            if (np.desync_tick >= 0 && !told) { told = 1; printf("net: DESYNC at tick %d\n", np.desync_tick); }
+        }
         double tg = as_time_ms();
         size_t heap0 = vm->heap_count;
         as_gc(vm);
@@ -772,6 +832,12 @@ static int as_mode(int argc, char **argv) {
                    top->def ? top->def->nframes : 0, top->playing ? " playing" : "");
         }
         dump(top, 0);
+    }
+    if (net) {   // stay a moment so the others get the last ticks' inputs too
+        extern double as_time_ms(void);
+        for (double end = as_time_ms() + 1500; as_time_ms() < end && np.state != NP_FAILED; usleep(1000))
+            np_poll(&np, as_time_ms());
+        printf("net: ran ticks 0-%d, %s\n", np.next_tick - 1, np.desync_tick >= 0 ? "DESYNC" : "in step");
     }
     if (getenv("CC_STORAGE_DUMP")) {   // the non-zero save slots of port 1
         double *s = cc_storage(0);
