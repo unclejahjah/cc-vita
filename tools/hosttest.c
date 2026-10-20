@@ -616,7 +616,15 @@ static int as_mode(int argc, char **argv) {
                     av[nav++] = a[0] == '\'' ? as_strv(as_str(vm, a + 1))
                               : a[0] == '#' ? as_num(atof(a + 1)) : as_resolve_path(vm, vm->root, a, &found);
                 printf("  [call] %s (%d args) at frame %d%s\n", fn, nav, f, fv.t == V_OBJ ? "" : " - not a function");
-                if (fv.t == V_OBJ) as_call(vm, fv, as_objv(&vm->root->obj), nav, av);
+                // a.b.method: called on a.b (clip methods such as gotoAndStop need their clip)
+                AsVal self = as_objv(&vm->root->obj);
+                char *dot = strrchr(fn, '.');
+                if (dot) {
+                    *dot = 0;
+                    AsVal o = as_resolve_path(vm, vm->root, fn, &found);
+                    if (found && o.t == V_OBJ) self = o;
+                }
+                if (fv.t == V_OBJ) as_call(vm, fv, self, nav, av);
             }
             p = strchr(p, ',');
             if (p) p++;

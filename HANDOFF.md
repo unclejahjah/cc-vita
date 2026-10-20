@@ -22,7 +22,8 @@ game's own ActionScript 1 from the user's PC copy on a small AVM1 engine written
 - `src/audio.c` – mpg123 mixer: sfx/<linkage>.mp3, music/<name>.mp3.
 - `src/main.c` – Vita app: loader, renderer, pad mapping, pause menu, overlay (SELECT+UP).
 - `tools/hosttest.c` – PC harness (`--as GAME_DIR MAIN.swf out frames every`). Env: CC_KEYS,
-  CC_CALL (frame:fn:args, 'str #num path), CC_SET (frame:path.name=num), AS_PRINT, AS_TRACE_EVERY,
+  CC_CALL (frame:fn:args, 'str #num path; a.b.method is called on a.b), CC_SET
+  (frame:path.name=num), AS_ARGS (print calls of named script functions), AS_PRINT, AS_TRACE_EVERY,
   AS_GOTO, AS_CALLS, CC_STRINGS, CC_FONT_DIR, CC_PS_BUTTONS, CC_REPAIR_DEBUG.
 
 ## Build / device
@@ -80,9 +81,22 @@ fresh character, but that character still sits on the same save.dat, so first re
   animation not ending (level developer stats, see Facts).
 - Character levels wrong on character select.
 Engine/file bugs:
-- Bosses don't die and vanish: UFO (first boss, locks progression), Corn boss; boss death
-  animations broken. Same symptom as EBARBOSS before: check ECORN.swf/UFO.swf completeness
-  (declared size vs file size differ) and cc_repair_cut_short.
+- Bosses don't die and vanish: UFO (the small alien UFOs, LEVEL41 f_MakeUFO), Corn boss.
+  CAUSE FOUND 2026-10-20: cut-short files. 58 files in "Raw Game Files-2026..." end before their
+  End tag (check: the tag stream, not the header size, which is unreliable). UFO.swf ends inside
+  its 104-frame death sprite; ECORN.swf inside its 278-frame death sprite (sprite 94), so the boss
+  freezes on an empty "die" frame and stays an enemy. Complete copies: Jah's own
+  "Steam PC copy/original/data/*/*.pak", decrypted with the Castle Mod Tool code (Jah approved,
+  ask him before running it again) into ..\steam-complete\{game,levels} (55 files: the 58 minus
+  MAIN, MENU, PLAYER, whose originals stay). That build is byte-identical to every uncut file
+  in use. Tested on the PC with them: UFO dies (death anim, f_EnemyDie, removed); Corn boss
+  dies (death anim, f_BringHorn/f_HornBrought, boss_fight ends). NOT yet: a full regression
+  sweep with all 55 swapped in (FX, SKY*, MOUNT2, ENDING*, ~40 LEVELs), then FTP to the Vita
+  (only after Jah says "ftp ready"). Test recipe: CC_CALL "1100:loader.f_SpawnCornBoss:#700|#400,
+  1150:loader.game.game.e_cornboss.gotoAndStop:'spin2" (the boss-intro cutscene does the spin2),
+  CC_SET health=1, then CC_CALL f_Damage on it. UFO: "1100:f_MakeUFO:#600|#400", CC_SET
+  ufo1.health=0. Level functions live on _root.loader.
+  Cut list includes LEVEL36 (Cyclops cave) and ENDING*: likely the Cyclops and final-boss items.
 - Arenas turn all attacks into arrows.
 - Cyclops cave: black screen but gameplay continues; Cyclops resurrection cutscene never ends.
 - Ship level: ship hidden below the waves (depth/layer order).
