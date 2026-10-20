@@ -212,7 +212,8 @@ struct AsVm {
     struct { AsStr *name; AsNative fn; } overrides[32];
     int noverrides;
     // variables whose value the host fixes (as_pin): scripts read it, their writes are ignored
-    struct { AsStr *name, *only_in; AsVal v; } pinned[16];
+    // (in_levels: in every script of a level file, Movie.is_level)
+    struct { AsStr *name, *only_in; AsVal v; int in_levels; } pinned[24];
     int npinned;
     // queued frame scripts for this tick: (clip, frame) in order
     AsMc **queue;
@@ -266,6 +267,9 @@ void as_override(AsVm *vm, const char *name, AsNative fn);
 // A variable that always reads v by name (only primitive values: they aren't GC roots).
 // With only_in, just inside the script function of that name (and writes still happen).
 void as_pin(AsVm *vm, const char *name, AsVal v, const char *only_in);
+// The same for every script (functions and timelines) of a level file: reads give v and
+// the scripts' own writes are ignored there.
+void as_pin_in_levels(AsVm *vm, const char *name, AsVal v);
 
 // profiling: time and actions per function, worst first (exclusive of callees)
 void as_prof_enable(int on);

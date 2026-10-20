@@ -114,7 +114,8 @@ static AsVal read_storage(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
 static AsVal write_storage(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
     (void)this_;
     int p, a = storage_slot(vm, ARG(0), argc >= 3, ARG(1), &p);
-    if (a >= 0) { storage[p][a] = as_tonum(vm, argc >= 3 ? argv[2] : ARG(1)); cc_storage_dirty = 1; }
+    // the executable's save is bytes: a value keeps its low 8 bits
+    if (a >= 0) { storage[p][a] = (uint8_t)as_toint32(vm, argc >= 3 ? argv[2] : ARG(1)); cc_storage_dirty = 1; }
     if (a >= 0 && AS_ENV("CC_STORAGE_TRACE"))
         as_warn(vm, "storage write [%d][%d] = %g (in %s)", p, a, storage[p][a],
                 vm->cur_fn && vm->cur_fn->fname ? vm->cur_fn->fname->s : "?");
@@ -180,6 +181,16 @@ int cc_storage_load(const char *path) {
         if ((key >> 16) < 4) storage[key >> 16][key & 0xffff] = v;
     }
     fclose(f);
+    // The executable's checks on a loaded save: a stat over 25 goes back to 1, a level byte
+    // over 0x62 (level 99) is clamped. (Characters played while the levels' developer
+    // settings were on saved magic/strength 9999; this heals them.)
+    for (int p = 0; p < 4; p++)
+        for (int t = 1; t <= 31; t++) {
+            double *c = &storage[p][64 + 48 * (t - 1)];
+            if (c[1] > 0x62) c[1] = 0x62;
+            for (int s = 8; s <= 11; s++)
+                if (c[s] > 25) c[s] = 1;
+        }
     return ok;
 }
 
@@ -454,9 +465,17 @@ void cc_host_init(AsVm *vm) {
         "f_InitStatScreen",      // stat screen: gold, exp and unspent points, Cross accepts
         "f_StatScreen",
     };
-    if (!getenv("CC_DEV_PATHS"))
+    if (!getenv("CC_DEV_PATHS")) {
         for (size_t i = 0; i < sizeof console_fns / sizeof *console_fns; i++)
             as_pin(vm, "console_version", as_bool(1), console_fns[i]);
+        // Level files are true all the way. Each level's f_Init writes console_version =
+        // false and then, where it's still false, applies its developer test settings:
+        // p1.magic, magic_pow, strength, punch_pow = 9999 (that was the "999 damage" and
+        // "magic maxed" on new characters), Final Battle enemies with 3 health. In the
+        // executable the write never sticks; the level then loads its BSP through
+        // f_BSPLoadLevel (bsp_load_level below).
+        as_pin_in_levels(vm, "console_version", as_bool(1));
+    }
     as_def_fn(vm, vm->global, "f_BSPLoadLevel", bsp_load_level);
     AsObj *g = vm->global;
     AsObj *key = as_obj_new(vm, OBJ_PLAIN, vm->object_proto);

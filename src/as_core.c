@@ -450,6 +450,16 @@ void as_pin(AsVm *vm, const char *name, AsVal v, const char *only_in) {
     if (vm->npinned < (int)(sizeof vm->pinned / sizeof vm->pinned[0])) {
         vm->pinned[vm->npinned].name = as_atom(vm, name);
         vm->pinned[vm->npinned].only_in = only_in ? as_atom(vm, only_in) : NULL;
+        vm->pinned[vm->npinned].in_levels = 0;
+        vm->pinned[vm->npinned++].v = v;
+    }
+}
+
+void as_pin_in_levels(AsVm *vm, const char *name, AsVal v) {
+    if (vm->npinned < (int)(sizeof vm->pinned / sizeof vm->pinned[0])) {
+        vm->pinned[vm->npinned].name = as_atom(vm, name);
+        vm->pinned[vm->npinned].only_in = NULL;
+        vm->pinned[vm->npinned].in_levels = 1;
         vm->pinned[vm->npinned++].v = v;
     }
 }
@@ -542,6 +552,14 @@ static AsVal as_call_body(AsVm *vm, AsVal fv, AsVal this_, int argc, AsVal *argv
     AsObj *f = fv.o;
     if (f->native) return f->native(vm, this_, argc, argv);
     if (vm->depth > 200) { as_warn(vm, "call depth limit"); return as_undef(); }
+    if (AS_ENV("AS_ARGS") && f->fname && strstr(AS_ENV("AS_ARGS"), f->fname->s)) {   // AS_ARGS="f_Damage,f_Exp"
+        char buf[400];
+        int n = snprintf(buf, sizeof buf, "args %s(", f->fname->s);
+        for (int i = 0; i < argc && n < (int)sizeof buf - 40; i++)
+            n += snprintf(buf + n, sizeof buf - n, "%s%s%.30s", i ? ", " : "",
+                          argv[i].t == V_STR ? "'" : "", as_tostr(vm, argv[i])->s);
+        printf("  [%u] %s)\n", vm->tick, buf);   // every call, not deduplicated like as_warn
+    }
     vm->depth++;
 
     AsObj *act = call_alloc(&g_free_acts, sizeof(AsObj), GC_OBJ);
@@ -635,6 +653,12 @@ static int lookup_in(AsVm *vm, AsObj *o, AsStr *atom, AsVal *out) {
     return 0;
 }
 
+// Does pinned[i] answer for the script running in c?
+static int pin_applies(AsVm *vm, Ctx *c, int i) {
+    if (vm->pinned[i].in_levels) return c->movie && c->movie->is_level;
+    return !vm->pinned[i].only_in || (vm->cur_fn && vm->cur_fn->fname == vm->pinned[i].only_in);
+}
+
 static AsVal get_variable(AsVm *vm, Ctx *c, AsStr *name) {
     AsStr *atom = as_intern(vm, name);
     if (atom == A_this) {
@@ -645,8 +669,7 @@ static AsVal get_variable(AsVm *vm, Ctx *c, AsStr *name) {
     if (atom == A_root || atom == A_level0) return as_objv(&vm->root->obj);
     if (atom == A_global) return as_objv(vm->global);
     for (int i = 0; i < vm->npinned; i++)
-        if (vm->pinned[i].name == atom &&
-            (!vm->pinned[i].only_in || (vm->cur_fn && vm->cur_fn->fname == vm->pinned[i].only_in)))
+        if (vm->pinned[i].name == atom && pin_applies(vm, c, i))
             return vm->pinned[i].v;
     if (atom == A_parent) {
         AsVal v;
@@ -690,7 +713,8 @@ static void set_variable(AsVm *vm, Ctx *c, AsStr *name, AsVal val) {
     }
     AsStr *atom = as_intern(vm, name);
     for (int i = 0; i < vm->npinned; i++)
-        if (vm->pinned[i].name == atom && !vm->pinned[i].only_in) return;   // the host decides this one
+        if (vm->pinned[i].name == atom && !vm->pinned[i].only_in && pin_applies(vm, c, i))
+            return;   // the host decides this one
     for (AsScope *s = c->scope; s; s = s->parent) {
         if (!s->obj) continue;
         if (props_find(&s->obj->props, atom) ||

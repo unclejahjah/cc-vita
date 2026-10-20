@@ -342,6 +342,7 @@ static Movie *vita_loader(AsVm *vm, const char *url) {
             snprintf(g_last_error, sizeof g_last_error, "%s: %s", base, err);
             return NULL;
         }
+        m->is_level = i == 1;   // levels/: console_version reads true in its scripts (cc_host.c)
         cc_repair_level(m);
         cc_buttons_playstation(m, CC_BTN_STYLE_COLOURED);   // the game's button art as PlayStation buttons
         cc_menu_vita_badge(m);                              // "Vita Edition" on the title
