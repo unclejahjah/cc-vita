@@ -65,6 +65,30 @@ repair (EWIZARD, enemies), heat shimmer (AddShader "Heat" -> render target wobbl
 no "Loading X.swf" text. 63 .pak files to re-extract are in
 Desktop\Castle Mod Tool\castlecrashers-main\pak (pak_list.txt); outputs go to pakoutput.
 
+## Jah's to-do list (2026-10-20), with first notes
+Save-related (the 100% test save made by tools/make_save100.py sets every shared unlock byte,
+port 0 slots 7-35, to "owned", and Blue Knight stats to 25). Jah confirmed it also happens on a
+fresh character, but that character still sits on the same save.dat, so first replace save.dat
+(Jah's own backup save_backup_20261015.dat, or none) and re-test before debugging:
+- Animal orbs missing (animals 8-11 marked owned), key items unobtainable (items 12-35 owned).
+  Jah also wants "some key items removed" (ask which: probably online/DLC-only ones).
+- Magic 999 damage / magic maxing itself / some attacks max damage / magic animation not ending.
+- Character levels wrong on character select.
+Engine/file bugs:
+- Bosses don't die and vanish: UFO (first boss, locks progression), Corn boss; boss death
+  animations broken. Same symptom as EBARBOSS before: check ECORN.swf/UFO.swf completeness
+  (declared size vs file size differ) and cc_repair_cut_short.
+- Arenas turn all attacks into arrows.
+- Cyclops cave: black screen but gameplay continues; Cyclops resurrection cutscene never ends.
+- Ship level: ship hidden below the waves (depth/layer order).
+- Knock-down physics missing from some attacks.
+- Title: "Vita Edition" badge sits in a visible box and overlaps the logo; centre the Quit button.
+Research:
+- github.com/myuu-151/Castle-Crashers-GC (a GameCube port): check for reusable findings.
+- Vita trophies from the Steam/PS3 list (homebrew trophy system research).
+Files now on the Vita: uncut (FRESH) files except MENU, MAIN, PLAYER (originals).
+Jah asked for future work to start in a new thread to save usage; this list is the starting point.
+
 ## Next (in order)
 1. Parity sweep with the 100% Blue Knight save: shops, animal orbs, Insane Mode, Arena,
    mini-games, items (bombs, horn, boomerang, shovel), HUD, relics.
