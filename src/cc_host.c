@@ -553,8 +553,10 @@ static int hold_load(AsVm *vm, AsMc *target, const char *url) {
         // the intro takes 20 frames; don't wait forever if it never says so
         if (as_tonum(vm, cc_flash_global(vm, "g_bReadyToLoad")) != 1 && ++load_wait < 90) return 1;
     }
-    // the file is read on another thread while the game (and the loading screen) runs on
-    return vm->prefetch && vm->prefetch(vm, url);
+    // the level file is read on another thread while the loading screen runs on. Not the
+    // files a level asks for itself (mounts, enemies, sky): its clips set up what they load
+    // into on the next frames, and a late file wipes that (the Abandoned Mill's deer)
+    return is_level_slot(vm, target) && vm->prefetch && vm->prefetch(vm, url);
 }
 
 // The loading screen plays its exit once the level is in and the files its first frames
