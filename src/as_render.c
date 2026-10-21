@@ -1,6 +1,7 @@
 // Drawing and measuring the ActionScript runtime's live clip tree.
 #include "as_render.h"
 #include "hostfont.h"
+#include "custom_char.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -17,11 +18,12 @@ static CXform cx_with_alpha(CXform cx, float alpha) {
 // ---- text fields --------------------------------------------------------------------
 
 static AsVm *g_vm;
-static AsStr *A_text;
+static AsStr *A_text, *A_p_type;
 
 void as_render_init(AsVm *vm) {
     g_vm = vm;
     A_text = as_atom(vm, "text");
+    A_p_type = as_atom(vm, "p_type");
 }
 
 // What a field shows: its variable (a path from the clip it's on) or its "text".
@@ -226,11 +228,28 @@ static void draw_text(AsMc *tf, Mat m, CXform cx, DrawList *out) {
     }
 }
 
+// A part clip of PLAYER.swf on the player a custom character replaces: its painted box. The
+// player is the part's nearest ancestor with a p_type (f_GetPlayerClip looks up to 7 levels).
+static const BitmapFill *custom_part(AsMc *mc) {
+    if (!cc_custom_p_type() || !mc->movie->is_player || !mc->def || !A_p_type) return NULL;
+    AsMc *p = mc->parent;
+    for (int i = 0; p && i < 8; i++, p = p->parent) {
+        AsProp *pt = as_own(&p->obj, A_p_type);
+        if (pt && pt->v.t == V_NUM) return cc_custom_part(mc->movie, mc->def, mc->frame, (int)pt->v.n);
+    }
+    return NULL;
+}
+
 void as_render_mc(AsMc *mc, Mat parent, CXform pcx, DrawList *out) {
     if (mc->removed || !mc->visible) return;
     Mat m = mat_mul(parent, mc->m);
     CXform cx = cx_mul(pcx, cx_with_alpha(mc->cx, mc->alpha));
     if (cx.mul[3] <= 0 && cx.add[3] <= 0 && !out->masking) return;
+    const BitmapFill *painted = custom_part(mc);
+    if (painted) {
+        render_bitmap_fill(painted, m, cx, out);
+        return;
+    }
     int heat_here = 0;   // one heat haze per frame: this clip's own items shimmer
     if (mc->shader == 1 && out->heat_at < 0 && !out->masking && !out->level) {
         float b[4];

@@ -149,6 +149,8 @@ static const uint8_t default_weapon[32] = {
     15, 6, 45, 26, 57, 43, 20, 2, 35, 31, 48, 50, 68, 63, 85, 84,
 };
 
+int cc_default_weapon(int p_type) { return p_type >= 1 && p_type <= 31 ? default_weapon[p_type] : 0; }
+
 static AsVal native_get_default_weapon(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
     (void)this_;
     AsVal zone = ARG(0);
