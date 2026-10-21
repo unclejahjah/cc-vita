@@ -15,4 +15,11 @@ int cc_buttons_playstation(Movie *m, int style);
 // its place (fills added to the logo). 1 if this was that file. Call before tessellating.
 int cc_menu_vita_badge(Movie *m);
 
+// A PS Vita in the game's drawing style for the controls page (body 300 pixels wide, centred
+// on 0,0, in twips). spots: where each control is, in the same space; the face and shoulder
+// buttons are left for the caller to draw with the game's button clips.
+enum { CC_VITA_L, CC_VITA_R, CC_VITA_DPAD, CC_VITA_LSTICK, CC_VITA_RSTICK, CC_VITA_TRIANGLE, CC_VITA_CIRCLE,
+       CC_VITA_CROSS, CC_VITA_SQUARE, CC_VITA_SELECT, CC_VITA_START, CC_VITA_PS, CC_VITA_SPOTS };
+int cc_vita_drawing(Shape *s, float spots[CC_VITA_SPOTS][2]);
+
 #endif

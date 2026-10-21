@@ -5,8 +5,9 @@
 
 #include "render.h"
 
-// pages: the menu's own, and the two books the app draws itself
-enum { PG_MAIN, PG_CONTROLS, PG_ACHIEVEMENTS, PG_INFO, PG_CONFIRM };
+// pages: the menu's own, the two books the app draws itself, and Help & Options' list and
+// the help book (help_book.c) the app shows from it
+enum { PG_MAIN, PG_CONTROLS, PG_ACHIEVEMENTS, PG_INFO, PG_CONFIRM, PG_HELP, PG_BOOK };
 // buttons for pause_menu_update
 enum { PM_UP = 1, PM_DOWN = 2, PM_ACCEPT = 4, PM_BACK = 8 };
 // what pause_menu_update asks for
@@ -20,9 +21,13 @@ typedef struct {
     int flash_on;
     float clock;               // the backdrop's animation, in game frames (30 a second)
     int on_map;                // opened on the world map: no Exit To Map line
+    int help_only;             // opened from the title's Help & Options: Back on it closes
+    int book, book_new;        // PG_BOOK: which help book (HB_*), and 1 until the app opens it
 } PauseMenu;
 
 void pause_menu_open(PauseMenu *pm, int on_map);
+void pause_menu_open_help(PauseMenu *pm);    // the title's Help & Options: its list alone
+void pause_menu_book_closed(PauseMenu *pm);  // the help book closed: back to the list
 // One frame (dt seconds) with the buttons pressed this frame. *sound: -1 none, 0 the move
 // sound, 1 the select one (PAUSE.swf's sound_toggle_b / sound_player_select).
 int pause_menu_update(PauseMenu *pm, unsigned pressed, float dt, int *sound);

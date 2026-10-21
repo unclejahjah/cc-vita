@@ -516,3 +516,121 @@ int cc_buttons_playstation(Movie *m, int style) {
     if (r && !r->tessellated) { make_trigger(r, 'R'); done++; }
     return done;
 }
+
+// ---- a PS Vita for the Help & Options controls page ------------------------------------
+// Drawn the way the game draws things: a thick black outline, a flat base colour, a darker
+// shade along the bottom and a lighter band along the top. Designed in pixels on a body
+// 300 wide (centred on 0,0), stored in twips like any shape. The face buttons and the
+// shoulder buttons aren't in it: the page puts the game's own (PlayStation) button clips
+// on the spots it reports.
+
+static const uint8_t V_BLACK[4] = {0x14, 0x14, 0x18, 255};
+
+static void vbox(Shape *s, float x0, float y0, float x1, float y1, float r, const uint8_t c[4]) {
+    float rr[4] = {r * 20, r * 20, r * 20, r * 20};
+    Poly p = {0};
+    round_box(&p, x0 * 20, y0 * 20, x1 * 20, y1 * 20, rr);
+    append_fill(s, fill_from(&p, c));
+}
+
+static void vdisc(Shape *s, float cx, float cy, float r, const uint8_t c[4]) {
+    Poly p = {0};
+    ring(&p, cx * 20, cy * 20, r * 20, 40);
+    append_fill(s, fill_from(&p, c));
+}
+
+// a body-coloured part with the game's shading: outline, shade, base, top light
+static void vpart(Shape *s, float x0, float y0, float x1, float y1, float r, float o, const uint8_t shade[4],
+                  const uint8_t base[4], const uint8_t light[4]) {
+    vbox(s, x0 - o, y0 - o, x1 + o, y1 + o, r + o, V_BLACK);
+    vbox(s, x0, y0, x1, y1, r, shade);
+    float h = y1 - y0, rb = fminf(r, (h - h * 0.08f) * 0.5f);
+    vbox(s, x0, y0, x1, y1 - h * 0.08f, rb, base);
+    float lh = h * 0.30f, rl = fminf(r * 0.8f, lh * 0.5f);
+    vbox(s, x0 + r * 0.35f, y0 + h * 0.04f, x1 - r * 0.35f, y0 + h * 0.04f + lh, rl, light);
+}
+
+static void vstick(Shape *s, float cx, float cy) {
+    static const uint8_t RIM[4] = {0x2e, 0x30, 0x36, 255}, CAP[4] = {0x4a, 0x4d, 0x56, 255},
+                         TOP[4] = {0x6c, 0x70, 0x7a, 255};
+    vdisc(s, cx, cy, 15, V_BLACK);
+    vdisc(s, cx, cy, 12.5f, RIM);
+    vdisc(s, cx, cy - 1.5f, 10, V_BLACK);
+    vdisc(s, cx, cy - 1.5f, 8.5f, CAP);
+    vdisc(s, cx - 1.5f, cy - 4, 4.5f, TOP);
+}
+
+static void vdpad(Shape *s, float cx, float cy) {
+    static const uint8_t SHADE[4] = {0x5e, 0x61, 0x6a, 255}, BASE[4] = {0x8c, 0x8f, 0x98, 255},
+                         LIGHT[4] = {0xb8, 0xbb, 0xc3, 255}, ARROW[4] = {0x3a, 0x3c, 0x44, 255};
+    float a = 17, w = 6.5f, o = 2.2f;
+    vbox(s, cx - a - o, cy - w - o, cx + a + o, cy + w + o, 3 + o, V_BLACK);
+    vbox(s, cx - w - o, cy - a - o, cx + w + o, cy + a + o, 3 + o, V_BLACK);
+    vbox(s, cx - a, cy - w, cx + a, cy + w, 3, SHADE);
+    vbox(s, cx - w, cy - a, cx + w, cy + a, 3, SHADE);
+    vbox(s, cx - a, cy - w, cx + a, cy + w - 2, 3, BASE);
+    vbox(s, cx - w, cy - a, cx + w, cy + a - 2, 3, BASE);
+    vbox(s, cx - w + 1.5f, cy - a + 1.5f, cx + w - 1.5f, cy - a + 6, 2, LIGHT);
+    vbox(s, cx - a + 1.5f, cy - w + 1.5f, cx + a - 1.5f, cy - w + 4, 2, LIGHT);
+    Poly p = {0};   // the four arrows
+    static const float dir[4][2] = {{0, -1}, {1, 0}, {0, 1}, {-1, 0}};
+    for (int k = 0; k < 4; k++) {
+        float ux = dir[k][0], uy = dir[k][1], tx = cx + ux * (a - 3.5f), ty = cy + uy * (a - 3.5f);
+        float bx = cx + ux * (a - 8), by = cy + uy * (a - 8);
+        poly_begin_loop(&p);
+        poly_pt(&p, tx * 20, ty * 20);
+        poly_pt(&p, (bx + uy * 3.2f) * 20, (by - ux * 3.2f) * 20);
+        poly_pt(&p, (bx - uy * 3.2f) * 20, (by + ux * 3.2f) * 20);
+    }
+    append_fill(s, fill_from(&p, ARROW));
+}
+
+int cc_vita_drawing(Shape *s, float spots[CC_VITA_SPOTS][2]) {
+    memset(s, 0, sizeof *s);
+    static const uint8_t SHADE[4] = {0x1f, 0x21, 0x27, 255}, BASE[4] = {0x34, 0x37, 0x3f, 255},
+                         LIGHT[4] = {0x4b, 0x4f, 0x5a, 255}, BEZEL[4] = {0x0e, 0x0f, 0x12, 255},
+                         SCREEN[4] = {0x1d, 0x26, 0x33, 255}, GLARE[4] = {0x2a, 0x36, 0x47, 255},
+                         SMALL[4] = {0x5c, 0x5f, 0x68, 255}, SMALL_HI[4] = {0x8a, 0x8d, 0x96, 255},
+                         GRILLE[4] = {0x16, 0x17, 0x1b, 255};
+    vpart(s, -150, -68, 150, 68, 60, 3.5f, SHADE, BASE, LIGHT);
+    // the screen: black glass round it, the picture, a glare across it
+    vbox(s, -98, -58, 98, 56, 9, BEZEL);
+    vbox(s, -90, -51, 90, 50, 2, V_BLACK);
+    vbox(s, -88.5f, -49.5f, 88.5f, 48.5f, 1.5f, SCREEN);
+    Poly g = {0};
+    poly_begin_loop(&g);
+    poly_pt(&g, -88.5f * 20, -49.5f * 20);
+    poly_pt(&g, -20 * 20, -49.5f * 20);
+    poly_pt(&g, -70 * 20, 48.5f * 20);
+    poly_pt(&g, -88.5f * 20, 48.5f * 20);
+    poly_begin_loop(&g);
+    poly_pt(&g, -8 * 20, -49.5f * 20);
+    poly_pt(&g, 6 * 20, -49.5f * 20);
+    poly_pt(&g, -44 * 20, 48.5f * 20);
+    poly_pt(&g, -58 * 20, 48.5f * 20);
+    append_fill(s, fill_from(&g, GLARE));
+    // speaker grilles under the top corners
+    for (int side = -1; side <= 1; side += 2)
+        for (int i = 0; i < 3; i++) vdisc(s, side * (130 - i * 5.5f), 50 + (i == 1 ? 2.5f : 0), 1.6f, GRILLE);
+    vdpad(s, -123, -22);
+    vstick(s, -108, 26);
+    vstick(s, 108, 26);
+    // PS button (left), SELECT and START (right): small pills
+    vdisc(s, -127, 49, 6.5f, V_BLACK);
+    vdisc(s, -127, 49, 4.5f, SMALL);
+    vdisc(s, -128, 47.5f, 2.2f, SMALL_HI);
+    for (int i = 0; i < 2; i++) {
+        float x = 114 + i * 17;
+        vbox(s, x - 7.5f, 45 - 4, x + 7.5f, 45 + 4, 4, V_BLACK);
+        vbox(s, x - 5.5f, 45 - 2.2f, x + 5.5f, 45 + 2.2f, 2.2f, SMALL);
+        vbox(s, x - 4, 45 - 2.2f, x + 4, 45 - 0.4f, 1, SMALL_HI);
+    }
+    static const float at[CC_VITA_SPOTS][2] = {
+        [CC_VITA_L] = {-112, -71}, [CC_VITA_R] = {112, -71}, [CC_VITA_DPAD] = {-123, -22},
+        [CC_VITA_LSTICK] = {-108, 26}, [CC_VITA_RSTICK] = {108, 26}, [CC_VITA_TRIANGLE] = {123, -38},
+        [CC_VITA_CIRCLE] = {139, -22}, [CC_VITA_CROSS] = {123, -6}, [CC_VITA_SQUARE] = {107, -22},
+        [CC_VITA_SELECT] = {114, 45}, [CC_VITA_START] = {131, 45}, [CC_VITA_PS] = {-127, 49},
+    };
+    for (int i = 0; i < CC_VITA_SPOTS; i++) spots[i][0] = at[i][0] * 20, spots[i][1] = at[i][1] * 20;
+    return s->nfills;
+}
