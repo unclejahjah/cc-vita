@@ -218,16 +218,10 @@ static Art *art_for(Movie *mv) {
             else a.bar = c;
         }
     }
-    // the book: fitted into the stage with a margin, centred, a little above the prompts
-    if (a.book >= 0) {
-        clip_bounds(mv, a.book, a.book_b);
-        float w = a.book_b[2] - a.book_b[0], h = a.book_b[3] - a.book_b[1];
-        float s = fminf(STAGE_W * 0.96f / w, STAGE_H * 0.84f / h);
-        float cx = STAGE_W / 2, cy = STAGE_H * 0.46f;
-        a.place = (Mat){s / 20, 0, 0, s / 20, cx - (a.book_b[0] + w / 2) * s, cy - (a.book_b[1] + h / 2) * s};
-    } else {
-        a.place = (Mat){1.0f / 20, 0, 0, 1.0f / 20, 0, 0};
-    }
+    // the book: where the original puts it, at the stage's top left at full size, so it fills
+    // the screen (its bottom runs off it) and the page turn sweeps across all of it
+    a.place = (Mat){1.0f / 20, 0, 0, 1.0f / 20, 0, 0};
+    if (a.book >= 0) clip_bounds(mv, a.book, a.book_b);
     cc_vita_drawing(&a.vita, a.spots);
     return &a;
 }
@@ -335,7 +329,12 @@ static void book_art(DrawList *out, Art *a, float k, float alpha) {
 
 // the middle of the book on the stage, and its width
 static void book_middle(const Art *a, float *x, float *y, float *w) {
+    // the middle of the part of the book that's on the screen
     to_stage(a, (a->book_b[0] + a->book_b[2]) / 2, (a->book_b[1] + a->book_b[3]) / 2, x, y);
+    float top, bottom, dummy;
+    to_stage(a, 0, a->book_b[1], &dummy, &top);
+    to_stage(a, 0, a->book_b[3], &dummy, &bottom);
+    *y = (top + fminf(bottom, STAGE_H)) / 2;
     *w = (a->book_b[2] - a->book_b[0]) * place_scale(a);
 }
 
@@ -357,7 +356,7 @@ static void controls_page(DrawList *out, Art *a, float k, float alpha) {
     page_title(out, a, k, words("help.title.controls", "Controls"), alpha);
     float mx, my, bw;
     book_middle(a, &mx, &my, &bw);
-    float S = place_scale(a) * 1.15f;          // the clip's pixels -> stage pixels
+    float S = place_scale(a) * 1.4f;           // the clip's pixels -> stage pixels (a little bigger than the original)
     float ox = mx, oy = my + 52 * place_scale(a);   // the clip's origin
     float vs = 290.0f / 300 * S;               // the Vita, 290 clip pixels across
     float vx = ox, vy = oy - 18 * S;
