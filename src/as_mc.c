@@ -725,6 +725,7 @@ void as_tick(AsVm *vm) {
 
 void as_mc_mark(AsVm *vm, AsMc *mc) {
     if (mc->parent) as_mark_obj(vm, &mc->parent->obj);
+    if (mc->mask) as_mark_obj(vm, &mc->mask->obj);
     for (int i = 0; i < mc->ndisp; i++)
         if (mc->disp[i].mc) as_mark_obj(vm, &mc->disp[i].mc->obj);
 }

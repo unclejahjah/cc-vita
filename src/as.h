@@ -163,6 +163,8 @@ struct AsMc {
     uint32_t born;             // vm->tick it was created on: it doesn't advance until the next one
     uint8_t shader;            // AddShader on this clip: 1 "Heat" (the screen behind it shimmers)
     const EditText *text;      // a text field (its contents are the "text" variable)
+    AsMc *mask;                // setMask: only what lies inside this clip's shapes shows
+    uint8_t is_mask;           // used as some clip's setMask mask: not drawn itself
 };
 
 // ---- the VM ----
