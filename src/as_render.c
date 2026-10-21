@@ -18,12 +18,13 @@ static CXform cx_with_alpha(CXform cx, float alpha) {
 // ---- text fields --------------------------------------------------------------------
 
 static AsVm *g_vm;
-static AsStr *A_text, *A_p_type;
+static AsStr *A_text, *A_p_type, *A_player_pt;
 
 void as_render_init(AsVm *vm) {
     g_vm = vm;
     A_text = as_atom(vm, "text");
     A_p_type = as_atom(vm, "p_type");
+    A_player_pt = as_atom(vm, "player_pt");
 }
 
 // What a field shows: its variable (a path from the clip it's on) or its "text".
@@ -228,14 +229,33 @@ static void draw_text(AsMc *tf, Mat m, CXform cx, DrawList *out) {
     }
 }
 
-// A part clip of PLAYER.swf on the player a custom character replaces: its painted box. The
-// player is the part's nearest ancestor with a p_type (f_GetPlayerClip looks up to 7 levels).
+static int named(const AsMc *mc, const char *name) { return mc && mc->name && !strcmp(mc->name->s, name); }
+
+// What a custom character (custom_char.h) paints over: PLAYER.swf's part clips on its player
+// (the part's nearest ancestor with a p_type: f_GetPlayerClip looks up to 7 levels), the HUD's
+// face (hudN.pic.pic, on hudN.player_pt) and its character select portrait (portrait_mid/top/bot
+// on frame p_type + 3).
+static int p_type_of(AsMc *mc) {
+    AsProp *pt = mc ? as_own(&mc->obj, A_p_type) : NULL;
+    return pt && pt->v.t == V_NUM ? (int)pt->v.n : 0;
+}
+
 static const BitmapFill *custom_part(AsMc *mc) {
-    if (!cc_custom_p_type() || !mc->movie->is_player || !mc->def || !A_p_type) return NULL;
+    if (!cc_custom_p_type() || !mc->def || !A_p_type) return NULL;
+    if (mc->name && !strncmp(mc->name->s, "portrait_", 9) && mc->frame == CC_CUSTOM_P_TYPE + 2)
+        return cc_custom_named(CC_PORTRAIT);
+    if (named(mc, "pic") && named(mc->parent, "pic") && mc->parent->parent) {
+        AsProp *pp = as_own(&mc->parent->parent->obj, A_player_pt);
+        AsVal v = pp ? pp->v : (AsVal){0};
+        if (v.t == V_OBJ && v.o->type == OBJ_MC && p_type_of((AsMc *)v.o) == CC_CUSTOM_P_TYPE)
+            return cc_custom_named(CC_ICON);
+        return NULL;
+    }
+    if (!mc->movie->is_player) return NULL;
     AsMc *p = mc->parent;
     for (int i = 0; p && i < 8; i++, p = p->parent) {
-        AsProp *pt = as_own(&p->obj, A_p_type);
-        if (pt && pt->v.t == V_NUM) return cc_custom_part(mc->movie, mc->def, mc->frame, (int)pt->v.n);
+        int t = p_type_of(p);
+        if (t) return cc_custom_part(mc->movie, mc->def, mc->frame, t);
     }
     return NULL;
 }

@@ -126,6 +126,8 @@ def read_tags(data, pos, end):
         pos += 2
         code, ln = h >> 6, h & 0x3F
         if ln == 0x3F:
+            if pos + 4 > end:
+                return
             ln = struct.unpack_from('<I', data, pos)[0]
             pos += 4
         if pos + ln > end:

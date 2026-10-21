@@ -236,11 +236,15 @@ Both are the same developer-settings path as the magic bug, already fixed by pin
   (`<character displayname=... pngfile chartype magictype uploadid>`). The PC's newer
   player_new.pak has 33 frames per part (32 = the custom slot, drawn by the exe; 33 = Paint
   Junior) and more head angles; the original PLAYER.swf (31 frames) stays.
-- Vita: src/custom_char.c. custom/<green|red|blue|orange|gray|1..31>/painting.png replaces that
-  character's look (PC "replacement" mode), custom/stencil.png optional. Parts found by selector +
-  order (ids shift by 1-2 between Jah's Vita PLAYER.swf and the Steam one). Mapped: heads
-  (template boxes 1, 4-7; boxes 2-3 are newer-only angles), 5 bodies, starting weapon, shields,
-  6 beefy bodies, 15 beefy arms. Not done: the portrait boxes (character select / HUD icon /
-  Back Off Barbarian), a 32nd character slot, the PC's chartype/magictype.
+- Vita: src/custom_char.c. ux0:data/CastleCrashers/custom/painting.png (+ optional pbp.xml
+  displayname / Vita-only base="1..31", stencil.png) adds a 32nd character (Jah: no replacing):
+  f_InitSaveSystem's num_characters 31 -> 32 (save record 32 at 1552 was free), unlocked like the
+  DLC ones, char_colors["32"] and f_SetPlayerMagic(33) use the base (default Green Knight),
+  f_GetDefaultWeapon too. Parts found by selector + order (ids shift by 1-2 between Jah's Vita
+  PLAYER.swf and the Steam one). Mapped: heads (template boxes 1, 4-7; 2-3 are newer-only angles),
+  5 bodies, starting weapon, shields, 6 beefy bodies, 15 beefy arms, the HUD face (hudN.pic.pic
+  when hudN.player_pt is p_type 32) and the character select portrait (LOBBY portrait_* frame 35,
+  empty in the original). Not done: Back Off Barbarian portrait, PC chartype/magictype.
 - Test: tools/custom/testpaint2.py makes a purple-knight painting; hosttest CC_CUSTOM_DIR=dir/ with
-  dir/1/painting.png showed a purple Green Knight (head, body, sword, shield) in LEVEL2.
+  dir/painting.png, CC_CALL="260:loader.f_ChangeSelectedChar:#1|#-1" (scrolls to slot 32) and
+  CC_KEYS="150:83,330:2,450:49,600:2,750:83" shows the portrait, then a purple knight in LEVEL2.

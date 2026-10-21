@@ -31,6 +31,7 @@ static const int16_t BOX[][4] = {
     {1001, 1179, 234, 152}, {1249, 1179, 234, 152}, {1497, 1179, 160, 152}, {1671, 1179, 214, 152}, // arms
     {163, 1345, 158, 152}, {335, 1345, 156, 152}, {505, 1345, 234, 152}, {753, 1345, 140, 152},
     {163, 1515, 234, 152}, {411, 1515, 234, 152}, {659, 1515, 234, 152},
+    {1201, 1477, 130, 130}, {1345, 1477, 258, 514},                                           // HUD icon, portrait
 };
 
 enum { PART_ALWAYS, PART_WEAPON };
@@ -38,7 +39,7 @@ enum { PART_ALWAYS, PART_WEAPON };
 // The part clips of PLAYER.swf: each calls one of MAIN's selectors on its first frame
 // (_root.f_Helmet(this) ...), which shows the player's frame of it. A selector's clips are told
 // apart by their order in the file (their ids differ by a few between the game's builds).
-enum { G_HELMET, G_BELT, G_WEAPON, G_SHIELD, NGROUPS };
+enum { G_HELMET, G_BELT, G_WEAPON, G_SHIELD, NGROUPS, G_NAMED = NGROUPS };
 static const char *const SELECTOR[NGROUPS] = {"f_Helmet", "f_Belt", "f_Weapon", "f_Shield"};
 #define MAX_PER_GROUP 32
 
@@ -94,6 +95,10 @@ static const Part PARTS[] = {
     {G_BELT, 21, 33, PART_ALWAYS, 2.00f, -2, 0, 28, 63},
     {G_BELT, 20, 34, PART_ALWAYS, 1.98f, 1, 0, 40, 35},
     {G_BELT, 13, 35, PART_ALWAYS, 2.03f, 356, 0, 80, 33},
+    // not PLAYER.swf (cc_custom_named): the HUD's face (MAIN.swf hudN.pic.pic, fitted to its art's
+    // extent) and the character select portrait (LOBBY.swf portrait_mid/top/bot)
+    {G_NAMED, CC_ICON, 36, PART_ALWAYS, 2.75f, 0, 0, 267.1f, -238.9f},
+    {G_NAMED, CC_PORTRAIT, 37, PART_ALWAYS, 1.05f, 0, 0, 126.0f, 250.0f},
 };
 #define NPARTS ((int)(sizeof PARTS / sizeof PARTS[0]))
 
@@ -101,13 +106,14 @@ static const Part PARTS[] = {
 int cc_default_weapon(int p_type);
 
 static struct {
-    int p_type;
+    int p_type, base;
     char name[64];
     Bitmap bm;
     BitmapFill fill[NPARTS];
 } g;
 
 int cc_custom_p_type(void) { return g.p_type; }
+int cc_custom_base(void) { return g.base; }
 const char *cc_custom_name(void) { return g.name; }
 
 // PLAYER.swf's part clips by selector and order, for the movie last asked about
@@ -143,10 +149,18 @@ const BitmapFill *cc_custom_part(const Movie *m, const Sprite *s, int frame, int
     if (idx.movie != m) index_movie(m);
     for (int i = 0; i < NPARTS; i++) {
         const Part *p = &PARTS[i];
+        if (p->group == G_NAMED) continue;
         if (p->nth >= idx.n[p->group] || idx.id[p->group][p->nth] != s->id) continue;
         if (p->kind == PART_WEAPON && frame + 1 != cc_default_weapon(p_type)) return NULL;
         return &g.fill[i];
     }
+    return NULL;
+}
+
+const BitmapFill *cc_custom_named(int which) {
+    if (!g.p_type) return NULL;
+    for (int i = 0; i < NPARTS; i++)
+        if (PARTS[i].group == G_NAMED && PARTS[i].nth == which) return &g.fill[i];
     return NULL;
 }
 
@@ -182,45 +196,31 @@ static void make_fill(const Part *p, BitmapFill *bf) {
     }
 }
 
-static const char *const NAMES[] = {"", "green", "red", "blue", "orange", "gray"};
-
 static int file_exists(const char *path) {
     FILE *f = fopen(path, "rb");
     if (f) fclose(f);
     return f != NULL;
 }
 
-// pbp.xml: <character displayname="..." .../>
-static void read_name(const char *path, char *out, size_t n) {
-    FILE *f = fopen(path, "rb");
-    if (!f) return;
-    char buf[1024];
-    size_t len = fread(buf, 1, sizeof buf - 1, f);
-    fclose(f);
-    buf[len] = 0;
-    char *p = strstr(buf, "displayname=\"");
-    if (!p) return;
-    p += 13;
-    char *e = strchr(p, '"');
-    if (!e || e == p) return;
+// pbp.xml: <character displayname="..." base="N" .../>: an attribute's text, or 0 if it's not there
+static int xml_attr(const char *xml, const char *name, char *out, size_t n) {
+    char key[40];
+    snprintf(key, sizeof key, " %s=\"", name);
+    const char *p = strstr(xml, key);
+    if (!p) return 0;
+    p += strlen(key);
+    const char *e = strchr(p, '"');
+    if (!e || e == p) return 0;
     size_t l = (size_t)(e - p) < n - 1 ? (size_t)(e - p) : n - 1;
     memcpy(out, p, l);
     out[l] = 0;
+    return 1;
 }
 
 int cc_custom_load(const char *dir) {
-    char folder[64] = "", path[512];
-    int p_type = 0;
-    for (int t = 1; t <= 31 && !p_type; t++) {
-        for (int named = 0; named < 2 && !p_type; named++) {
-            if (named && t >= (int)(sizeof NAMES / sizeof NAMES[0])) break;
-            if (named) snprintf(folder, sizeof folder, "%s", NAMES[t]);
-            else snprintf(folder, sizeof folder, "%d", t);
-            snprintf(path, sizeof path, "%s%s/painting.png", dir, folder);
-            if (file_exists(path)) p_type = t;
-        }
-    }
-    if (!p_type) return 0;
+    char path[512];
+    snprintf(path, sizeof path, "%spainting.png", dir);
+    if (!file_exists(path)) return 0;
     int w, h, ch;
     uint8_t *px = stbi_load(path, &w, &h, &ch, 4);
     if (!px) return 0;
@@ -254,9 +254,92 @@ int cc_custom_load(const char *dir) {
     g.bm.rgba = half;
     if (swf_bitmap_loaded) swf_bitmap_loaded(&g.bm);
     for (int i = 0; i < NPARTS; i++) make_fill(&PARTS[i], &g.fill[i]);
-    snprintf(g.name, sizeof g.name, "%s", folder);
-    snprintf(path, sizeof path, "%s%s/pbp.xml", dir, folder);
-    read_name(path, g.name, sizeof g.name);
-    g.p_type = p_type;
+    snprintf(g.name, sizeof g.name, "CUSTOM");
+    g.base = 1;
+    snprintf(path, sizeof path, "%spbp.xml", dir);
+    FILE *f = fopen(path, "rb");
+    if (f) {
+        char xml[1024], v[64];
+        size_t len = fread(xml, 1, sizeof xml - 1, f);
+        fclose(f);
+        xml[len] = 0;
+        if (xml_attr(xml, "displayname", v, sizeof v)) snprintf(g.name, sizeof g.name, "%s", v);
+        if (xml_attr(xml, "base", v, sizeof v) && atoi(v) >= 1 && atoi(v) <= CC_CHARACTERS) g.base = atoi(v);
+    }
+    g.p_type = CC_CUSTOM_P_TYPE;
     return 1;
+}
+
+// ---- the 32nd character in the game's scripts -------------------------------------------------
+
+// Runs MAIN's own version of a function the host overrode with self.
+static AsVal call_script(AsVm *vm, const char *name, AsNative self, AsVal this_, int argc, AsVal *argv) {
+    AsVal fn = as_get(vm, as_objv(&vm->root->obj), as_atom(vm, name));
+    if (fn.t != V_OBJ || fn.o->native != self) return as_undef();
+    fn.o->native = NULL;
+    AsVal r = as_call(vm, fn, this_, argc, argv);
+    fn.o->native = self;
+    return r;
+}
+
+static void set_num(AsVm *vm, AsVal o, const char *name, double v) { as_set(vm, o, as_atom(vm, name), as_num(v)); }
+
+// f_InitSaveSystem: the save has room after the 31 records (64 + 48 * 31 is free), and the
+// character select (LOBBY/SELECT.swf) and char_colors go up to num_characters.
+static AsVal init_save_system(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
+    AsVal r = call_script(vm, "f_InitSaveSystem", init_save_system, this_, argc, argv);
+    AsVal info = as_get(vm, as_objv(&vm->root->obj), as_atom(vm, "save_data_info"));
+    if (info.t == V_OBJ) set_num(vm, info, "num_characters", CC_CUSTOM_P_TYPE);
+    return r;
+}
+
+// f_InitCharColors: the custom character's select-screen background and HUD colour are its base's
+static AsVal init_char_colors(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
+    AsVal r = call_script(vm, "f_InitCharColors", init_char_colors, this_, argc, argv);
+    static const char *const KNIGHT[] = {"", "color_green", "color_red", "color_blue", "color_orange"};
+    AsVal root = as_objv(&vm->root->obj);
+    AsVal colors = as_get(vm, root, as_atom(vm, "char_colors"));
+    AsVal base = g.base <= 4 ? as_get(vm, root, as_atom(vm, KNIGHT[g.base]))
+                             : (colors.t == V_OBJ && g.base < colors.o->nitems ? colors.o->items[g.base] : as_undef());
+    if (colors.t == V_OBJ && base.t == V_OBJ) {
+        char idx[8];
+        snprintf(idx, sizeof idx, "%d", CC_CUSTOM_P_TYPE);
+        as_set(vm, colors, as_str(vm, idx), base);
+    }
+    return r;
+}
+
+// f_SetPlayerMagic(player, type, human): f_SpawnPlayer gives a character n of 5..31 helmet,
+// shield and emblem n + 1, then calls this with n + 1. For the custom character (33) it sets up
+// its base instead: the base's magic, arrows and part frames (the parts the template paints
+// are drawn from the painting, the rest show the base's).
+static AsVal set_player_magic(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
+    AsVal p = argc > 0 ? argv[0] : as_undef();
+    int type = argc > 1 ? as_toint32(vm, argv[1]) : 0;
+    if (type != CC_CUSTOM_P_TYPE + 1 || argc < 3 || !as_tobool(vm, argv[2]) || p.t != V_OBJ)
+        return call_script(vm, "f_SetPlayerMagic", set_player_magic, this_, argc, argv);
+    int b = g.base;
+    if (b <= 4) {   // the knights' own lines in f_SpawnPlayer
+        static const int frame[5] = {0, 2, 4, 3, 5};
+        set_num(vm, p, "magic_type", b);
+        set_num(vm, p, "helmet", frame[b]);
+        set_num(vm, p, "shield", frame[b]);
+        set_num(vm, p, "emblem", frame[b]);
+        set_num(vm, p, "arrow_type", frame[b]);
+        if (b == 1) set_num(vm, p, "u_punch2_2", 2);
+        return as_undef();
+    }
+    set_num(vm, p, "helmet", b + 1);
+    set_num(vm, p, "shield", b + 1);
+    set_num(vm, p, "emblem", b + 1 == 23 ? 19 : b + 1 == 18 ? 23 : b + 1 == 31 ? 18 : b + 1);
+    if (b + 1 == 18) set_num(vm, p, "shield", 21);
+    AsVal args[3] = {p, as_num(b + 1), argv[2]};
+    return call_script(vm, "f_SetPlayerMagic", set_player_magic, this_, 3, args);
+}
+
+void cc_custom_init(AsVm *vm) {
+    if (!g.p_type) return;
+    as_override(vm, "f_InitSaveSystem", init_save_system);
+    as_override(vm, "f_InitCharColors", init_char_colors);
+    as_override(vm, "f_SetPlayerMagic", set_player_magic);
 }
