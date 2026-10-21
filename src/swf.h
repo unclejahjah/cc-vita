@@ -173,6 +173,7 @@ typedef struct {
     Sprite root;
     int truncated;             // file shorter than its header says
     int is_level;              // came from the levels folder (the loader sets it)
+    int is_player;             // PLAYER.swf (custom characters paint its part clips)
     uint8_t bg[3];             // SetBackgroundColor
     int nnames;                // instance names; names[0] is ""
     char **names;

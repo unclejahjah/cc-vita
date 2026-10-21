@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #if __has_include(<zlib.h>)
 #include <zlib.h>
 #else   // desktop test builds without zlib's headers (the library itself is linked)
@@ -778,6 +779,8 @@ Movie *swf_load(const char *path, char *err, int errlen) {
     }
     Movie *m = calloc(1, sizeof(Movie));
     m->version = d[3];
+    const char *base = strrchr(path, '/');
+    m->is_player = !strcasecmp(base ? base + 1 : path, "PLAYER.swf");
     m->names = malloc(sizeof(char *));
     m->names[0] = strdup("");
     m->nnames = 1;

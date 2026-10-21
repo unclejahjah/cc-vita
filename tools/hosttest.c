@@ -15,6 +15,7 @@
 #include "../src/hostfont.h"
 #include "../src/cc_buttons.h"
 #include "../src/cc_host.h"
+#include "../src/custom_char.h"
 #include "../src/pause_menu.h"
 #include "../src/help_book.h"
 #include "../src/strtab.h"
@@ -345,6 +346,9 @@ static int as_mode(int argc, char **argv) {
     if (getenv("CC_SAVE") && !cc_storage_load(getenv("CC_SAVE")))
         printf("  couldn't read save %s\n", getenv("CC_SAVE"));
     as_render_init(vm);
+    // CC_CUSTOM_DIR=dir/: a painted character, as ux0:data/CastleCrashers/custom/ on the Vita
+    if (getenv("CC_CUSTOM_DIR") && cc_custom_load(getenv("CC_CUSTOM_DIR")))
+        printf("custom character \"%s\" replaces character %d\n", cc_custom_name(), cc_custom_p_type());
     if (getenv("CC_STRINGS")) {   // strings_en.txt from extract_strings.py
         extern int strtab_load(const char *path);
         printf("strings: %d loaded\n", strtab_load(getenv("CC_STRINGS")));
