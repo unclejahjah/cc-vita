@@ -6,6 +6,8 @@
 // Vita); the art is PAUSE.swf's.
 #include "pause_menu.h"
 #include "as_render.h"
+#include "help_book.h"
+#include "strtab.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -14,7 +16,8 @@
 #define STAGE_W 848.0f
 #define STAGE_H 480.0f
 
-enum { A_NONE, A_BACK, A_RESUME, A_HELP, A_INFO, A_MAP, A_EXIT, A_ACHIEVEMENTS, A_NO, A_YES };
+enum { A_NONE, A_BACK, A_RESUME, A_HELP, A_INFO, A_MAP, A_EXIT, A_ACHIEVEMENTS, A_NO, A_YES, A_HOWTO, A_CONTROLS,
+       A_SETTINGS };
 typedef struct { const char *text; int act; } Line;   // act A_NONE: not selectable
 
 static int page_lines(const PauseMenu *pm, const char **title, const Line **lines) {
@@ -28,8 +31,20 @@ static int page_lines(const PauseMenu *pm, const char **title, const Line **line
                                      {"", 0}, {"You will lose any", 0}, {"unsaved progress", 0}};
     static const Line exit_lines[] = {{"Are you sure you wish", 0}, {"to exit this game?", 0}, {"No", A_NO},
                                       {"Yes", A_YES}, {"", 0}, {"You will lose any", 0}, {"unsaved progress", 0}};
+    // Help & Options: the executable's list (its Credits line is left out for now)
+    static Line help_lines[3] = {{"How to Play", A_HOWTO}, {"Controls", A_CONTROLS}, {"Settings", A_SETTINGS}};
+    static const char *help_keys[3] = {"help.title.howto", "help.title.controls", "help.title.settings"};
     *title = NULL;
     *lines = NULL;
+    if (pm->page == PG_HELP) {
+        for (int i = 0; i < 3; i++) {
+            const char *w = strtab_get(help_keys[i]);
+            if (w) help_lines[i].text = w;
+        }
+        *title = "Help & Options";
+        *lines = help_lines;
+        return 3;
+    }
     if (pm->page == PG_MAIN && pm->on_map) { *title = "Paused"; *lines = map_main_lines; return 4; }
     if (pm->page == PG_MAIN) { *title = "Paused"; *lines = main_lines; return 5; }
     if (pm->page == PG_INFO) { *title = "Information"; *lines = info_lines; return 1; }
@@ -54,15 +69,36 @@ void pause_menu_open(PauseMenu *pm, int on_map) {
     go(pm, PG_MAIN, 0);
 }
 
+void pause_menu_open_help(PauseMenu *pm) {
+    pause_menu_open(pm, 0);
+    pm->help_only = 1;
+    go(pm, PG_HELP, 0);
+}
+
+void pause_menu_book_closed(PauseMenu *pm) { go(pm, PG_HELP, pm->book); }
+
 // what the chosen line (or Back) does once the page has faded out
 static int run(PauseMenu *pm, int act) {
     switch (act) {
     case A_BACK:
         if (pm->page == PG_INFO) { go(pm, PG_MAIN, 2); return PM_OPEN; }
+        if (pm->page == PG_HELP) {
+            if (pm->help_only) return PM_RESUME;   // from the title: straight back to it
+            go(pm, PG_MAIN, 1);
+            return PM_OPEN;
+        }
         if (pm->page == PG_CONFIRM) { go(pm, PG_MAIN, pm->confirm ? 4 - pm->on_map : 3); return PM_OPEN; }
         return PM_RESUME;   // Back on the menu itself
     case A_RESUME: return PM_RESUME;
-    case A_HELP: pm->back_page = PG_MAIN; go(pm, PG_CONTROLS, 0); return PM_OPEN;
+    case A_HELP: go(pm, PG_HELP, 0); return PM_OPEN;
+    case A_HOWTO: case A_CONTROLS: case A_SETTINGS:
+        // the app shows the book (help_book.c) until it closes, then calls pause_menu_book_closed
+        pm->book = act == A_HOWTO ? HB_HOWTO : act == A_CONTROLS ? HB_CONTROLS : HB_SETTINGS;
+        pm->book_new = 1;
+        go(pm, PG_BOOK, 0);
+        pm->fade = 0;
+        pm->alpha = 1;
+        return PM_OPEN;
     case A_INFO: go(pm, PG_INFO, 0); return PM_OPEN;
     case A_ACHIEVEMENTS: pm->back_page = PG_INFO; go(pm, PG_ACHIEVEMENTS, 0); return PM_OPEN;
     case A_MAP: pm->confirm = 0; go(pm, PG_CONFIRM, 2); return PM_OPEN;
@@ -77,6 +113,7 @@ int pause_menu_update(PauseMenu *pm, unsigned pressed, float dt, int *sound) {
     *sound = -1;
     pm->clock += dt * 30;
     pm->time += dt;
+    if (pm->page == PG_BOOK) return PM_OPEN;   // the app's help book has the buttons
     if (pm->page == PG_CONTROLS || pm->page == PG_ACHIEVEMENTS) {   // the books: any button goes back
         if (pressed & (PM_ACCEPT | PM_BACK)) {
             *sound = 1;

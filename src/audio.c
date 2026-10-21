@@ -44,6 +44,7 @@ static Voice g_voices[MAX_VOICES];
 static SceKernelLwMutexWork g_lock;
 static int g_port = -1;
 static volatile int g_quit;
+static volatile float g_music_gain = 1, g_sfx_gain = 1;   // Help & Options' volume settings
 static SceUID g_mix_thread = -1, g_load_thread = -1, g_load_sema = -1;
 
 // music, owned by the mixer thread (requests come through these)
@@ -165,7 +166,7 @@ static void mix_music(int32_t *mix, int n) {
         float t = (float)frac;
         for (int c = 0; c < 2; c++) {
             float a = buf[used * 2 + c], b = buf[(used + 1) * 2 + c];
-            mix[i * 2 + c] += (int32_t)((a + (b - a) * t) * MUSIC_VOLUME);
+            mix[i * 2 + c] += (int32_t)((a + (b - a) * t) * (MUSIC_VOLUME * g_music_gain));
         }
         frac += step;
         while (frac >= 1) { frac -= 1; used++; }
@@ -194,6 +195,7 @@ static int mix_thread(SceSize args, void *argp) {
         }
         memset(mix, 0, sizeof mix);
         mix_music(mix, OUT_FRAMES);
+        float sfx = g_sfx_gain;
         lock();
         for (int v = 0; v < MAX_VOICES; v++) {
             Voice *vo = &g_voices[v];
@@ -210,8 +212,8 @@ static int mix_thread(SceSize args, void *argp) {
                     if (vo->loops > 0) { vo->loops--; vo->pos -= s->frames; p = (int)vo->pos; }
                     else { vo->active = 0; break; }
                 }
-                mix[i * 2] += (int32_t)(s->pcm[p * 2] * vo->vl);
-                mix[i * 2 + 1] += (int32_t)(s->pcm[p * 2 + 1] * vo->vr);
+                mix[i * 2] += (int32_t)(s->pcm[p * 2] * vo->vl * sfx);
+                mix[i * 2 + 1] += (int32_t)(s->pcm[p * 2 + 1] * vo->vr * sfx);
                 vo->pos += step;
             }
         }
@@ -241,6 +243,12 @@ int audio_init(const char *data_dir) {
     sceKernelStartThread(g_mix_thread, 0, NULL);
     sceKernelStartThread(g_load_thread, 0, NULL);
     return 1;
+}
+
+void audio_set_volume(float music, float sfx) {
+    // squared, so each step of the ten sounds about as big as the last
+    g_music_gain = music < 0 ? 0 : music > 1 ? 1 : music * music;
+    g_sfx_gain = sfx < 0 ? 0 : sfx > 1 ? 1 : sfx * sfx;
 }
 
 void audio_shutdown(void) {

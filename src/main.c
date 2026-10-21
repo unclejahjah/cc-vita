@@ -29,6 +29,7 @@
 #include "audio.h"
 #include "cc_buttons.h"
 #include "cc_host.h"
+#include "help_book.h"
 #include "hostfont.h"
 #include "pause_menu.h"
 #include "render.h"
@@ -43,6 +44,7 @@ int _newlib_heap_size_user = 160 * 1024 * 1024;
 #define DATA_DIR "ux0:data/CastleCrashers/"
 #define SAVE_PATH DATA_DIR "save.dat"   // the game's storage (profiles, levels, unlocks)
 #define ACH_PATH DATA_DIR "achievements.dat"
+#define SETTINGS_PATH DATA_DIR "settings.txt"   // Help & Options' Settings: music and sound effects volume
 #define MAX_BATCH 65535   // u16 indices; a multiple of 3
 #define SCREEN_W 960.0f
 #define SCREEN_H 544.0f
@@ -642,7 +644,37 @@ typedef struct {
     DrawList art;              // the pause book (controls and achievements pages)
     int have_art;
     float book[4];             // where the book is on screen
+    HelpBook hb;               // Help & Options' book, while the menu is on PG_BOOK
+    DrawList hb_ui;
 } Pause;
+
+// Settings' volumes, 0..HB_VOLUME_STEPS: kept in settings.txt as "music = N" and "sfx = N"
+static int g_volume[2] = {HB_VOLUME_STEPS, HB_VOLUME_STEPS};
+
+static void settings_apply(void) {
+    audio_set_volume(g_volume[0] / (float)HB_VOLUME_STEPS, g_volume[1] / (float)HB_VOLUME_STEPS);
+}
+
+static void settings_load(void) {
+    FILE *f = fopen(SETTINGS_PATH, "r");
+    if (f) {
+        char line[64];
+        int v;
+        while (fgets(line, sizeof line, f)) {
+            if (sscanf(line, " music = %d", &v) == 1 && v >= 0 && v <= HB_VOLUME_STEPS) g_volume[0] = v;
+            if (sscanf(line, " sfx = %d", &v) == 1 && v >= 0 && v <= HB_VOLUME_STEPS) g_volume[1] = v;
+        }
+        fclose(f);
+    }
+    settings_apply();
+}
+
+static void settings_save(void) {
+    FILE *f = fopen(SETTINGS_PATH, "w");
+    if (!f) return;
+    fprintf(f, "music = %d\nsfx = %d\n", g_volume[0], g_volume[1]);
+    fclose(f);
+}
 
 static int in_level(AsVm *vm) {
     int found;
@@ -702,7 +734,7 @@ static void pause_build_art(Pause *ps) {
 
 static void pause_set_state(AsVm *vm, int state) { cc_set_flash_global(vm, "g_nPort1State", as_num(state)); }
 
-// the book pages: the old pages of controls and achievements over the pause book
+// the achievements page over the pause book
 static void pause_book_draw(Pause *ps, int page, int dim) {
     if (dim) vita2d_draw_rectangle(0, 0, SCREEN_W, SCREEN_H, RGBA8(0, 0, 0, 140));
     float x0 = SCREEN_W * 0.3f, y0 = SCREEN_H * 0.3f, x1 = SCREEN_W * 0.7f;
@@ -715,15 +747,7 @@ static void pause_book_draw(Pause *ps, int page, int dim) {
         vita2d_draw_rectangle(x0 - 20, y0 - 60, x1 - x0 + 40, 260, RGBA8(237, 222, 180, 255));
     }
     unsigned ink = RGBA8(70, 45, 20, 255), hi = RGBA8(190, 40, 30, 255);
-    if (page == PG_CONTROLS) {
-        static const char *lines[] = {
-            "Left stick: walk / run",    "Square: light attack",  "Triangle: heavy attack",
-            "Cross: jump",               "Circle: use item",      "L: block",
-            "R (hold) + attack: magic",  "Right stick left/right: switch item", "Start: pause",
-        };
-        for (int i = 0; i < 9; i++) vita2d_pgf_draw_text(g_font, x0, y0 + i * 26, ink, 0.9f, lines[i]);
-        vita2d_pgf_draw_text(g_font, x0, y0 + 9 * 26 + 14, hi, 0.9f, "Circle: back");
-    } else if (page == PG_ACHIEVEMENTS) {
+    if (page == PG_ACHIEVEMENTS) {
         unsigned got = cc_achievements(), dimmed = RGBA8(150, 130, 100, 255);
         int n = 0;
         for (int id = 1; id <= CC_ACHIEVEMENTS; id++) n += got >> id & 1;
@@ -745,15 +769,58 @@ static void pause_draw(Pause *ps) {
     else vita2d_draw_rectangle(0, 0, SCREEN_W, SCREEN_H, RGBA8(0, 0, 0, 200));
     draw_list(&ps->ui);
     if (ps->m.page == PG_CONTROLS || ps->m.page == PG_ACHIEVEMENTS) pause_book_draw(ps, ps->m.page, 0);
+    if (ps->m.page == PG_BOOK && pm && !ps->m.book_new) {
+        render_begin(&ps->hb_ui);
+        ps->hb_ui.view[2] = SCREEN_W;
+        ps->hb_ui.view[3] = SCREEN_H;
+        help_book_build(&ps->hb, pm, SCREEN_W / 848.0f, &ps->hb_ui);
+        draw_list(&ps->hb_ui);
+    }
 }
 
-// one frame of the open menu: 1 while it stays open, 0 closed, 2 back to the title
-static int pause_input(Pause *ps, AsVm *vm, unsigned pressed, float dt) {
+// Help & Options' book: L/R (or left/right) turn How to Play's pages, up/down and left/right
+// set the volumes, Circle closes it (the volumes are saved then if they moved)
+static void help_input(Pause *ps, unsigned pressed, float dt) {
+    if (ps->m.book_new) {
+        help_book_open(&ps->hb, ps->m.book, g_volume[0], g_volume[1]);
+        ps->m.book_new = 0;
+    }
+    unsigned b = (pressed & SCE_CTRL_UP ? HB_UP : 0) | (pressed & SCE_CTRL_DOWN ? HB_DOWN : 0) |
+                 (pressed & SCE_CTRL_LEFT ? HB_LEFT : 0) | (pressed & SCE_CTRL_RIGHT ? HB_RIGHT : 0) |
+                 (pressed & SCE_CTRL_LTRIGGER ? HB_PREV : 0) | (pressed & SCE_CTRL_RTRIGGER ? HB_NEXT : 0) |
+                 (pressed & SCE_CTRL_CIRCLE ? HB_BACK : 0);
+    int sound;
+    int open = help_book_update(&ps->hb, b, dt, &sound);
+    if (ps->hb.volume[0] != g_volume[0] || ps->hb.volume[1] != g_volume[1]) {   // heard straight away
+        g_volume[0] = ps->hb.volume[0];
+        g_volume[1] = ps->hb.volume[1];
+        settings_apply();
+    }
+    if (sound >= 0) audio_sfx_play(sound == 0 ? "sound_toggle_b.wav" : "sound_player_select.wav", 1, 0, 0, ps);
+    if (open) return;
+    if (ps->hb.changed) settings_save();
+    pause_menu_book_closed(&ps->m);
+}
+
+// the menu's buttons for a frame; PM_OPEN while it stays open
+static int menu_input(Pause *ps, unsigned pressed, float dt) {
+    if (ps->m.page == PG_BOOK) {
+        help_input(ps, pressed, dt);
+        int sound;
+        pause_menu_update(&ps->m, 0, dt, &sound);   // the backdrop keeps drifting
+        return PM_OPEN;
+    }
     unsigned b = (pressed & SCE_CTRL_UP ? PM_UP : 0) | (pressed & SCE_CTRL_DOWN ? PM_DOWN : 0) |
                  (pressed & (SCE_CTRL_CROSS | SCE_CTRL_START) ? PM_ACCEPT : 0) | (pressed & SCE_CTRL_CIRCLE ? PM_BACK : 0);
     int sound;
     int r = pause_menu_update(&ps->m, b, dt, &sound);
     if (sound >= 0) audio_sfx_play(sound ? "sound_player_select.wav" : "sound_toggle_b.wav", 1, 0, 0, ps);
+    return r;
+}
+
+// one frame of the open menu: 1 while it stays open, 0 closed, 2 back to the title
+static int pause_input(Pause *ps, AsVm *vm, unsigned pressed, float dt) {
+    int r = menu_input(ps, pressed, dt);
     if (r == PM_OPEN) return 1;
     ps->open = 0;
     if (r == PM_TO_TITLE) return 2;
@@ -840,7 +907,7 @@ static void title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, si
     if (!unavailable) unavailable = "Not available on PS Vita";
     AsMc *panel = NULL;
     int item = 0, message = 0;
-    static Pause controls;   // Help & Options: the pause book's controls page
+    static Pause controls;   // Help & Options: the pause menu's Help & Options list and its books
     SceCtrlData pad, old = {0};
     sceCtrlPeekBufferPositive(0, &old, 1);
     SceUInt64 prev = sceKernelGetProcessTimeWide(), acc = 0;
@@ -856,7 +923,11 @@ static void title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, si
         if (lx > 80 && olx <= 80) pressed |= SCE_CTRL_RIGHT;
         old = pad;
         if (controls.open) {
-            if (pressed & (SCE_CTRL_CIRCLE | SCE_CTRL_CROSS | SCE_CTRL_START)) controls.open = 0;
+            SceUInt64 tnow = sceKernelGetProcessTimeWide();
+            static SceUInt64 tlast;
+            float dt = tlast && tnow > tlast ? (tnow - tlast) / 1000000.0f : 1 / 60.0f;
+            tlast = tnow;
+            if (menu_input(&controls, pressed, dt > 0.1f ? 0.1f : dt) != PM_OPEN) controls.open = 0;
         } else if (!panel) {
             if (pressed & (SCE_CTRL_START | SCE_CTRL_CROSS)) {
                 // left of the knights, over the (hidden, empty) news box
@@ -880,7 +951,7 @@ static void title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, si
                 }
                 if (item == CC_MENU_OPTIONS) {
                     controls.open = 1;
-                    if (!controls.have_art) pause_build_art(&controls);
+                    pause_menu_open_help(&controls.m);
                 }
             }
         }
@@ -944,7 +1015,7 @@ static void title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, si
             int w = vita2d_pgf_text_width(g_font, 1.0f, unavailable);
             outlined_text((SCREEN_W - w) / 2, SCREEN_H - 24, 1.0f, unavailable);
         }
-        if (controls.open) pause_book_draw(&controls, PG_CONTROLS, 1);
+        if (controls.open) pause_draw(&controls);
         vita2d_end_drawing();
         vita2d_swap_buffers();
     }
@@ -996,7 +1067,9 @@ int main(void) {
     // the game's words (from the user's castle.exe by extract_strings.py), then Vita wording
     strtab_load(DATA_DIR "strings_en.txt");
     strtab_load(DATA_DIR "strings_vita_en.txt");
+    strtab_load(DATA_DIR "strings_help_en.txt");   // Help & Options' words (tools/extract_help.py)
     audio_init(DATA_DIR);
+    settings_load();
     cc_music_play = audio_music_play;
     cc_music_stop = audio_music_stop;
     // the game's own text font (from the PC copy's data/fonts); text is left out without it
@@ -1068,6 +1141,8 @@ new_game:   // the title again after Exit to Main Menu
         unsigned nav = pressed;   // menus: the stick moves once per push too
         if (pad.ly < 48 && old.ly >= 48) nav |= SCE_CTRL_UP;
         if (pad.ly > 208 && old.ly <= 208) nav |= SCE_CTRL_DOWN;
+        if (pad.lx < 48 && old.lx >= 48) nav |= SCE_CTRL_LEFT;
+        if (pad.lx > 208 && old.lx <= 208) nav |= SCE_CTRL_RIGHT;
         old = pad;
         int debug = pad.buttons & SCE_CTRL_SELECT;
         if (debug && (pressed & SCE_CTRL_START)) break;

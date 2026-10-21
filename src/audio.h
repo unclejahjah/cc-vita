@@ -13,5 +13,6 @@ int audio_sfx_pending(void);   // sound effects still to be decoded
 void audio_sfx_stop(const void *owner);   // what owner started; NULL: everything
 void audio_music_play(const char *name, int loop);
 void audio_music_stop(void);
+void audio_set_volume(float music, float sfx);   // 0..1 each (Help & Options' Settings)
 
 #endif

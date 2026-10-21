@@ -16,6 +16,8 @@
 #include "../src/cc_buttons.h"
 #include "../src/cc_host.h"
 #include "../src/pause_menu.h"
+#include "../src/help_book.h"
+#include "../src/strtab.h"
 #include "../src/enemy.h"
 
 #define SCREEN_W 960
@@ -976,7 +978,89 @@ static int pause_mode(int argc, char **argv) {
     return 0;
 }
 
+// Help & Options' books: --help PAUSE.swf out_prefix [backdrop.ppm 960x544]; CC_STRINGS for the words
+static int help_mode(int argc, char **argv) {
+    if (argc < 4) { fprintf(stderr, "usage: %s --help PAUSE.swf out_prefix [backdrop.ppm]\n", argv[0]); return 1; }
+    char err[256];
+    Movie *m = swf_load(argv[2], err, sizeof err);
+    if (!m) { fprintf(stderr, "%s\n", err); return 1; }
+    cc_buttons_playstation(m, CC_BTN_STYLE_GREY);
+    if (getenv("CC_FONT_DIR")) {
+        char fnt[600], dds[600];
+        snprintf(fnt, sizeof fnt, "%s/synjUnicode_20.fnt", getenv("CC_FONT_DIR"));
+        snprintf(dds, sizeof dds, "%s/synjUnicode_20_0.dds", getenv("CC_FONT_DIR"));
+        HostFont *hf = hostfont_load(fnt, dds, err, sizeof err);
+        if (hf) as_render_set_font(hf);
+        else printf("font: %s\n", err);
+    }
+    if (getenv("CC_STRINGS")) printf("strings: %d\n", strtab_load(getenv("CC_STRINGS")));
+    W = 960; H = 544;
+    static uint8_t back[960 * 544 * 3];
+    FILE *bf = argc > 4 ? fopen(argv[4], "rb") : NULL;
+    int have_back = 0;
+    if (bf) {
+        int w, h;
+        if (fscanf(bf, "P6 %d %d 255", &w, &h) == 2 && w == 960 && h == 544 && fgetc(bf) != EOF)
+            have_back = fread(back, 1, sizeof back, bf) == sizeof back;
+        fclose(bf);
+    }
+    DrawList vb = {0};
+    int shot = 0;
+    {   // the list itself (as the title's Help & Options shows it), Settings chosen
+        PauseMenu pm = {0};
+        int sound;
+        pause_menu_open_help(&pm);
+        pause_menu_update(&pm, PM_DOWN, 1 / 60.0f, &sound);
+        pause_menu_update(&pm, PM_DOWN, 1 / 60.0f, &sound);
+        for (int t = 0; t < 40; t++) pause_menu_update(&pm, 0, 1 / 60.0f, &sound);
+        if (have_back) memcpy(px, back, sizeof back), memset(stencil, 0, (size_t)W * H);
+        else clear((const uint8_t[3]){40, 44, 52});
+        render_begin(&vb);
+        vb.view[2] = W;
+        vb.view[3] = H;
+        pause_menu_build(&pm, m, W / 848.0f, &vb);
+        rasterise(&vb);
+        printf("%d: Help & Options list\n", shot);
+        write_frame(argv[3], shot++);
+    }
+    for (int book = 0; book < 3; book++) {
+        HelpBook hb;
+        help_book_open(&hb, book, 7, 10);
+        int pages = book == HB_HOWTO ? HB_HOWTO_PAGES : 1;
+        for (int pg = 0; pg < pages; pg++) {
+            int sound;
+            for (int t = 0; t < 40; t++) help_book_update(&hb, 0, 1 / 60.0f, &sound);
+            if (have_back) memcpy(px, back, sizeof back), memset(stencil, 0, (size_t)W * H);
+            else clear((const uint8_t[3]){40, 44, 52});
+            render_begin(&vb);
+            vb.view[2] = W;
+            vb.view[3] = H;
+            help_book_build(&hb, m, W / 848.0f, &vb);
+            rasterise(&vb);
+            printf("%d: book %d page %d\n", shot, book, hb.page);
+            write_frame(argv[3], shot++);
+            if (book == HB_HOWTO && pg + 1 < pages) {   // a picture mid-turn on the first turn
+                help_book_update(&hb, HB_NEXT, 1 / 60.0f, &sound);
+                if (pg == 0) {
+                    for (int t = 0; t < 10; t++) help_book_update(&hb, 0, 1 / 60.0f, &sound);
+                    if (have_back) memcpy(px, back, sizeof back), memset(stencil, 0, (size_t)W * H);
+                    else clear((const uint8_t[3]){40, 44, 52});
+                    render_begin(&vb);
+                    vb.view[2] = W;
+                    vb.view[3] = H;
+                    help_book_build(&hb, m, W / 848.0f, &vb);
+                    rasterise(&vb);
+                    printf("%d: turning\n", shot);
+                    write_frame(argv[3], shot++);
+                }
+            }
+        }
+    }
+    return 0;
+}
+
 int main(int argc, char **argv) {
+    if (argc > 1 && !strcmp(argv[1], "--help")) return help_mode(argc, argv);
     if (argc > 1 && !strcmp(argv[1], "--as")) return as_mode(argc, argv);
     if (argc > 1 && !strcmp(argv[1], "--dress")) return dress_mode(argc, argv);
     if (argc > 1 && !strcmp(argv[1], "--sprite")) return sprite_mode(argc, argv);
