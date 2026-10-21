@@ -475,14 +475,27 @@ static int cc_repair_cut_short(Movie *m) {
 // precomputed tree (bsps/BSPn.PDAG). The scripts' developer path builds the same tree from
 // the level's own edge clips instead: show the game clip's frame 2 (the edges), and once
 // their first-frame scripts have run, f_InitLevelBSP(), then frame 3. Do that here.
+// Arenas (LEVEL24, 46-49) have four layouts of blocks, "bspNa".."bspNd": the level shows
+// layout k on frame 2k+1 and its edges on the frame after, then asks for that tree. There
+// the edges are the next frame and the game goes back to the layout (going on to frame 3
+// showed layout b's blocks over layout a's walls: players walked through blocks and out).
 
-static int bsp_pending;
+static int bsp_pending, bsp_end_frame;
 
 static AsVal bsp_load_level(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
-    (void)this_; (void)argc; (void)argv;
+    (void)this_;
     AsVal pg = as_get(vm, as_objv(&vm->root->obj), as_atom(vm, "p_game"));
     if (pg.t == V_OBJ && pg.o->type == OBJ_MC) {
-        as_mc_goto(vm, (AsMc *)pg.o, 1, 0);
+        AsMc *g = (AsMc *)pg.o;
+        AsStr *name = argc > 0 ? as_tostr(vm, argv[0]) : NULL;
+        char last = name && name->len ? name->s[name->len - 1] : 0;
+        if (last >= 'a' && last <= 'd') {
+            bsp_end_frame = g->frame;
+            as_mc_goto(vm, g, g->frame + 1, 0);
+        } else {
+            bsp_end_frame = 2;
+            as_mc_goto(vm, g, 1, 0);
+        }
         bsp_pending = 1;
     }
     return as_undef();
@@ -496,7 +509,7 @@ static void after_frame_scripts(AsVm *vm) {
     bsp_pending = 0;
     as_call_method(vm, as_objv(&vm->root->obj), "f_InitLevelBSP", 0, NULL);
     AsVal pg = as_get(vm, as_objv(&vm->root->obj), as_atom(vm, "p_game"));
-    if (pg.t == V_OBJ && pg.o->type == OBJ_MC) as_mc_goto(vm, (AsMc *)pg.o, 2, 0);
+    if (pg.t == V_OBJ && pg.o->type == OBJ_MC) as_mc_goto(vm, (AsMc *)pg.o, bsp_end_frame, 0);
 }
 
 // ---- the loading screen -----------------------------------------------------------
