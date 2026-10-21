@@ -245,3 +245,12 @@ Both are the same developer-settings path as the magic bug, already fixed by pin
 - hosttest: CC_AUTOKILL="from[:every]" has p1 kill every active e_humanN (f_Damage 9999) every N
   frames; with CC_KEYS holding right (`1100:39:8000`) it plays a level's waves through.
   CC_ENEMY_LOG=1 prints each enemy's active/alive/dead changes with kills/kills_goal.
+
+### Flooded Temple white boxes (2026-10-21, thread "Flooded Temple white box and splashes")
+- LEVEL32 = Flooded Temple (58 = its entrance). Every player and fish showed a big white box:
+  their `waterbox` clip (PLAYER.swf, EFISH.swf) runs `_parent.setMask(this)` in level 32 so the
+  body is cut off at the water line, and `setMask(null)` out of the water. setMask was a no-op,
+  so the mask drew as plain white shapes. Now setMask works (as_lib.c mc_setmask, AsMc.mask /
+  is_mask, as_render.c): the mask clip is not drawn itself and its clip is drawn through it via
+  the stencil, wherever the mask sits in the tree. The temple_splash fx (f_Jumping landing,
+  f_FX) were drawn under the same boxes; they show fine now.

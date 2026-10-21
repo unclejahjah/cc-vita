@@ -226,11 +226,32 @@ static void draw_text(AsMc *tf, Mat m, CXform cx, DrawList *out) {
     }
 }
 
+extern Mat as_mc_global_matrix(AsMc *mc);
+
+static Mat mat_inverse(Mat s) {
+    float det = s.a * s.d - s.b * s.c;
+    if (!det) return MAT_IDENTITY;
+    return (Mat){s.d / det, -s.b / det, -s.c / det, s.a / det, (s.c * s.ty - s.d * s.tx) / det,
+                 (s.b * s.tx - s.a * s.ty) / det};
+}
+
 void as_render_mc(AsMc *mc, Mat parent, CXform pcx, DrawList *out) {
     if (mc->removed || !mc->visible) return;
+    if (mc->is_mask && !out->masking) return;   // a setMask mask only draws as its clip's mask
     Mat m = mat_mul(parent, mc->m);
     CXform cx = cx_mul(pcx, cx_with_alpha(mc->cx, mc->alpha));
     if (cx.mul[3] <= 0 && cx.add[3] <= 0 && !out->masking) return;
+    AsMc *mask = mc->mask;
+    if (mask && (mask->removed || out->masking)) mask = NULL;
+    if (mask) {
+        // the mask's place on screen: this clip's screen matrix, back to the stage, then to the
+        // mask's parent (the mask may sit anywhere in the tree, often inside this clip)
+        Mat to_stage = mat_mul(m, mat_inverse(as_mc_global_matrix(mc)));
+        Mat mp = mask->parent ? mat_mul(to_stage, as_mc_global_matrix(mask->parent)) : to_stage;
+        render_mask_push(out);
+        as_render_mc(mask, mp, pcx, out);
+        render_mask_apply(out);
+    }
     int heat_here = 0;   // one heat haze per frame: this clip's own items shimmer
     if (mc->shader == 1 && out->heat_at < 0 && !out->masking && !out->level) {
         float b[4];
@@ -263,6 +284,7 @@ void as_render_mc(AsMc *mc, Mat parent, CXform pcx, DrawList *out) {
         }
     }
     while (open--) render_mask_pop(out);
+    if (mask) render_mask_pop(out);
     if (heat_here) out->heat_end = out->n;
 }
 

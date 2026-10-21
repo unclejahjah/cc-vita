@@ -507,6 +507,18 @@ static AsVal mc_getbounds(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
     as_set(vm, as_objv(o), as_atom(vm, "yMax"), as_num(ok ? b[3] / 20 : 6710886.35));
     return as_objv(o);
 }
+// mc.setMask(clip): clip stops drawing and mc shows only inside it; setMask(null) undoes it.
+// The players' waterbox does this in Flooded Temple: what is under the water line is cut off.
+static AsVal mc_setmask(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
+    AsMc *mc = this_mc(this_);
+    if (!mc) return as_bool(0);
+    AsMc *mask = argc && argv[0].t == V_OBJ ? as_mc_resolve_target(vm, mc, argv[0]) : NULL;
+    if (mask == mc) mask = NULL;
+    if (mc->mask) mc->mask->is_mask = 0;
+    mc->mask = mask;
+    if (mask) mask->is_mask = 1;
+    return as_bool(1);
+}
 static AsVal mc_hittest(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
     AsMc *mc = this_mc(this_);
     if (!mc) return as_bool(0);
@@ -801,7 +813,7 @@ void as_lib_init(AsVm *vm) {
     as_def_fn(vm, mp, "unloadMovie", mc_unloadmovie);
     as_def_fn(vm, mp, "getBytesLoaded", mc_bytes);
     as_def_fn(vm, mp, "getBytesTotal", mc_bytes);
-    as_def_fn(vm, mp, "setMask", noop);
+    as_def_fn(vm, mp, "setMask", mc_setmask);
     as_def_fn(vm, mp, "startDrag", noop);
     as_def_fn(vm, mp, "stopDrag", noop);
     // Color
