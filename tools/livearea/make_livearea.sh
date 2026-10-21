@@ -14,15 +14,16 @@ gcc -O2 -w -Ithird_party/libtess2/Include -o "$W/hosttest" tools/hosttest.c src/
   src/player.c src/enemy.c src/as_core.c src/as_mc.c src/as_lib.c src/as_render.c src/cc_host.c src/cc_native.c \
   src/cc_buttons.c src/hostfont.c src/strtab.c src/pause_menu.c third_party/libtess2/Source/*.c -lm -lz
 cd "$W"
-export CC_SCALE=2 CC_PS_BUTTONS=grey   # grey buttons also put the Vita Edition badge on the logo
-run() { timeout 300 ./hosttest --as "$GAME" "$@" 121 120 > /dev/null 2>&1; }
-# MENU.swf: sprite 626 = news bar, shape 354 = logo (+ badge), shape 600 = backdrop
-AS_HIDE_CHAR=626 AS_HIDE_SHAPES=354 run MENU.swf scene
-AS_HIDE_CLIPS=1 AS_HIDE_SHAPES=600 CC_BG=0,0,0 run MENU.swf logok
-AS_HIDE_CLIPS=1 AS_HIDE_SHAPES=600 CC_BG=255,255,255 run MENU.swf logow
-# LEGAL.swf frame 150: the bird sitting still; sprite 15 = white backdrop, "legal" = the small print
-AS_HIDE_CHAR=15 AS_HIDE=legal CC_BG=0,0,0 run LEGAL.swf behk
-AS_HIDE_CHAR=15 AS_HIDE=legal CC_BG=255,255,255 run LEGAL.swf behw
+export CC_SCALE=2
+run() { timeout 300 ./hosttest --as "$GAME" "$1" "$2" $(($3 + 1)) "$3" > /dev/null 2>&1; }   # file out frame
+# MENU.swf: sprite 626 = news bar, shape 354 = logo, shape 600 = backdrop. The scene with grey
+# buttons: that takes the Steam Edition badge off; the logo without them: no Vita Edition badge
+CC_PS_BUTTONS=grey AS_HIDE_CHAR=626 AS_HIDE_SHAPES=354 run MENU.swf scene 120
+AS_HIDE_CLIPS=1 AS_HIDE_SHAPES=600 CC_BG=0,0,0 run MENU.swf logok 120
+AS_HIDE_CLIPS=1 AS_HIDE_SHAPES=600 CC_BG=255,255,255 run MENU.swf logow 120
+# LEGAL.swf frame 150: the bird sitting still (with grey buttons, as checked); sprite 15 = white backdrop, "legal" = the small print
+CC_PS_BUTTONS=grey AS_HIDE_CHAR=15 AS_HIDE=legal CC_BG=0,0,0 run LEGAL.swf behk 150
+CC_PS_BUTTONS=grey AS_HIDE_CHAR=15 AS_HIDE=legal CC_BG=255,255,255 run LEGAL.swf behw 150
 python3 -I - "$W" <<'PY'
 import sys
 import numpy as np
