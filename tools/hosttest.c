@@ -18,8 +18,10 @@
 #include "../src/pause_menu.h"
 #include "../src/enemy.h"
 
-#define MAX_W 960
-#define MAX_H 544
+#define SCREEN_W 960
+#define SCREEN_H 544
+#define MAX_W (SCREEN_W * 2)   // --as with CC_SCALE=2 renders at twice the Vita size
+#define MAX_H (SCREEN_H * 2)
 
 static int W = 480, H = 480;
 static uint8_t px[MAX_W * MAX_H * 3];
@@ -178,7 +180,7 @@ static int level_mode(int argc, char **argv) {
                lv->m->names[lv->layer[i].inner->name], lv->layer[i].factor);
     int walk = sprite_find_label(&pl->root, "walk");
     if (walk < 0) walk = 0;
-    W = MAX_W; H = MAX_H;
+    W = SCREEN_W; H = SCREEN_H;
     float k = W / GAME_W;
     Mat screen = {k / 20, 0, 0, k / 20, 0, 0};
     DrawList vb = {0};
@@ -254,7 +256,7 @@ static int player_mode(int argc, char **argv) {
     Enemies es;
     enemies_reset(&es);
     int fight = argc > 5 && !strcmp(argv[5], "fight");
-    W = MAX_W; H = MAX_H;
+    W = SCREEN_W; H = SCREEN_H;
     float k = W / GAME_W;
     Mat screen = {k / 20, 0, 0, k / 20, 0, 0};
     DrawList vb = {0};
@@ -349,7 +351,7 @@ static int sprite_mode(int argc, char **argv) {
     int cid = atoi(argv[3]), cell = argc > 5 ? atoi(argv[5]) : 80;
     if (m->chars[cid].type != CHAR_SPRITE) { fprintf(stderr, "not a sprite\n"); return 1; }
     const Sprite *s = m->chars[cid].ptr;
-    W = MAX_W; H = MAX_H;
+    W = SCREEN_W; H = SCREEN_H;
     static const uint8_t paper[3] = {237, 237, 224};
     clear(paper);
     DrawList vb = {0};
@@ -383,7 +385,7 @@ static int clips_mode(int argc, char **argv) {
     if (getenv("CC_PS_BUTTONS"))   // "coloured" or "dark"
         printf("PlayStation buttons: %d clips\n",
                cc_buttons_playstation(m, btn_style()));
-    W = MAX_W; H = cell;
+    W = SCREEN_W; H = cell;
     static const uint8_t paper[3] = {60, 60, 70};
     clear(paper);
     DrawList vb = {0};
@@ -431,7 +433,7 @@ static int dress_mode(int argc, char **argv) {
     static Rig rig;
     rig_init(&rig, m);
     int who = atoi(argv[3]), weapon = atoi(argv[4]);
-    W = MAX_W; H = MAX_H;
+    W = SCREEN_W; H = SCREEN_H;
     static const uint8_t paper[3] = {237, 237, 224};
     clear(paper);
     DrawList vb = {0};
@@ -587,7 +589,8 @@ static int as_mode(int argc, char **argv) {
     }
     vm->root = as_mc_new(vm, start, &start->root, NULL, 0);
     if (!strcasecmp(argv[3], "MAIN.swf") && !getenv("CC_NO_LOADING")) cc_loading_attach(vm);
-    W = MAX_W; H = MAX_H;
+    W = SCREEN_W; H = SCREEN_H;
+    if (getenv("CC_SCALE") && atoi(getenv("CC_SCALE")) == 2) { W = MAX_W; H = MAX_H; }
     DrawList vb = {0};
     vb.view[2] = W;
     vb.view[3] = H;
@@ -747,6 +750,27 @@ static int as_mode(int argc, char **argv) {
                     if (panel) cc_menu_highlight(vm, panel, getenv("CC_MENU_ITEM") ? atoi(getenv("CC_MENU_ITEM")) : 0);
                 }
             }
+            if (getenv("AS_HIDE_SHAPES")) {   // AS_HIDE_SHAPES="cid,cid": hide shapes placed on timelines
+                void hide_shapes(AsMc *mc) {
+                    for (int i = 0; i < mc->ndisp; i++) {
+                        AsDisp *e = &mc->disp[i];
+                        char list[256], key[16];
+                        snprintf(list, sizeof list, ",%s,", getenv("AS_HIDE_SHAPES"));
+                        snprintf(key, sizeof key, ",%d,", e->cid);
+                        if (e->kind == DISP_SHAPE && strstr(list, key)) e->m.a = e->m.b = e->m.c = e->m.d = 0;
+                        if (e->kind == DISP_MC && e->mc) hide_shapes(e->mc);
+                    }
+                }
+                hide_shapes(vm->root);
+            }
+            if (getenv("AS_HIDE_CLIPS")) {   // AS_HIDE_CLIPS=1: hide every clip, so only shapes show
+                for (int i = 0; i < vm->root->ndisp; i++)
+                    if (vm->root->disp[i].kind == DISP_MC && vm->root->disp[i].mc) {
+                        AsMc *mc = vm->root->disp[i].mc;
+                        for (int j = 0; j < mc->ndisp; j++)
+                            if (mc->disp[j].kind == DISP_MC && mc->disp[j].mc) mc->disp[j].mc->visible = 0;
+                    }
+            }
             if (getenv("AS_HIDE_CHAR")) {   // AS_HIDE_CHAR=n: hide every clip of sprite n (finding art)
                 int cid = atoi(getenv("AS_HIDE_CHAR"));
                 void hide(AsMc *mc) {
@@ -774,7 +798,9 @@ static int as_mode(int argc, char **argv) {
                     if (v.t == V_OBJ && v.o->type == OBJ_MC) ((AsMc *)v.o)->visible = 0;
                 }
             }
-            clear(start->bg);
+            uint8_t bgc[3] = {start->bg[0], start->bg[1], start->bg[2]};
+            if (getenv("CC_BG")) sscanf(getenv("CC_BG"), "%hhu,%hhu,%hhu", &bgc[0], &bgc[1], &bgc[2]);   // "r,g,b"
+            clear(bgc);
             render_begin(&vb);
             as_render_mc(vm->root, screen, CX_IDENTITY, &vb);
             if (vb.heat_at >= 0)   // the Vita draws a heat shimmer behind this

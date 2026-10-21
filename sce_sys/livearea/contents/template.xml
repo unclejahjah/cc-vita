@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<livearea style="ad0" format-ver="01.00" content-rev="1">
+  <livearea-background>
+    <image>bg.png</image>
+  </livearea-background>
+
+  <frame id="frame1" multi="o" autoflip="1">
+    <liveitem>
+      <target>psla:eboot</target>
+      <image y="20" x="0" width="420" height="237">startup.png</image>
+    </liveitem>
+  </frame>
+
+  <frame id="frame3">
+    <liveitem>
+      <text align="left" text-align="left" word-wrap="off" ellipsis="on">
+        <str size="22" color="#f0c040" shadow="on">Castle Crashers Vita Port</str>
+      </text>
+    </liveitem>
+  </frame>
+</livearea>
