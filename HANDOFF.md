@@ -230,3 +230,18 @@ Both are the same developer-settings path as the magic bug, already fixed by pin
   box_quad). Test: CC_CALL "1000:loader.game.game.bosschest.gotoAndStop:'init" then three
   "f_HitGeneral:loader.game.game.bosschest", CC_VIEW="688,300".
 - hosttest: CC_SNAP_FROM=frame skips earlier snapshots; AS_DUMP prints array items too.
+
+### Sand Castle Interior stuck after the first fight (2026-10-21, thread "Sand Castle interior progress block")
+- LEVEL42 = Sand Castle Interior (43 = Roof). Waypoint 2 spawns 2 Saracens (kills_goal 2) with
+  fp_SpecialEvent = f_Cinema, which spawns 6 more (goal 6); then the leash opens to the exit.
+- An enemy's death frame (PLAYER.swf) runs `_root.f_EnemyDie(_parent._parent)` then
+  `_root.f_RemovePlayer(_parent._parent)`. f_EnemyDie frees the enemy (active false, "blank") and,
+  on the last kill, runs f_Cinema, whose spawns reuse that freed e_humanN. Then f_RemovePlayer
+  switched the new enemy off: one of the 6 never appeared, kills stopped at 5/6.
+- In Flash the death frame's body clip is gone after "blank", so its `_parent` is undefined and
+  f_RemovePlayer gets nothing. Now a removed clip's `_parent` (property and preloaded register) is
+  undefined. Other levels (4, 13, 18, 29...) play the same in hosttest; only more harmless
+  "gotoAndStop on undefined (in f_RemovePlayer)" warnings.
+- hosttest: CC_AUTOKILL="from[:every]" has p1 kill every active e_humanN (f_Damage 9999) every N
+  frames; with CC_KEYS holding right (`1100:39:8000`) it plays a level's waves through.
+  CC_ENEMY_LOG=1 prints each enemy's active/alive/dead changes with kills/kills_goal.

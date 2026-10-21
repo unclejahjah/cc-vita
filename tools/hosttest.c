@@ -683,6 +683,51 @@ static int as_mode(int argc, char **argv) {
             p = strchr(p, ',');
             if (p) p++;
         }
+        // CC_AUTOKILL="from[:every]": from that frame, every N frames (default 20), p1 kills each
+        // active enemy (e_human1..30) with one big hit, so a level's waves can be played through
+        if (getenv("CC_AUTOKILL")) {
+            int from = 0, kev = 20;
+            sscanf(getenv("CC_AUTOKILL"), "%d:%d", &from, &kev);
+            int found;
+            AsVal dmg = as_resolve_path(vm, vm->root, "f_Damage", &found);
+            AsVal p1 = as_resolve_path(vm, vm->root, "loader.game.game.p1", &found);
+            if (f >= from && (f - from) % kev == 0 && dmg.t == V_OBJ && found) {
+                for (int i = 1; i <= 30; i++) {
+                    char path[64];
+                    snprintf(path, sizeof path, "loader.game.game.e_human%d", i);
+                    AsVal e = as_resolve_path(vm, vm->root, path, &found);
+                    if (!found || e.t != V_OBJ) continue;
+                    if (!as_tobool(vm, as_get(vm, e, as_str(vm, "active"))) || !as_tobool(vm, as_get(vm, e, as_str(vm, "alive"))) ||
+                        as_tonum(vm, as_get(vm, e, as_str(vm, "health"))) <= 0)
+                        continue;
+                    as_set(vm, e, as_atom(vm, "hitby"), p1);
+                    AsVal av[6] = {e, as_num(9999), as_num(1), as_num(0), as_num(5), as_num(-20)};
+                    as_call(vm, dmg, as_objv(&vm->root->obj), 6, av);
+                    printf("  [autokill] e_human%d at frame %d\n", i, f);
+                }
+            }
+        }
+        // CC_ENEMY_LOG=1: print an enemy (e_human1..30) whenever its active/alive/dead state changes
+        if (getenv("CC_ENEMY_LOG")) {
+            static int last[31];
+            for (int i = 1; i <= 30; i++) {
+                char path[64];
+                snprintf(path, sizeof path, "loader.game.game.e_human%d", i);
+                int found;
+                AsVal e = as_resolve_path(vm, vm->root, path, &found);
+                if (!found || e.t != V_OBJ) continue;
+                int st = 1 | as_tobool(vm, as_get(vm, e, as_str(vm, "active"))) << 1 |
+                         as_tobool(vm, as_get(vm, e, as_str(vm, "alive"))) << 2 |
+                         (as_tonum(vm, as_get(vm, e, as_str(vm, "health"))) <= 0) << 3;
+                if (st == last[i]) continue;
+                last[i] = st;
+                printf("  [enemy] frame %d e_human%d active %d alive %d health %s x %s y %s kills %s/%s\n", f, i,
+                       st >> 1 & 1, st >> 2 & 1, as_tostr(vm, as_get(vm, e, as_str(vm, "health")))->s,
+                       as_tostr(vm, as_get(vm, e, as_str(vm, "x")))->s, as_tostr(vm, as_get(vm, e, as_str(vm, "y")))->s,
+                       as_tostr(vm, as_resolve_path(vm, vm->root, "kills", &found))->s,
+                       as_tostr(vm, as_resolve_path(vm, vm->root, "kills_goal", &found))->s);
+            }
+        }
         static int prof_from = -1;
         static double prof_ms, prof_max;
         static long long prof_ops;
