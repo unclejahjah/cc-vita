@@ -339,3 +339,18 @@ and Help & Options; Host a game / Join a game (hosts found by UDP broadcast on t
   The state checks in the inputs are all of frame k - slowest - 1 (the host keeps a few old
   ones). NET_VERSION 3. tools: a lag proxy (Python, delays TCP+UDP both ways) checked 200 ms. hosttest: NET_CODE, NET_DELAY,
   UPNP_ROUTER (and a pretend router was used to test it: SSDP + SOAP in Python).
+
+### Custom characters (2026-10-21, thread "Custom characters support")
+- The template is the PC's Painter Boss Paradise DLC (Aug 2025): data/game/pbp_template.pak =
+  a 2048x2048 PNG (pbp_stencil.pak the same), a character = pbplocal/<x>/painting.png + pbp.xml
+  (`<character displayname=... pngfile chartype magictype uploadid>`). The PC's newer
+  player_new.pak has 33 frames per part (32 = the custom slot, drawn by the exe; 33 = Paint
+  Junior) and more head angles; the original PLAYER.swf (31 frames) stays.
+- Vita: src/custom_char.c. custom/<green|red|blue|orange|gray|1..31>/painting.png replaces that
+  character's look (PC "replacement" mode), custom/stencil.png optional. Parts found by selector +
+  order (ids shift by 1-2 between Jah's Vita PLAYER.swf and the Steam one). Mapped: heads
+  (template boxes 1, 4-7; boxes 2-3 are newer-only angles), 5 bodies, starting weapon, shields,
+  6 beefy bodies, 15 beefy arms. Not done: the portrait boxes (character select / HUD icon /
+  Back Off Barbarian), a 32nd character slot, the PC's chartype/magictype.
+- Test: tools/custom/testpaint2.py makes a purple-knight painting; hosttest CC_CUSTOM_DIR=dir/ with
+  dir/1/painting.png showed a purple Green Knight (head, body, sword, shield) in LEVEL2.
