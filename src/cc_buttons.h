@@ -21,5 +21,8 @@ int cc_menu_vita_badge(Movie *m);
 enum { CC_VITA_L, CC_VITA_R, CC_VITA_DPAD, CC_VITA_LSTICK, CC_VITA_RSTICK, CC_VITA_TRIANGLE, CC_VITA_CIRCLE,
        CC_VITA_CROSS, CC_VITA_SQUARE, CC_VITA_SELECT, CC_VITA_START, CC_VITA_PS, CC_VITA_SPOTS };
 int cc_vita_drawing(Shape *s, float spots[CC_VITA_SPOTS][2]);
+// The Vita's D-pad with its left or right arm lit (page-turn prompts), 34 pixels across,
+// centred on 0,0, in twips.
+int cc_dpad_icon(Shape *s, int right);
 
 #endif

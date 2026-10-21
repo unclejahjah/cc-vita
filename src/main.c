@@ -939,8 +939,12 @@ static void title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, si
             int moved = 0;
             if (pressed & (SCE_CTRL_UP | SCE_CTRL_LEFT)) { item = (item + CC_MENU_ITEMS - 1) % CC_MENU_ITEMS; moved = 1; }
             if (pressed & (SCE_CTRL_DOWN | SCE_CTRL_RIGHT)) { item = (item + 1) % CC_MENU_ITEMS; moved = 1; }
-            if (moved) cc_menu_highlight(t, panel, item);
+            if (moved) {
+                cc_menu_highlight(t, panel, item);
+                audio_sfx_play("sound_toggle_b.wav", 1, 0, 0, &controls);   // the menus' move sound
+            }
             if (pressed & SCE_CTRL_CROSS) {
+                audio_sfx_play("sound_player_select.wav", 1, 0, 0, &controls);
                 if (item == CC_MENU_PLAY) break;
                 if (item == CC_MENU_QUIT) {
                     vita2d_wait_rendering_done();
@@ -1070,6 +1074,9 @@ int main(void) {
     strtab_load(DATA_DIR "strings_help_en.txt");   // Help & Options' words (tools/extract_help.py)
     audio_init(DATA_DIR);
     settings_load();
+    // the menus' move and select sounds, decoded now (silently) so the first press is heard
+    audio_sfx_play("sound_toggle_b.wav", 0, 0, 0, NULL);
+    audio_sfx_play("sound_player_select.wav", 0, 0, 0, NULL);
     cc_music_play = audio_music_play;
     cc_music_stop = audio_music_stop;
     // the game's own text font (from the PC copy's data/fonts); text is left out without it
