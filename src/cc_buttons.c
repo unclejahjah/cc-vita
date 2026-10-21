@@ -634,3 +634,20 @@ int cc_vita_drawing(Shape *s, float spots[CC_VITA_SPOTS][2]) {
     for (int i = 0; i < CC_VITA_SPOTS; i++) spots[i][0] = at[i][0] * 20, spots[i][1] = at[i][1] * 20;
     return s->nfills;
 }
+
+int cc_dpad_icon(Shape *s, int right) {
+    memset(s, 0, sizeof *s);
+    static const uint8_t PRESSED[4] = {0xe2, 0xe3, 0xe6, 255}, ARROW[4] = {0x26, 0x26, 0x2c, 255};
+    vdpad(s, 0, 0);
+    // the arm being pointed at: lit, with a bolder arrow
+    float side = right ? 1 : -1, a = 17, w = 6.5f;
+    vbox(s, right ? w - 0.5f : -a + 1.2f, -w + 1.2f, right ? a - 1.2f : -w + 0.5f, w - 1.2f, 2.2f, PRESSED);
+    Poly p = {0};
+    float tx = side * (a - 3), bx = side * (a - 9.5f);
+    poly_begin_loop(&p);
+    poly_pt(&p, tx * 20, 0);
+    poly_pt(&p, bx * 20, -4.2f * 20);
+    poly_pt(&p, bx * 20, 4.2f * 20);
+    append_fill(s, fill_from(&p, ARROW));
+    return s->nfills;
+}

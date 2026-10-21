@@ -174,7 +174,7 @@ typedef struct {
     float book_b[4];           // the book's bounds (stage pixels, at scale 1, from its origin)
     float button_b[4][4], trig_b[2][4], volume_b[4];
     Mat place;                 // book space (twips) -> stage pixels
-    Shape vita;
+    Shape vita, dpad[2];       // dpad: left lit, right lit
     float spots[CC_VITA_SPOTS][2];
 } Art;
 
@@ -223,6 +223,8 @@ static Art *art_for(Movie *mv) {
     a.place = (Mat){1.0f / 20, 0, 0, 1.0f / 20, 0, 0};
     if (a.book >= 0) clip_bounds(mv, a.book, a.book_b);
     cc_vita_drawing(&a.vita, a.spots);
+    cc_dpad_icon(&a.dpad[0], 0);
+    cc_dpad_icon(&a.dpad[1], 1);
     return &a;
 }
 
@@ -465,6 +467,15 @@ static void prompt(DrawList *out, Art *a, float k, int cid, const float b[4], fl
     text(out, k, label, x + (cid == a->trig[0] || cid == a->trig[1] ? 26 : 18), y, 16, 1, 0xdddddd, alpha);
 }
 
+// the page-turn prompts: the D-pad with the way to press lit
+static void dpad_prompt(DrawList *out, Art *a, float k, int right, float x, const char *label, float alpha) {
+    float y = 452, d = 30;
+    Mat m = {d / 34 * k / 20, 0, 0, d / 34 * k / 20, x * k, y * k};
+    CXform cx = {{1, 1, 1, alpha}, {0, 0, 0, 0}};
+    render_shape(&a->dpad[right], m, cx, out);
+    text(out, k, label, x + d / 2 + 6, y, 16, 1, 0xdddddd, alpha);
+}
+
 void help_book_build(const HelpBook *hb, Movie *mv, float k, DrawList *out) {
     Art *a = art_for(mv);
     float alpha = hb->alpha;
@@ -484,9 +495,8 @@ void help_book_build(const HelpBook *hb, Movie *mv, float k, DrawList *out) {
         char pg[16];
         snprintf(pg, sizeof pg, "%d / %d", hb->page + 1, HB_HOWTO_PAGES);
         text(out, k, pg, STAGE_W / 2, 452, 16, 2, 0xdddddd, alpha);
-        if (hb->page > 0) prompt(out, a, k, a->trig[0], a->trig_b[0], STAGE_W * 0.16f, words("help.prev", "prev"), alpha);
-        if (hb->page < HB_HOWTO_PAGES - 1)
-            prompt(out, a, k, a->trig[1], a->trig_b[1], STAGE_W * 0.66f, words("help.next", "next"), alpha);
+        if (hb->page > 0) dpad_prompt(out, a, k, 0, STAGE_W * 0.16f, words("help.prev", "prev"), alpha);
+        if (hb->page < HB_HOWTO_PAGES - 1) dpad_prompt(out, a, k, 1, STAGE_W * 0.66f, words("help.next", "next"), alpha);
     } else if (hb->book == HB_CONTROLS) {
         controls_page(out, a, k, alpha);
     } else {
