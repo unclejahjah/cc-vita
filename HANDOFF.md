@@ -220,6 +220,9 @@ Both are the same developer-settings path as the magic bug, already fixed by pin
   arena. Now a name ending in a-d builds from the next frame's edges and goes back to the layout
   (King's Arena story layout = the two giant cats). Checked in hosttest: p1 stops at BSP24A's
   corner (-905,-274) and bottom edge (y -68); LEVEL46/48 likewise.
-- Treasure: items pop out of breakable chests in hosttest (f_ChestOpen -> f_ItemSpawn /
-  f_RandomGoldSpawn, FX body frames 1-20). Waiting on Jah for which chest misbehaves on the Vita.
+- Barbarian Boss chest (LEVEL7 bosschest, sprite 227 -> 226): its gold fountain (sprite 222
+  "gold") is masked by an invisObject whose only shape is a tag 148 box. Boxes drew nothing, so
+  the mask was empty and the fountain invisible. As a mask a box now fills its extent (render.c
+  box_quad). Test: CC_CALL "1000:loader.game.game.bosschest.gotoAndStop:'init" then three
+  "f_HitGeneral:loader.game.game.bosschest", CC_VIEW="688,300".
 - hosttest: CC_SNAP_FROM=frame skips earlier snapshots; AS_DUMP prints array items too.

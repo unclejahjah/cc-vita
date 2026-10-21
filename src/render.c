@@ -438,8 +438,19 @@ static void emit_bitmaps(Shape *s, Mat m, CXform cx, DrawList *out) {
     for (int i = 0; i < s->nbfills; i++) render_bitmap_fill(&s->bfills[i], m, cx, out);
 }
 
+// A tag 148 box has no outlines, but as a mask it covers its extent (the Barbarian Boss
+// chest's gold fountain is masked by one; it stayed hidden while the box drew nothing).
+static float box_xy[12] = {0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1};
+static uint8_t box_rgba[24];
+static Mesh box_quad = {6, box_xy, box_rgba, NULL, {0, 0, 1, 1}, NULL};
+
 static void emit_shape(Shape *s, Mat m, CXform cx, DrawList *out) {
     tessellate_shape(s);
+    if (out->masking && s->has_box) {
+        Mat b = {s->box[2] - s->box[0], 0, 0, s->box[3] - s->box[1], s->box[0], s->box[1]};
+        DrawItem it = {&box_quad, mat_mul(m, b), NULL, -1, NULL, {0, 0, 0, 0}};
+        add_item(out, &it);
+    }
     const Mesh *mesh = &s->mesh;
     int n = mesh->nverts;
     if (!n && !s->nbfills) return;
