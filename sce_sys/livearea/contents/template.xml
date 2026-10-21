@@ -7,7 +7,7 @@
   <frame id="frame1" multi="o" autoflip="1">
     <liveitem>
       <target>psla:eboot</target>
-      <image y="155" x="42" width="452" height="122">startup.png</image>
+      <image y="155" x="26" width="484" height="130">startup.png</image>
     </liveitem>
   </frame>
 
