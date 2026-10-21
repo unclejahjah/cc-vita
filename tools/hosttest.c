@@ -1023,9 +1023,10 @@ static int help_mode(int argc, char **argv) {
         printf("%d: Help & Options list\n", shot);
         write_frame(argv[3], shot++);
     }
-    for (int book = 0; book < 3; book++) {
+    for (int book = 0; book < 4; book++) {
         HelpBook hb;
         help_book_open(&hb, book, 7, 10);
+        hb.achieved = 1 << 2 | 1 << 4 | 1 << 7 | 1 << 11;
         int pages = book == HB_HOWTO ? HB_HOWTO_PAGES : 1;
         for (int pg = 0; pg < pages; pg++) {
             int sound;

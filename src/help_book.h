@@ -8,7 +8,7 @@
 
 #include "render.h"
 
-enum { HB_HOWTO, HB_CONTROLS, HB_SETTINGS };
+enum { HB_HOWTO, HB_CONTROLS, HB_SETTINGS, HB_ACHIEVEMENTS };   // ACHIEVEMENTS: from Information
 // buttons for help_book_update
 enum { HB_UP = 1, HB_DOWN = 2, HB_LEFT = 4, HB_RIGHT = 8, HB_PREV = 16, HB_NEXT = 32, HB_BACK = 64 };
 #define HB_HOWTO_PAGES 7
@@ -23,6 +23,7 @@ typedef struct {
     float turn;                // seconds left of a page turn
     int turn_dir;              // 1 forward, -1 back
     float alpha;               // fades in when opened
+    unsigned achieved;         // Achievements: bit id set when unlocked (cc_achievements)
 } HelpBook;
 
 void help_book_open(HelpBook *hb, int book, int music, int sfx);

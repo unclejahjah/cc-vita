@@ -75,7 +75,10 @@ void pause_menu_open_help(PauseMenu *pm) {
     go(pm, PG_HELP, 0);
 }
 
-void pause_menu_book_closed(PauseMenu *pm) { go(pm, PG_HELP, pm->book); }
+void pause_menu_book_closed(PauseMenu *pm) {
+    if (pm->book == HB_ACHIEVEMENTS) go(pm, PG_INFO, 0);
+    else go(pm, PG_HELP, pm->book);
+}
 
 // what the chosen line (or Back) does once the page has faded out
 static int run(PauseMenu *pm, int act) {
@@ -100,7 +103,13 @@ static int run(PauseMenu *pm, int act) {
         pm->alpha = 1;
         return PM_OPEN;
     case A_INFO: go(pm, PG_INFO, 0); return PM_OPEN;
-    case A_ACHIEVEMENTS: pm->back_page = PG_INFO; go(pm, PG_ACHIEVEMENTS, 0); return PM_OPEN;
+    case A_ACHIEVEMENTS:   // shown by the app like the help books, in the same style
+        pm->book = HB_ACHIEVEMENTS;
+        pm->book_new = 1;
+        go(pm, PG_BOOK, 0);
+        pm->fade = 0;
+        pm->alpha = 1;
+        return PM_OPEN;
     case A_MAP: pm->confirm = 0; go(pm, PG_CONFIRM, 2); return PM_OPEN;
     case A_EXIT: pm->confirm = 1; go(pm, PG_CONFIRM, 2); return PM_OPEN;
     case A_NO: go(pm, PG_MAIN, pm->confirm ? 4 - pm->on_map : 3); return PM_OPEN;
