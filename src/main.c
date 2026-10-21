@@ -1579,7 +1579,7 @@ int main(void) {
     log_open();
     log_line("cc_vita started");
     if (cc_custom_load(DATA_DIR "custom/"))   // optional: a painted character (custom_char.h)
-        log_line("custom character \"%s\" replaces character %d", cc_custom_name(), cc_custom_p_type());
+        log_line("custom character \"%s\" (fights like character %d)", cc_custom_name(), cc_custom_base());
     bg_init();
 
     Movie *start = host_movie("MAIN.swf");

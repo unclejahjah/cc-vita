@@ -2,6 +2,7 @@
 // They are found by running the scripts and logging what's missing; each one is
 // worked out from how the scripts use it.
 #include "cc_host.h"
+#include "custom_char.h"
 #include "strtab.h"
 
 #include <stdio.h>
@@ -156,7 +157,8 @@ double *cc_storage(int port) { return port >= 0 && port < 4 ? storage[port] : NU
 // profile, as owning the DLC did. Everyone else is still earned through the game.
 void cc_own_dlc_characters(void) {
     for (int p = 0; p < 4; p++)
-        for (int t = 29; t <= 31; t++) {
+        for (int t = 29; t <= 32; t++) {   // 32: a custom character (custom_char.h), if there is one
+            if (t == CC_CUSTOM_P_TYPE && !cc_custom_p_type()) continue;
             double *b = &storage[p][64 + 48 * (t - 1)];
             if (!((int)*b & 128)) *b = (int)*b | 128;
         }
@@ -236,7 +238,7 @@ int cc_storage_load(const char *path) {
     // over 0x62 (level 99) is clamped. (Characters played while the levels' developer
     // settings were on saved magic/strength 9999; this heals them.)
     for (int p = 0; p < 4; p++)
-        for (int t = 1; t <= 31; t++) {
+        for (int t = 1; t <= CC_CUSTOM_P_TYPE; t++) {
             double *c = &storage[p][64 + 48 * (t - 1)];
             if (c[1] > 0x62) c[1] = 0x62;
             for (int s = 8; s <= 11; s++)
@@ -815,7 +817,7 @@ static AsVal hide_loading_screen(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
 static AsVal safe_player_type(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
     (void)this_;
     int t = argc > 0 ? (int)as_tonum(vm, argv[0]) : 1;
-    return as_num(t >= 1 && t <= 31 ? t : 1);
+    return as_num(t >= 1 && (t <= CC_CHARACTERS || t == cc_custom_p_type()) ? t : 1);
 }
 
 static void on_loaded(AsVm *vm, AsMc *target) {
@@ -834,6 +836,7 @@ static const char *text_for_number(AsVm *vm, int n) {
 void cc_host_init(AsVm *vm) {
     bsp_pending = 0;   // a new game: nothing left over from the last one
     memset(cursor, 0, sizeof cursor);
+    cc_custom_init(vm);   // before MAIN's functions are defined: a 32nd character, if painted
     vm->loaded = on_loaded;
     vm->hold_load = hold_load;
     vm->text_for_number = text_for_number;

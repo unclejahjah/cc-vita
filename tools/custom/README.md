@@ -14,8 +14,10 @@ them on your own files (PBP_TEMPLATE=template.png).
   boxes hold the arms turned by 0 or 90 degrees).
 - `overlay.py PLAYER.swf out.png box:sprite:frame:k:ox:oy ...`: guide in black over the part in red.
 - `testpaint2.py PLAYER.swf template.png src/custom_char.c out.png`: paints every part's own art,
-  purple, into its box with the table's numbers. Loaded as a custom character, it should look like
-  the knight it replaces, in purple (hosttest: CC_CUSTOM_DIR=dir/ with dir/1/painting.png).
+  purple, into its box with the table's numbers. Loaded as the custom character, it should look like
+  its base knight in purple (hosttest: CC_CUSTOM_DIR=dir/ with dir/painting.png; the portrait boxes
+  stay guide lines, so paint over them to see the character select portrait and HUD face).
 
-Box numbers here are the template's 39 boxes in reading order; custom_char.c's BOX table leaves
-out the three portrait boxes (33-35 here), so the last three arm boxes are 33-35 there.
+Box numbers here are the template's 39 boxes in reading order; custom_char.c's BOX table puts the
+portrait boxes last (HUD face 36, character select portrait 37; Back Off Barbarian's isn't used),
+so the last three arm boxes are 33-35 there.
