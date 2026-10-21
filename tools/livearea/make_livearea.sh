@@ -1,11 +1,11 @@
 #!/bin/bash
 # LiveArea art from the user's own game files: renders MENU.swf's title and LEGAL.swf's bird with
 # hosttest at twice the Vita size, then make_livearea.py lays them out.
-#   tools/livearea/make_livearea.sh GAME_DIR FONTS_DIR OUT_DIR
+#   tools/livearea/make_livearea.sh GAME_DIR FONTS_DIR OUT_DIR [BACKGROUND.png]
 # GAME_DIR has game/MENU.swf and game/LEGAL.swf; FONTS_DIR has synjUnicode_20.{fnt,dds}.
 # Then build with cmake -DLIVEAREA_DIR=OUT_DIR. The PNGs are made from game art: never commit them.
 set -e
-GAME=$(realpath "$1"); FONTS=$(realpath "$2"); OUT=$(realpath -m "$3")
+GAME=$(realpath "$1"); FONTS=$(realpath "$2"); OUT=$(realpath -m "$3"); BG=${4:+$(realpath "$4")}
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
 W=$(mktemp -d)
 trap 'rm -rf "$W"' EXIT
@@ -39,4 +39,4 @@ for name in ('logo', 'behemoth'):
     Image.fromarray(np.dstack([rgb, a * 255]).astype(np.uint8), 'RGBA').save(f'{d}/{name}.png')
 PY
 V=$(sed -n 's/.*VITA_VERSION *"\([0-9]*\)\.\([0-9]*\)".*/\1 \2/p' "$REPO/CMakeLists.txt")
-python3 -I "$REPO/tools/livearea/make_livearea.py" "$W" "$FONTS" "$OUT" "$(echo $V | awk '{printf "V%d.%s", $1, $2}')"
+python3 -I "$REPO/tools/livearea/make_livearea.py" "$W" "$FONTS" "$OUT" "$(echo $V | awk '{printf "V%d.%s", $1, $2}')" "$BG"
