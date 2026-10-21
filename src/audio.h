@@ -9,6 +9,7 @@ int audio_init(const char *data_dir);   // 0 if there's no audio output
 void audio_shutdown(void);
 
 void audio_sfx_play(const char *linkage, float volume, float pan, int loops, const void *owner);
+int audio_sfx_pending(void);   // sound effects still to be decoded
 void audio_sfx_stop(const void *owner);   // what owner started; NULL: everything
 void audio_music_play(const char *name, int loop);
 void audio_music_stop(void);

@@ -1096,11 +1096,17 @@ new_game:   // the title again after Exit to Main Menu
         if (acc > 2 * tick_us) acc = 2 * tick_us;
         if (pause.open) acc = 0;   // the game stands still under the menu
         int ticked = 0;
+        float hitch_script = 0, hitch_gc = 0, hitch_build = 0;   // this pass, for the slow-frame log
+        const char *hitch_what = "";
         while (acc >= tick_us) {
             SceUInt64 t0 = sceKernelGetProcessTimeWide();
             as_tick(vm);
+            SceUInt64 t1 = sceKernelGetProcessTimeWide();
             as_gc(vm);
-            tick_ms += (sceKernelGetProcessTimeWide() - t0) / 1000.0f;
+            SceUInt64 t2 = sceKernelGetProcessTimeWide();
+            hitch_script += (t1 - t0) / 1000.0f;
+            hitch_gc += (t2 - t1) / 1000.0f;
+            tick_ms += (t2 - t0) / 1000.0f;
             ticks++;
             acc -= tick_us;
             ticked = 1;
@@ -1123,19 +1129,22 @@ new_game:   // the title again after Exit to Main Menu
                 last_free = vm->tick;
                 free_unused_movies(vm, &cache, cache_mem, cache_bytes);
                 last_free_count = g_nmovies;
+                hitch_what = " (freed files)";
             }
             // a full recolour cache stops helping: start it over (after the GPU is done with it)
             if (cache.used > cache.cap * 9 / 10 || cache.entries * 4 >= cache.table_size * 3) {
                 vita2d_wait_rendering_done();
                 recolour_cache_free(&cache);
                 recolour_cache_init(&cache, cache_mem, cache_bytes);
+                hitch_what = " (colour cache restarted)";
             }
             SceUInt64 t0 = sceKernelGetProcessTimeWide();
             float k = SCREEN_W / start->stage_w;
             Mat screen = {k / 20, 0, 0, k / 20, 0, 0};
             render_begin(&vb);
             as_render_mc(vm->root, screen, CX_IDENTITY, &vb);
-            build_ms += (sceKernelGetProcessTimeWide() - t0) / 1000.0f;
+            hitch_build = (sceKernelGetProcessTimeWide() - t0) / 1000.0f;
+            build_ms += hitch_build;
         }
 
         // A new picture comes only with a game frame, 30 a second. Drawing it again in between
@@ -1147,6 +1156,7 @@ new_game:   // the title again after Exit to Main Menu
             continue;
         }
         vita2d_set_clear_color(RGBA8(start->bg[0], start->bg[1], start->bg[2], 255));
+        SceUInt64 draw_t0 = sceKernelGetProcessTimeWide();
         draw_frame(&vb, heat_clock);
         if (ticked) heat_clock += 2;   // the shimmer's speed, as when it was drawn 60 times a second
         if (pause.open) pause_draw(&pause);
@@ -1181,6 +1191,17 @@ new_game:   // the title again after Exit to Main Menu
 
         frames++;
         now = sceKernelGetProcessTimeWide();
+        // Hitches: a game frame shown more than 50 ms after the one before (one missed at 30 fps)
+        // goes to the log with where the time went, to find what stalls on the Vita.
+        static SceUInt64 last_shown;
+        if (ticked && !pause.open && last_shown && now - last_shown > 50000)
+            log_line("[%u] slow frame %.0f ms: script %.1f gc %.1f build %.1f draw+swap %.1f ms, %d tris%s",
+                     (unsigned)vm->tick, (now - last_shown) / 1000.0f, hitch_script, hitch_gc, hitch_build,
+                     (now - draw_t0) / 1000.0f, render_stats.triangles, hitch_what);
+        if (ticked && !pause.open && last_shown && now - last_shown > 50000 && audio_sfx_pending())
+            log_line("  (%d sounds loading)", audio_sfx_pending());
+        if (pause.open) last_shown = 0;
+        else if (ticked) last_shown = now;
         if (now - last >= 1000000) {
             fps = frames * 1000000.0f / (now - last);
             shown_tick = ticks ? tick_ms / ticks : 0;
