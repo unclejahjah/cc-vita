@@ -737,7 +737,8 @@ static int as_mode(int argc, char **argv) {
                 printf("ticks %d..%d: average %.2f ms (worst %.2f), %lld actions a tick\n", prof_from, f,
                        prof_ms / (f - prof_from + 1), prof_max, prof_ops / (f - prof_from + 1));
         }
-        if (f % every == 0 || f == frames - 1) {
+        // CC_SNAP_FROM=frame: no snapshots before that frame
+        if ((f % every == 0 && (!getenv("CC_SNAP_FROM") || f >= atoi(getenv("CC_SNAP_FROM")))) || f == frames - 1) {
             static AsMc *panel;
             if (getenv("CC_MENU") && f == atoi(getenv("CC_MENU"))) {   // CC_MENU=frame: the Vita's title menu
                 if (!panel) {
@@ -834,6 +835,8 @@ static int as_mode(int argc, char **argv) {
         AsVal v = as_resolve_path(vm, vm->root, getenv("AS_DUMP"), &found);
         if (v.t == V_OBJ) {
             AsProps *ps = &v.o->props;
+            for (int i = 0; i < v.o->nitems; i++)   // an array's items
+                printf("  .%d = %s\n", i, as_tostr(vm, v.o->items[i])->s);
             for (int i = 0; i < ps->cap; i++) {
                 AsProp *p = &ps->slots[i];
                 if (!p->key || p->key == (AsStr *)1) continue;

@@ -211,3 +211,15 @@ Both are the same developer-settings path as the magic bug, already fixed by pin
   overlay on is gone. hosttest CC_PREFETCH=N fakes an N-frame background load.
 - ANIMALS.swf was simply missing from the Vita's game folder (log.txt showed MISSING); uploaded
   20:45 (complete 64,676-byte copy). Orbs show now.
+
+### Arena walls and blocks (2026-10-21, thread "Treasure animation and arena boundaries")
+- Arenas (LEVEL24, 46-49) have four block layouts: the level's game clip shows layout k on frame
+  2k+1, its edge clips on frame 2k+2, and asks for `bspNa`..`bspNd` (bsps/BSP24A..D.PDAG). Our
+  f_BSPLoadLevel always did normal levels' "edges on frame 2, then frame 3", so the arena showed
+  layout b's stone blocks over layout a's walls: players walked through blocks and out of the
+  arena. Now a name ending in a-d builds from the next frame's edges and goes back to the layout
+  (King's Arena story layout = the two giant cats). Checked in hosttest: p1 stops at BSP24A's
+  corner (-905,-274) and bottom edge (y -68); LEVEL46/48 likewise.
+- Treasure: items pop out of breakable chests in hosttest (f_ChestOpen -> f_ItemSpawn /
+  f_RandomGoldSpawn, FX body frames 1-20). Waiting on Jah for which chest misbehaves on the Vita.
+- hosttest: CC_SNAP_FROM=frame skips earlier snapshots; AS_DUMP prints array items too.
