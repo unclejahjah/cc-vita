@@ -29,6 +29,9 @@ game's own ActionScript 1 from the user's PC copy on a small AVM1 engine written
 ## Build / device
 VitaSDK in WSL; `cmake .. && make` in build/. Vita: ux0:data/CastleCrashers/{game,levels,fonts,sfx,
 music}/, strings_en.txt, strings_vita_en.txt, save.dat. VPK to ux0:downloads via VitaShell FTP.
+LiveArea: `tools/livearea/make_livearea.sh GAME_DIR FONTS_DIR OUT` renders the art from the game
+files (title scene, logo + Vita Edition badge, The Behemoth bird, Orange Knight icon; layout and
+template.xml copied from Jah's Punch Quest port), then `cmake -DLIVEAREA_DIR=OUT`. PNGs never in git.
 
 ## Facts that cost time (read before debugging)
 - Levels use a custom tag 148 for invisible trigger/hit boxes (id, s32 rect, 64x64 pixels).
