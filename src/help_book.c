@@ -271,7 +271,7 @@ static void howto_page(DrawList *out, Art *a, float k, int page, float alpha) {
         {1, 61, 5}, {1, 63, 2},                 // Magic Jump: R + jump
         {1, 99, 5}, {1, 101, 3},                // Magic Projectile: R + use item
         {1, 118, 5},                            // hold R
-        {3, 21, 2},                             // the store's Purchase Item
+        {3, 21, 0},                             // the store's Purchase Item: Square on the Vita
     };
     int masked = 0;
     for (int i = 0; i < f->count; i++) masked |= f->places[i].clip != 0;
@@ -481,6 +481,14 @@ static int wrap(const char **s, float w, float size, char *line, int cap) {
     return 1;
 }
 
+// left-aligned words with a dark shadow down and right, so they read on the light page
+static void shadow_text(DrawList *out, float k, const char *s, float x, float y, float size, uint32_t rgb,
+                        float alpha) {
+    float o = fmaxf(1.2f, size / 12);
+    text(out, k, s, x + o, y + o, size, 1, 0x1a1408, alpha * 0.9f);
+    text(out, k, s, x, y, size, 1, rgb, alpha);
+}
+
 // Achievements: the twelve on the book's two pages, each with a tick when it's unlocked,
 // its name and what it asks for; the locked ones dimmed
 static void achievements_page(DrawList *out, Art *a, float k, const HelpBook *hb, float alpha) {
@@ -496,8 +504,8 @@ static void achievements_page(DrawList *out, Art *a, float k, const HelpBook *hb
     for (int id = 1; id <= CC_ACHIEVEMENTS; id++) {
         int col = (id - 1) / 6, row = (id - 1) % 6, got = hb->achieved >> id & 1;
         float bx, by;
-        to_stage(a, col ? 458 : 116, 112 + row * 56, &bx, &by);
-        float al = alpha * (got ? 1 : 0.55f);
+        to_stage(a, col ? 448 : 104, 108 + row * 57, &bx, &by);
+        float al = alpha * (got ? 1 : 0.8f);
         // the box, and the tick in it
         float r = 8 * sc;
         stroke(out, k, bx - r, by - r, bx + r, by - r, 2 * sc, BOX, al);
@@ -512,12 +520,12 @@ static void achievements_page(DrawList *out, Art *a, float k, const HelpBook *hb
             stroke(out, k, bx - r * 0.1f, by + r * 0.8f, bx + r * 1.2f, by - r * 1.1f, 4 * sc, TICK, alpha);
         }
         float tx = bx + 20 * sc;
-        text(out, k, cc_achievement_name(id), tx, by, 19 * sc, 1, got ? 0xffff99 : INK, al);
+        shadow_text(out, k, cc_achievement_name(id), tx, by, 21 * sc, got ? 0xffff99 : 0xd8d8d8, al);
         const char *how = cc_achievement_how(id);
         char line[96];
-        float ly = by + 17 * sc;
-        for (int l = 0; l < 2 && wrap(&how, 262 * sc, 14 * sc, line, sizeof line); l++, ly += 14 * sc)
-            text(out, k, line, tx, ly, 14 * sc, 1, INK, al * 0.9f);
+        float ly = by + 19 * sc;
+        for (int l = 0; l < 2 && wrap(&how, 280 * sc, 16 * sc, line, sizeof line); l++, ly += 16 * sc)
+            shadow_text(out, k, line, tx, ly, 16 * sc, INK, al);
     }
 }
 
