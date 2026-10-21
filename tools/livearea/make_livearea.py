@@ -6,7 +6,7 @@ RENDERS holds scene.png (MENU.swf's title scene without logo or news bar, 1920x1
 as make_livearea.sh renders them. FONTS holds the game's synjUnicode_20 font. Writes OUT/sce_sys/:
   icon0.png                      128x128, the Orange Knight
   livearea/contents/bg.png       840x500, the title scene + version (bottom left) + The Behemoth (bottom right)
-  livearea/contents/startup.png  420x237, the logo (template.xml's tap-to-start image, centred)
+  livearea/contents/startup.png  420x112, the logo (template.xml's tap-to-start image, top middle)
 BACKGROUND: a picture of your own to use in place of the title scene (scaled to 500 high, centre cropped).
 Layout as the Punch Quest port's LiveArea; every PNG is 8-bit indexed as the Vita wants."""
 import os, sys
@@ -72,6 +72,7 @@ halo = Image.new('RGBA', st.size, GLOW + (255,))
 halo.putalpha(a)
 st.alpha_composite(halo)
 st.alpha_composite(lg, at)
+st = st.crop((0, 62, 420, 174))   # just the logo and its glow (template.xml: 420x112)
 
 # icon0.png: the Orange Knight's head (the Vita shows it in a circle)
 icon = scene.crop((1405, 562, 1705, 862)).resize((128, 128), Image.LANCZOS)
