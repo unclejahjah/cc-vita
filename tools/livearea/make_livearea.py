@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """LiveArea art from renders of the user's own game files (nothing here is committed or shipped):
-  make_livearea.py RENDERS FONTS OUT VERSION
+  make_livearea.py RENDERS FONTS OUT VERSION [BACKGROUND]
 RENDERS holds scene.png (MENU.swf's title scene without logo or news bar, 1920x1088), logo.png
 (the logo, transparent) and behemoth.png (LEGAL.swf's bird, transparent),
 as make_livearea.sh renders them. FONTS holds the game's synjUnicode_20 font. Writes OUT/sce_sys/:
   icon0.png                      128x128, the Orange Knight
   livearea/contents/bg.png       840x500, the title scene + version (bottom left) + The Behemoth (bottom right)
-  livearea/contents/startup.png  420x237, the logo (template.xml's tap-to-start image, centre left)
+  livearea/contents/startup.png  420x237, the logo (template.xml's tap-to-start image, centred)
+BACKGROUND: a picture of your own to use in place of the title scene (scaled to 500 high, centre cropped).
 Layout as the Punch Quest port's LiveArea; every PNG is 8-bit indexed as the Vita wants."""
 import os, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -14,6 +15,7 @@ import bmfont
 from PIL import Image, ImageFilter
 
 src, fonts, out, version = sys.argv[1:5]
+own_bg = sys.argv[5] if len(sys.argv) > 5 and sys.argv[5] else None
 
 def outline(im, r, col=(0, 0, 0)):
     a = im.split()[3].filter(ImageFilter.MaxFilter(2 * r + 1))
@@ -44,6 +46,10 @@ logo, beh = trimmed(os.path.join(src, 'logo.png')), trimmed(os.path.join(src, 'b
 s = 500 / scene.height
 bg = scene.resize((round(scene.width * s), 500), Image.LANCZOS)
 bg = bg.crop((bg.width - 840, 0, bg.width, 500))
+if own_bg:
+    o = Image.open(own_bg).convert('RGBA')
+    o = o.resize((max(840, round(o.width * 500 / o.height)), 500), Image.LANCZOS)
+    bg = o.crop(((o.width - 840) // 2, 0, (o.width - 840) // 2 + 840, 500))
 font = bmfont.load(os.path.join(fonts, 'synjUnicode_20.fnt'), os.path.join(fonts, 'synjUnicode_20_0.dds'))
 lab = bmfont.text(font, version)
 lab = outline(pad(lab.resize((round(lab.width * 26 / lab.height), 26), Image.LANCZOS), 4), 3)
