@@ -287,6 +287,13 @@ void audio_sfx_play(const char *linkage, float volume, float pan, int loops, con
     unlock();
 }
 
+// sound effects waiting for, or in, their first decode
+int audio_sfx_pending(void) {
+    int n = 0;
+    for (int i = 0; i < g_nsfx; i++) n += g_sfx[i].state == SFX_QUEUED;
+    return n;
+}
+
 void audio_sfx_stop(const void *owner) {
     if (g_port < 0) return;
     lock();
