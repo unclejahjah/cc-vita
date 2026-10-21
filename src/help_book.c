@@ -9,6 +9,7 @@
 #include "help_book.h"
 #include "as_render.h"
 #include "cc_buttons.h"
+#include "cc_host.h"
 #include "strtab.h"
 
 #include <math.h>
@@ -132,9 +133,9 @@ static void text(DrawList *out, float k, const char *s, float x, float y, float 
 // a straight stroke from a to b (stage pixels), w wide
 static void stroke(DrawList *out, float k, float ax, float ay, float bx, float by, float w, const uint8_t c[4],
                    float alpha) {
-    static Shape s[32];
+    static Shape s[256];   // reused round robin: more than one frame ever draws
     static int next;
-    Shape *sh = &s[next++ & 31];
+    Shape *sh = &s[next++ & 255];
     float dx = bx - ax, dy = by - ay, l = sqrtf(dx * dx + dy * dy);
     if (l < 0.5f) return;
     float nx = -dy / l * w / 2, ny = dx / l * w / 2;
@@ -459,6 +460,67 @@ static void settings_page(DrawList *out, Art *a, float k, const HelpBook *hb, fl
     }
 }
 
+// the words of s that fit in w pixels at size, from *s on; *s moves past them (and the space)
+static int wrap(const char **s, float w, float size, char *line, int cap) {
+    const char *p = *s, *best = NULL;
+    while (*p == ' ') p++;
+    if (!*p) return 0;
+    for (const char *e = p;; e++) {
+        if (*e != ' ' && *e) continue;
+        int n = (int)(e - p) < cap - 1 ? (int)(e - p) : cap - 1;
+        memcpy(line, p, n);
+        line[n] = 0;
+        if (best && as_render_host_text_width(line) * size / 20 > w) break;
+        best = e;
+        if (!*e) break;
+    }
+    int n = (int)(best - p) < cap - 1 ? (int)(best - p) : cap - 1;
+    memcpy(line, p, n);
+    line[n] = 0;
+    *s = best;
+    return 1;
+}
+
+// Achievements: the twelve on the book's two pages, each with a tick when it's unlocked,
+// its name and what it asks for; the locked ones dimmed
+static void achievements_page(DrawList *out, Art *a, float k, const HelpBook *hb, float alpha) {
+    static const uint8_t TICK[4] = {0x9c, 0xf0, 0x5a, 255}, BOX[4] = {0xff, 0xff, 0xff, 255},
+                         SHADOW[4] = {0, 0, 0, 255};
+    book_art(out, a, k, alpha);
+    int n = 0;
+    for (int id = 1; id <= CC_ACHIEVEMENTS; id++) n += hb->achieved >> id & 1;
+    char title[64];
+    snprintf(title, sizeof title, "%s  %d / %d", words("help.title.achievements", "Achievements"), n, CC_ACHIEVEMENTS);
+    page_title(out, a, k, title, alpha);
+    float sc = place_scale(a);
+    for (int id = 1; id <= CC_ACHIEVEMENTS; id++) {
+        int col = (id - 1) / 6, row = (id - 1) % 6, got = hb->achieved >> id & 1;
+        float bx, by;
+        to_stage(a, col ? 458 : 116, 112 + row * 56, &bx, &by);
+        float al = alpha * (got ? 1 : 0.55f);
+        // the box, and the tick in it
+        float r = 8 * sc;
+        stroke(out, k, bx - r, by - r, bx + r, by - r, 2 * sc, BOX, al);
+        stroke(out, k, bx + r, by - r, bx + r, by + r, 2 * sc, BOX, al);
+        stroke(out, k, bx + r, by + r, bx - r, by + r, 2 * sc, BOX, al);
+        stroke(out, k, bx - r, by + r, bx - r, by - r, 2 * sc, BOX, al);
+        if (got) {
+            stroke(out, k, bx - r * 0.7f + sc, by + sc, bx - r * 0.1f + sc, by + r * 0.8f + sc, 4 * sc, SHADOW, alpha);
+            stroke(out, k, bx - r * 0.1f + sc, by + r * 0.8f + sc, bx + r * 1.2f + sc, by - r * 1.1f + sc, 4 * sc, SHADOW,
+                   alpha);
+            stroke(out, k, bx - r * 0.7f, by, bx - r * 0.1f, by + r * 0.8f, 4 * sc, TICK, alpha);
+            stroke(out, k, bx - r * 0.1f, by + r * 0.8f, bx + r * 1.2f, by - r * 1.1f, 4 * sc, TICK, alpha);
+        }
+        float tx = bx + 20 * sc;
+        text(out, k, cc_achievement_name(id), tx, by, 19 * sc, 1, got ? 0xffff99 : INK, al);
+        const char *how = cc_achievement_how(id);
+        char line[96];
+        float ly = by + 17 * sc;
+        for (int l = 0; l < 2 && wrap(&how, 262 * sc, 14 * sc, line, sizeof line); l++, ly += 14 * sc)
+            text(out, k, line, tx, ly, 14 * sc, 1, INK, al * 0.9f);
+    }
+}
+
 // the button prompts along the bottom: a clip and its word
 static void prompt(DrawList *out, Art *a, float k, int cid, const float b[4], float x, const char *label,
                    float alpha) {
@@ -499,6 +561,8 @@ void help_book_build(const HelpBook *hb, Movie *mv, float k, DrawList *out) {
         if (hb->page < HB_HOWTO_PAGES - 1) dpad_prompt(out, a, k, 1, STAGE_W * 0.66f, words("help.next", "next"), alpha);
     } else if (hb->book == HB_CONTROLS) {
         controls_page(out, a, k, alpha);
+    } else if (hb->book == HB_ACHIEVEMENTS) {
+        achievements_page(out, a, k, hb, alpha);
     } else {
         settings_page(out, a, k, hb, alpha);
     }

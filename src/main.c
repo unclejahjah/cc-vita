@@ -783,6 +783,7 @@ static void pause_draw(Pause *ps) {
 static void help_input(Pause *ps, unsigned pressed, float dt) {
     if (ps->m.book_new) {
         help_book_open(&ps->hb, ps->m.book, g_volume[0], g_volume[1]);
+        ps->hb.achieved = cc_achievements();
         ps->m.book_new = 0;
     }
     unsigned b = (pressed & SCE_CTRL_UP ? HB_UP : 0) | (pressed & SCE_CTRL_DOWN ? HB_DOWN : 0) |
