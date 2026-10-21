@@ -646,7 +646,9 @@ int as_mc_get_member(AsVm *vm, AsMc *mc, AsStr *atom, AsVal *out) {
     if (s[0] == '_') {
         int i = as_mc_prop_index(s);
         if (i >= 0) { *out = as_mc_get_prop(vm, mc, i); return 1; }
-        if (!strcasecmp(s, "_parent")) { *out = mc->parent ? as_objv(&mc->parent->obj) : as_undef(); return 1; }
+        // a removed clip has no parent: a death frame that calls _root.f_X(_parent._parent) after its enemy
+        // was reused by a spawn (Sand Castle Interior's second wave) must not reach the new enemy
+        if (!strcasecmp(s, "_parent")) { *out = mc->parent && !mc->removed ? as_objv(&mc->parent->obj) : as_undef(); return 1; }
         if (!strcasecmp(s, "_root") || !strcasecmp(s, "_level0")) { *out = as_objv(&vm->root->obj); return 1; }
         if (!strcasecmp(s, "_global")) { *out = as_objv(vm->global); return 1; }
     }
