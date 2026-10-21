@@ -2,11 +2,11 @@
 """LiveArea art from renders of the user's own game files (nothing here is committed or shipped):
   make_livearea.py RENDERS FONTS OUT VERSION
 RENDERS holds scene.png (MENU.swf's title scene without logo or news bar, 1920x1088), logo.png
-(the logo with its Vita Edition badge, transparent) and behemoth.png (LEGAL.swf's bird, transparent),
+(the logo, transparent) and behemoth.png (LEGAL.swf's bird, transparent),
 as make_livearea.sh renders them. FONTS holds the game's synjUnicode_20 font. Writes OUT/sce_sys/:
   icon0.png                      128x128, the Orange Knight
   livearea/contents/bg.png       840x500, the title scene + version (bottom left) + The Behemoth (bottom right)
-  livearea/contents/startup.png  420x237, the logo (template.xml's tap-to-start image, raised 20 px)
+  livearea/contents/startup.png  420x237, the logo (template.xml's tap-to-start image, centre left)
 Layout as the Punch Quest port's LiveArea; every PNG is 8-bit indexed as the Vita wants."""
 import os, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -52,17 +52,20 @@ b = beh.resize((round(beh.width * 70 / beh.height), 70), Image.LANCZOS)
 b = outline(pad(b, 3), 2, (255, 255, 255))
 bg.alpha_composite(b, (840 - 20 - b.width, 482 - b.height))
 
-# startup.png: the logo over a soft dark glow so it reads over the busy scene
-lg = logo.resize((410, round(logo.height * 410 / logo.width)), Image.LANCZOS)
+# startup.png: the logo in the title menu's cream highlight glow (cc_native.c's ring/haze colours),
+# centred in the image; template.xml moves the image to the centre left
+GLOW = (255, 246, 206)
+lg = logo.resize((400, round(logo.height * 400 / logo.width)), Image.LANCZOS)
 st = Image.new('RGBA', (420, 237))
+at = ((420 - lg.width) // 2, (237 - lg.height) // 2)
 glow = Image.new('RGBA', st.size)
-glow.alpha_composite(lg, (5, 8))
-a = glow.split()[3].filter(ImageFilter.MaxFilter(9)).filter(ImageFilter.GaussianBlur(10))
-a = a.point(lambda v: min(255, v * 1.3) * 0.75).convert('L')
-shadow = Image.new('RGBA', st.size, (20, 8, 30, 255))
-shadow.putalpha(a)
-st.alpha_composite(shadow)
-st.alpha_composite(lg, (5, 8))
+glow.alpha_composite(lg, at)
+a = glow.split()[3].filter(ImageFilter.MaxFilter(5)).filter(ImageFilter.GaussianBlur(3))
+a = a.point(lambda v: min(255, v * 1.6) * 0.85).convert('L')
+halo = Image.new('RGBA', st.size, GLOW + (255,))
+halo.putalpha(a)
+st.alpha_composite(halo)
+st.alpha_composite(lg, at)
 
 # icon0.png: the Orange Knight's head (the Vita shows it in a circle)
 icon = scene.crop((1405, 562, 1705, 862)).resize((128, 128), Image.LANCZOS)
