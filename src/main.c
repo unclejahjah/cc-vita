@@ -874,6 +874,77 @@ static void log_animals(AsVm *vm) {
     }
 }
 
+// ---- the developer intro ---------------------------------------------------------------
+// LEGAL.swf, as the original plays it at start: Newgrounds, The Behemoth's bird, the featured
+// programmer and artist. It ends by calling ChangeMovie(); START or CROSS skips it.
+static int g_intro_done;
+static AsVal intro_change_movie(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
+    (void)vm; (void)this_; (void)argc; (void)argv;
+    g_intro_done = 1;
+    return as_undef();
+}
+
+static void intro_screen(DrawList *vb) {
+    Movie *m = vita_loader(NULL, "LEGAL.swf");
+    if (!m) return;
+    AsVm *t = as_new(vita_loader);
+    t->sound_start = vita_sound_start;
+    t->sound_stop = vita_sound_stop;
+    t->warn = vita_warn;
+    cc_host_init(t);
+    as_render_init(t);
+    t->root = as_mc_new(t, m, &m->root, NULL, 0);
+    cc_native_root_functions(t, &t->root->obj);
+    as_def_fn(t, t->global, "ChangeMovie", intro_change_movie);
+    g_intro_done = 0;
+    SceCtrlData pad, old = {0};
+    sceCtrlPeekBufferPositive(0, &old, 1);
+    SceUInt64 prev = sceKernelGetProcessTimeWide(), acc = 0;
+    const SceUInt64 tick_us = 1000000 / 30;
+    int last = 0;
+    while (!g_intro_done) {
+        sceCtrlPeekBufferPositive(0, &pad, 1);
+        if (pad.buttons & ~old.buttons & (SCE_CTRL_START | SCE_CTRL_CROSS)) break;
+        old = pad;
+        SceUInt64 now = sceKernelGetProcessTimeWide();
+        acc += now - prev;
+        prev = now;
+        if (acc > 2 * tick_us) acc = 2 * tick_us;
+        int ticked = 0;
+        while (acc >= tick_us && !g_intro_done) {
+            as_tick(t);
+            as_gc(t);
+            acc -= tick_us;
+            ticked = 1;
+            if (t->root->frame == m->root.nframes - 1) {   // the end, should it not say so
+                if (last++ > 30) g_intro_done = 1;
+            }
+        }
+        if (ticked) {
+            RecolourCache *cache = g_cache;
+            if (cache && (cache->used > cache->cap * 9 / 10 || cache->entries * 4 >= cache->table_size * 3)) {
+                vita2d_wait_rendering_done();
+                recolour_cache_free(cache);
+                recolour_cache_init(cache, g_cache_mem, g_cache_bytes);
+            }
+            float k = SCREEN_W / m->stage_w;
+            render_begin(vb);
+            as_render_mc(t->root, (Mat){k / 20, 0, 0, k / 20, 0, 0}, CX_IDENTITY, vb);
+        }
+        vita2d_set_clear_color(RGBA8(m->bg[0], m->bg[1], m->bg[2], 255));
+        vita2d_start_drawing();
+        vita2d_clear_screen();
+        draw_list(vb);
+        vita2d_end_drawing();
+        vita2d_swap_buffers();
+    }
+    vita2d_wait_rendering_done();
+    audio_sfx_stop(NULL);
+    if (cc_music_stop) cc_music_stop();
+    memset(cc_keys, 0, sizeof cc_keys);
+    as_free(t);
+}
+
 // ---- title screen and main menu --------------------------------------------------------
 // The original's executable shows MENU.swf's opening frame (the logo and the knights, with
 // the title music), then attaches its "buttonchoices" panel and runs the menu itself: the
@@ -889,6 +960,14 @@ static void outlined_text(int x, int y, float size, const char *s) {
         for (int dy = -2; dy <= 2; dy += 2)
             vita2d_pgf_draw_text(g_font, x + dx, y + dy, RGBA8(0, 0, 0, 255), size, s);
     vita2d_pgf_draw_text(g_font, x, y, RGBA8(255, 255, 255, 255), size, s);
+}
+
+static void hide_sprite(AsMc *mc, int cid) {   // every clip of sprite cid under mc
+    for (int i = 0; i < mc->ndisp; i++)
+        if (mc->disp[i].kind == DISP_MC && mc->disp[i].mc) {
+            if (mc->disp[i].cid == cid) mc->disp[i].mc->visible = 0;
+            hide_sprite(mc->disp[i].mc, cid);
+        }
 }
 
 static void title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, size_t cache_bytes) {
@@ -981,7 +1060,16 @@ static void title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, si
             float k = SCREEN_W / m->stage_w;
             Mat screen = {k / 20, 0, 0, k / 20, 0, 0};
             render_begin(vb);
+            hide_sprite(t->root, 626);   // the news bar (no news on the Vita)
             as_render_mc(t->root, screen, CX_IDENTITY, vb);
+            if (!panel && (frame / 30) % 2 == 0 && as_render_host_line_height() > 0) {   // blinking, in the game's font, where the news bar was
+                Mat id = {1, 0, 0, 1, 0, 0};
+                CXform black = {{0, 0, 0, 1}, {0, 0, 0, 0}};
+                for (int dx = -2; dx <= 2; dx += 2)
+                    for (int dy = -2; dy <= 2; dy += 2)
+                        if (dx || dy) as_render_host_text(prompt, 172 + dx, 443 + dy, 1.5f, 1.5f, 2, id, black, vb);
+                as_render_host_text(prompt, 172, 443, 1.5f, 1.5f, 2, id, CX_IDENTITY, vb);
+            }
         }
         vita2d_set_clear_color(RGBA8(m->bg[0], m->bg[1], m->bg[2], 255));
         vita2d_start_drawing();
@@ -1011,9 +1099,9 @@ static void title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, si
             }
         }
         frame++;
-        if (!panel && (frame / 30) % 2 == 0) {   // blinking, over the news box at the bottom left
+        if (!panel && (frame / 30) % 2 == 0 && as_render_host_line_height() <= 0) {   // no game font
             int w = vita2d_pgf_text_width(g_font, 1.2f, prompt);
-            outlined_text(180 - w / 2, 470, 1.2f, prompt);
+            outlined_text(172 - w / 2, 455, 1.2f, prompt);
         }
         if (message > 0) {
             message--;
@@ -1111,6 +1199,8 @@ int main(void) {
     g_cache = &cache;
     g_cache_mem = cache_mem;
     g_cache_bytes = cache_bytes;
+
+    intro_screen(&vb);
 
 new_game:   // the title again after Exit to Main Menu
     title_screen(&vb, &cache, cache_mem, cache_bytes);

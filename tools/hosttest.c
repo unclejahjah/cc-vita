@@ -805,6 +805,15 @@ static int as_mode(int argc, char **argv) {
             clear(bgc);
             render_begin(&vb);
             as_render_mc(vm->root, screen, CX_IDENTITY, &vb);
+            if (getenv("CC_TITLE_PROMPT")) {   // CC_TITLE_PROMPT=text: the title's Press START, as the Vita draws it
+                float u = W / 960.0f;
+                Mat id = {u, 0, 0, u, 0, 0};
+                CXform black = {{0, 0, 0, 1}, {0, 0, 0, 0}};
+                for (int dx = -2; dx <= 2; dx += 2)
+                    for (int dy = -2; dy <= 2; dy += 2)
+                        if (dx || dy) as_render_host_text(getenv("CC_TITLE_PROMPT"), 172 + dx, 443 + dy, 1.5f, 1.5f, 2, id, black, &vb);
+                as_render_host_text(getenv("CC_TITLE_PROMPT"), 172, 443, 1.5f, 1.5f, 2, id, CX_IDENTITY, &vb);
+            }
             if (vb.heat_at >= 0)   // the Vita draws a heat shimmer behind this
                 printf("  [heat] items 0..%d shimmer in %.0f,%.0f - %.0f,%.0f\n", vb.heat_at, vb.heat[0], vb.heat[1],
                        vb.heat[2], vb.heat[3]);
