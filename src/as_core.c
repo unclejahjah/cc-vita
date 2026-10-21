@@ -597,7 +597,7 @@ static AsVal as_call_body(AsVm *vm, AsVal fv, AsVal this_, int argc, AsVal *argv
         if (fl & 0x0080) {
             AsMc *t = mc_of(this_);
             if (!t) t = f->target;
-            regs[r++] = t && t->parent ? as_objv(&t->parent->obj) : as_undef();
+            regs[r++] = t && t->parent && !t->removed ? as_objv(&t->parent->obj) : as_undef();
         }
         if (fl & 0x0100) regs[r++] = as_objv(vm->global);
         for (int i = 0; i < f->nparams; i++) {
