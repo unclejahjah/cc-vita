@@ -32,6 +32,7 @@
 #include "cc_buttons.h"
 #include "cc_host.h"
 #include "help_book.h"
+#include "custom_char.h"
 #include "hostfont.h"
 #include "pause_menu.h"
 #include "render.h"
@@ -1577,6 +1578,8 @@ int main(void) {
     sceCtrlSetSamplingMode(SCE_CTRL_MODE_ANALOG);
     log_open();
     log_line("cc_vita started");
+    if (cc_custom_load(DATA_DIR "custom/"))   // optional: a painted character (custom_char.h)
+        log_line("custom character \"%s\" replaces character %d", cc_custom_name(), cc_custom_p_type());
     bg_init();
 
     Movie *start = host_movie("MAIN.swf");
