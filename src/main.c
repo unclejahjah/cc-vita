@@ -1049,6 +1049,8 @@ static struct {
 } g_wifi;
 
 static void wifi_note(const char *s) {
+    log_line("Wi-Fi: %s", s);
+    log_flush();
     snprintf(g_wifi.note, sizeof g_wifi.note, "%s", s);
     g_wifi.note_timer = 60 * 4;
 }

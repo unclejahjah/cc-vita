@@ -69,17 +69,34 @@ static int conn_gone(void) {
            errno == ETIMEDOUT || errno == EBADF;
 }
 
+static void set_addr(struct sockaddr_in *a, uint32_t ip, int port) {   // ip in network order
+    memset(a, 0, sizeof *a);
+#ifdef __vita__
+    a->sin_len = sizeof *a;
+#endif
+    a->sin_family = AF_INET;
+    a->sin_port = htons(port);
+    a->sin_addr.s_addr = ip;
+}
+
+// what failed last, for the message on screen (step and error number)
+static char g_why[48];
+static int fail(const char *step, int r) {
+    snprintf(g_why, sizeof g_why, "%s %d/%d", step, r, errno);
+    return -1;
+}
+static int g_init_net = 1, g_init_ctl = 1;   // sceNetInit / sceNetCtlInit results (1: not run)
+
 static int udp_open(int port, int broadcast) {
     int s = socket(AF_INET, SOCK_DGRAM, 0);
-    if (s < 0) return -1;
+    if (s < 0) return fail("udp", s);
     int on = 1;
     setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &on, sizeof on);
     if (broadcast) setsockopt(s, SOL_SOCKET, SO_BROADCAST, &on, sizeof on);
-    struct sockaddr_in a = {0};
-    a.sin_family = AF_INET;
-    a.sin_port = htons(port);
-    a.sin_addr.s_addr = htonl(INADDR_ANY);
-    if (bind(s, (struct sockaddr *)&a, sizeof a) < 0) { close(s); return -1; }
+    struct sockaddr_in a;
+    set_addr(&a, htonl(INADDR_ANY), port);
+    int r = bind(s, (struct sockaddr *)&a, sizeof a);
+    if (r < 0) { close(s); return fail("udp bind", r); }
     nonblocking(s);
     return s;
 }
@@ -228,10 +245,11 @@ int net_init(void) {
     if (g_ready) return 1;
 #ifdef __vita__
     if (sceSysmoduleLoadModule(SCE_SYSMODULE_NET) < 0) return 0;
-    static uint8_t mem[1024 * 1024];
+    static uint8_t mem[1024 * 1024] __attribute__((aligned(4096)));
     SceNetInitParam p = {mem, sizeof mem, 0};
-    sceNetInit(&p);    // (an error here is usually "already done"; sockets fail later if not)
-    sceNetCtlInit();
+    // (an error here is usually "already done"; sockets fail later if not, and say these)
+    g_init_net = sceNetInit(&p);
+    g_init_ctl = sceNetCtlInit();
 #endif
     for (int i = 0; i < NET_PLAYERS; i++) peers[i].c.s = -1;
     g_host.s = -1;
@@ -301,14 +319,15 @@ int net_host(const uint8_t *profile, int len) {
     if (!net_init()) { snprintf(net.error, sizeof net.error, "The network isn't available"); return 0; }
     net_leave();
     s_listen = socket(AF_INET, SOCK_STREAM, 0);
-    struct sockaddr_in a = {0};
-    a.sin_family = AF_INET;
-    a.sin_port = htons(base_port(0));
-    a.sin_addr.s_addr = htonl(INADDR_ANY);
-    int on = 1;
-    if (s_listen >= 0) setsockopt(s_listen, SOL_SOCKET, SO_REUSEADDR, &on, sizeof on);
-    if (s_listen < 0 || bind(s_listen, (struct sockaddr *)&a, sizeof a) < 0 || listen(s_listen, 4) < 0) {
-        snprintf(net.error, sizeof net.error, "Couldn't open a game (is Wi-Fi on?)");
+    struct sockaddr_in a;
+    set_addr(&a, htonl(INADDR_ANY), base_port(0));
+    int on = 1, r = 0;
+    if (s_listen < 0) fail("tcp", s_listen);
+    else setsockopt(s_listen, SOL_SOCKET, SO_REUSEADDR, &on, sizeof on);
+    if (s_listen >= 0 && (r = bind(s_listen, (struct sockaddr *)&a, sizeof a)) < 0) fail("tcp bind", r);
+    if (s_listen >= 0 && r >= 0 && (r = listen(s_listen, 4)) < 0) fail("listen", r);
+    if (s_listen < 0 || r < 0) {
+        snprintf(net.error, sizeof net.error, "Couldn't open a game (%s; init %x %x)", g_why, g_init_net, g_init_ctl);
         close_all();
         return 0;
     }
@@ -317,7 +336,7 @@ int net_host(const uint8_t *profile, int len) {
     s_beacon = socket(AF_INET, SOCK_DGRAM, 0);
     if (s_beacon >= 0) { setsockopt(s_beacon, SOL_SOCKET, SO_BROADCAST, &on, sizeof on); nonblocking(s_beacon); }
     if (s_udp < 0) {
-        snprintf(net.error, sizeof net.error, "Couldn't open a game (is Wi-Fi on?)");
+        snprintf(net.error, sizeof net.error, "Couldn't open a game (%s; init %x %x)", g_why, g_init_net, g_init_ctl);
         close_all();
         return 0;
     }
@@ -339,10 +358,8 @@ static void host_lobby(void) {
         for (int p = 0; p < NET_PLAYERS; p++) n += p == 0 || peers[p].used;
         b[4] = n;
         snprintf((char *)b + 6, NET_NAME, "%s", net_local_name());
-        struct sockaddr_in a = {0};
-        a.sin_family = AF_INET;
-        a.sin_port = htons(base_port(2));
-        a.sin_addr.s_addr = htonl(INADDR_BROADCAST);
+        struct sockaddr_in a;
+        set_addr(&a, htonl(INADDR_BROADCAST), base_port(2));
         sendto(s_beacon, b, sizeof b, 0, (struct sockaddr *)&a, sizeof a);
     }
     for (;;) {   // new arrivals: a free port, once they've said hello
@@ -531,7 +548,7 @@ int net_scan(void) {
     if (!net_init()) { snprintf(net.error, sizeof net.error, "The network isn't available"); return 0; }
     net_leave();
     s_beacon = udp_open(base_port(2), 0);
-    if (s_beacon < 0) { snprintf(net.error, sizeof net.error, "Couldn't look for games (is Wi-Fi on?)"); return 0; }
+    if (s_beacon < 0) { snprintf(net.error, sizeof net.error, "Couldn't look for games (%s; init %x %x)", g_why, g_init_net, g_init_ctl); return 0; }
     g_nfound = 0;
     net.state = NET_SCANNING;
     net.error[0] = 0;
@@ -575,14 +592,13 @@ int net_join(uint32_t addr, const uint8_t *profile, int len) {
     if (!net_init()) { snprintf(net.error, sizeof net.error, "The network isn't available"); return 0; }
     net_leave();
     int s = socket(AF_INET, SOCK_STREAM, 0);
-    struct sockaddr_in a = {0};
-    a.sin_family = AF_INET;
-    a.sin_port = htons(base_port(0));
-    a.sin_addr.s_addr = addr;
+    struct sockaddr_in a;
+    set_addr(&a, addr, base_port(0));
     // blocking: on the same network it's quick, and the host was heard a moment ago
-    if (s < 0 || connect(s, (struct sockaddr *)&a, sizeof a) < 0) {
-        if (s >= 0) close(s);
-        snprintf(net.error, sizeof net.error, "Couldn't reach that game");
+    int r = s < 0 ? fail("tcp", s) : connect(s, (struct sockaddr *)&a, sizeof a);
+    if (r < 0) {
+        if (s >= 0) { fail("connect", r); close(s); }
+        snprintf(net.error, sizeof net.error, "Couldn't reach that game (%s)", g_why);
         return 0;
     }
     tcp_tune(s);
