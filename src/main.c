@@ -328,26 +328,63 @@ static char g_last_error[256];
 
 // ---- the log file -------------------------------------------------------------------
 // ux0:data/CastleCrashers/log.txt: each distinct warning once, the files loaded and freed,
-// and the animal orbs each level places, for bugs that only show on the Vita. The run
-// before is kept as log_prev.txt. Lines collect in memory and go to the card every few
-// seconds (log_flush): a write per line cost frames in fights.
+// and slow frames, for bugs that only show on the Vita. The run
+// before is kept as log_prev.txt. Lines collect in memory and a thread of their own writes them
+// to the card (log_flush hands them over): a write from the game's thread cost frames, and
+// while the card is busy (a level's sounds loading) one took 370 ms every flush.
 #define LOG_PATH DATA_DIR "log.txt"
 #define LOG_MAX (4 << 20)
-static SceUID g_log = -1;
+static SceUID g_log = -1, g_log_sema = -1;
 static int g_log_bytes, g_log_used;
-static char g_log_buf[16384];
+static char g_log_buf[16384], g_log_out[16384];
+static volatile int g_log_out_n;   // bytes handed to the writer; 0 once written
 static uint32_t g_log_seen[2048];
 static int g_log_nseen;
+
+static int log_thread(SceSize args, void *argp) {
+    (void)args; (void)argp;
+    for (;;) {
+        sceKernelWaitSema(g_log_sema, 1, NULL);
+        if (g_log_out_n) sceIoWrite(g_log, g_log_out, g_log_out_n);
+        __atomic_store_n(&g_log_out_n, 0, __ATOMIC_SEQ_CST);
+    }
+    return 0;
+}
 
 static void log_open(void) {
     sceIoRemove(DATA_DIR "log_prev.txt");
     sceIoRename(LOG_PATH, DATA_DIR "log_prev.txt");
     g_log = sceIoOpen(LOG_PATH, SCE_O_WRONLY | SCE_O_CREAT | SCE_O_TRUNC, 0666);
+    g_log_sema = sceKernelCreateSema("cc_log", 0, 0, 1, NULL);
+    SceUID t = sceKernelCreateThread("cc_log", log_thread, 0x10000100 + 20, 0x4000, 0, 0, NULL);
+    if (g_log_sema < 0 || t < 0 || sceKernelStartThread(t, 0, NULL) < 0) g_log_sema = -1;
 }
 
+// Hands what has collected to the writer. While it's still writing the last lot, lines keep
+// collecting (it waits only when the buffer is nearly full).
 static void log_flush(void) {
-    if (g_log >= 0 && g_log_used) sceIoWrite(g_log, g_log_buf, g_log_used);
+    if (g_log < 0 || !g_log_used) return;
+    if (g_log_sema < 0) {   // no thread: write here
+        sceIoWrite(g_log, g_log_buf, g_log_used);
+        g_log_used = 0;
+        return;
+    }
+    if (__atomic_load_n(&g_log_out_n, __ATOMIC_SEQ_CST)) {
+        if (g_log_used < (int)sizeof g_log_buf - 640) return;
+        while (__atomic_load_n(&g_log_out_n, __ATOMIC_SEQ_CST)) sceKernelDelayThread(1000);
+    }
+    memcpy(g_log_out, g_log_buf, g_log_used);
+    __atomic_store_n(&g_log_out_n, g_log_used, __ATOMIC_SEQ_CST);
     g_log_used = 0;
+    sceKernelSignalSema(g_log_sema, 1);
+}
+
+// before quitting: everything on the card
+static void log_flush_wait(void) {
+    log_flush();
+    while (g_log_sema >= 0 && __atomic_load_n(&g_log_out_n, __ATOMIC_SEQ_CST)) sceKernelDelayThread(1000);
+    log_flush();
+    while (g_log_sema >= 0 && __atomic_load_n(&g_log_out_n, __ATOMIC_SEQ_CST)) sceKernelDelayThread(1000);
 }
 
 static void log_line(const char *fmt, ...) {
@@ -427,7 +464,7 @@ static Movie *prepare_movie(const char *path, int is_level, char *err, size_t n)
 static Movie *register_movie(const char *base, const char *path, Movie *m) {
     log_line("load %s%s (heap %u KB used)", path, m->truncated ? " (cut short)" : "",
              (unsigned)(mallinfo().uordblks >> 10));
-    log_flush();   // loads and frees go to the card at once: a crash right after keeps them
+    log_flush();   // loads and frees go to the writer at once: a crash right after keeps them
     GpuBlock *blk = &g_movies[g_nmovies].gpu;
     blk->uid = -1;
     if (render_upload(m, mesh_alloc, blk)) render_release_cpu(m);
@@ -854,31 +891,6 @@ static void vita_warn(AsVm *vm, const char *msg) {
     }
 }
 
-// the level's animal orbs (animal1, animal2... on the game layer), logged when they change:
-// they show in the PC harness but not on the Vita
-static void log_animals(AsVm *vm) {
-    static char last[512];
-    char now[512];
-    int len = 0, found;
-    now[0] = 0;
-    AsVal g = as_resolve_path(vm, vm->root, "loader.game.game", &found);
-    if (found && g.t == V_OBJ && g.o->type == OBJ_MC) {
-        AsMc *game = (AsMc *)g.o;
-        for (int i = 0; i < game->ndisp && len < (int)sizeof now - 96; i++) {
-            AsMc *c = game->disp[i].mc;
-            if (!c || !c->name || strncasecmp(c->name->s, "animal", 6)) continue;
-            len += snprintf(now + len, sizeof now - len, " %s(frame %d/%d at %.0f,%.0f depth %d%s%s%s alpha %.0f)",
-                            c->name->s, c->frame + 1, c->def ? c->def->nframes : 0, c->m.tx / 20, c->m.ty / 20,
-                            c->depth, c->visible ? "" : " hidden", c->removed ? " removed" : "",
-                            c->ndisp ? "" : " empty", c->alpha);
-        }
-    }
-    if (strcmp(now, last)) {
-        log_line("[%u] animals:%s", (unsigned)vm->tick, now[0] ? now : " none");
-        snprintf(last, sizeof last, "%s", now);
-    }
-}
-
 // ---- the developer intro ---------------------------------------------------------------
 // LEGAL.swf, as the original plays it at start: Newgrounds, The Behemoth's bird, the featured
 // programmer and artist. It ends by calling ChangeMovie(); START or CROSS skips it.
@@ -1034,7 +1046,7 @@ static void title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, si
                 if (item == CC_MENU_QUIT) {
                     vita2d_wait_rendering_done();
                     audio_shutdown();
-                    log_flush();
+                    log_flush_wait();
                     vita2d_fini();
                     sceKernelExitProcess(0);
                 }
@@ -1148,7 +1160,7 @@ int main(void) {
             sceCtrlPeekBufferPositive(0, &pad, 1);
             if (pad.buttons & SCE_CTRL_START) break;
         }
-        log_flush();
+        log_flush_wait();
         vita2d_fini();
         sceKernelExitProcess(0);
         return 0;
@@ -1308,7 +1320,6 @@ new_game:   // the title again after Exit to Main Menu
             // every few seconds, once the heap is half full: let go of the files left behind
             // (levels played earlier, the title). Below that they stay, so going back to the
             // map or replaying a level doesn't load them again.
-            if (vm->tick % 30 == 0) log_animals(vm);
             // (not on tick % 150: two ticks in one pass could step over it for minutes)
             static SceUInt64 last_flush;
             SceUInt64 t = sceKernelGetProcessTimeWide();
@@ -1438,7 +1449,7 @@ new_game:   // the title again after Exit to Main Menu
     gpu_free(&cache_gpu);
     gpu_free(&g_index_block);
     vita2d_free_pgf(g_font);
-    log_flush();
+    log_flush_wait();
     vita2d_fini();
     sceKernelExitProcess(0);
     return 0;
