@@ -1,7 +1,9 @@
 // Wi-Fi co-op: the lobby (TCP) and the game's frames (UDP). See net.h.
 #include "net.h"
+#include "upnp.h"
 
 #include <errno.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -26,12 +28,12 @@
 #define TCP_PORT 47710         // the host's lobby
 #define UDP_PORT 47711         // the host's frames
 #define BEACON_PORT 47712      // "a game here", broadcast by the host
-#define RING 256               // frames kept (lockstep keeps everyone within NET_DELAY of each other)
+#define RING 256               // frames kept (lockstep keeps everyone within net.delay of each other)
 #define MAX_SEND 32            // frames or inputs in one packet
 #define TIMEOUT_MS 45000       // nothing heard for this long: that Vita is gone (a file can take 15 s to load)
 #define MAX_PROFILE (3 * 65536)
 
-enum { MSG_HELLO = 1, MSG_WELCOME, MSG_REFUSE, MSG_ROSTER, MSG_START, MSG_BYE };
+enum { MSG_HELLO = 1, MSG_WELCOME, MSG_REFUSE, MSG_ROSTER, MSG_START, MSG_BYE, MSG_PING, MSG_PONG };
 
 NetInfo net;
 uint32_t net_desync_tick;
@@ -217,6 +219,7 @@ typedef struct {
     uint32_t in_have;          // its inputs 0..in_have-1 are here
     uint32_t acked;            // it has frames 0..acked-1
     uint32_t heard;            // ms of the last packet
+    uint32_t rtt;              // ms there and back, the worst lately (lobby pings)
     uint8_t *profile;
     int nprofile;
 } Peer;
@@ -226,7 +229,7 @@ static int s_listen = -1, s_udp = -1, s_beacon = -1;
 static Peer peers[NET_PLAYERS];    // host: index = port - 1 (0 is the host itself, unused)
 static Conn g_host;                // client: the connection to the host
 static struct sockaddr_in g_host_udp;
-static uint32_t g_host_heard, g_last_beacon;
+static uint32_t g_host_heard, g_last_beacon, g_last_ping;
 static NetHost g_found[8];
 static int g_nfound;
 static uint8_t *g_my_profile;
@@ -297,8 +300,8 @@ static void set_profile(const uint8_t *profile, int len) {
 static void reset_game(void) {
     memset(frames, 0, sizeof frames);
     memset(mine, 0, sizeof mine);
-    // the first NET_DELAY frames have no buttons: nobody read any yet
-    frames_have = mine_have = NET_DELAY;
+    // the first net.delay frames have no buttons: nobody read any yet
+    frames_have = mine_have = net.delay;
     mine_acked = 0;
     net_desync_tick = 0;
 }
@@ -346,6 +349,7 @@ int net_host(const uint8_t *profile, int len) {
     net.state = NET_HOSTING;
     net.error[0] = 0;
     roster();
+    upnp_open(base_port(0), base_port(1));   // and from the internet, by the game code
     return 1;
 }
 
@@ -373,10 +377,13 @@ static void host_lobby(void) {
         peers[p].heard = t;
         tcp_tune(s);
     }
+    int ping = t - g_last_ping >= 250;   // how far away each player is: the game's delay
+    if (ping) g_last_ping = t;
     int changed = 0;
     for (int p = 1; p < NET_PLAYERS; p++) {
         Peer *pe = &peers[p];
         if (pe->c.s < 0) continue;
+        if (ping && pe->used) { uint8_t b[4]; put32(b, t); conn_send(&pe->c, MSG_PING, b, 4, NULL, 0); }
         int type, len;
         uint8_t *m;
         while (conn_recv(&pe->c, &type, &m, &len)) {
@@ -397,6 +404,9 @@ static void host_lobby(void) {
                 uint8_t port = p + 1;
                 conn_send(&pe->c, MSG_WELCOME, &port, 1, NULL, 0);
                 changed = 1;
+            } else if (type == MSG_PONG && len >= 4) {
+                uint32_t rtt = t - get32(m);
+                pe->rtt = rtt > pe->rtt ? rtt : pe->rtt - (pe->rtt - rtt) / 8;
             } else if (type == MSG_BYE) {
                 pe->c.closed = 1;
             }
@@ -416,12 +426,22 @@ int net_start(void) {
     if (net.state != NET_HOSTING) return 0;
     net.seed = now_ms() * 2654435761u ^ 0x5bd1e995u;
     g_active = 1;
-    for (int p = 1; p < NET_PLAYERS; p++) g_active |= peers[p].used << p;
-    // the start: seed, who's in, names, then each port's profile
-    int total = 4 + 1 + sizeof net.names;
+    uint32_t rtt = 0;
+    for (int p = 1; p < NET_PLAYERS; p++) {
+        g_active |= peers[p].used << p;
+        if (peers[p].used && peers[p].rtt > rtt) rtt = peers[p].rtt;
+    }
+    // a frame's buttons go to the host and back before it runs: the furthest player's round trip
+    // in frames, on top of the Wi-Fi delay
+    net.delay = NET_DELAY + rtt * 30 / 1000;
+    if (net.delay > NET_MAX_DELAY) net.delay = NET_MAX_DELAY;
+    if (getenv("NET_DELAY")) net.delay = atoi(getenv("NET_DELAY"));
+    // the start: seed, delay, who's in, names, then each port's profile
+    int total = 4 + 1 + 1 + sizeof net.names;
     for (int p = 0; p < NET_PLAYERS; p++) total += 4 + (p == 0 ? g_my_nprofile : peers[p].used ? peers[p].nprofile : 0);
     uint8_t *b = malloc(total), *q = b;
     put32(q, net.seed); q += 4;
+    *q++ = net.delay;
     *q++ = g_active;
     memcpy(q, net.names, sizeof net.names); q += sizeof net.names;
     for (int p = 0; p < NET_PLAYERS; p++) {
@@ -438,14 +458,14 @@ int net_start(void) {
         if (peers[p].used) {
             conn_send(&peers[p].c, MSG_START, b, total, NULL, 0);
             conn_flush(&peers[p].c);
-            peers[p].in_have = NET_DELAY;
+            peers[p].in_have = net.delay;
             peers[p].acked = 0;
             peers[p].heard = now_ms();
         }
     free(b);
     if (s_beacon >= 0) { close(s_beacon); s_beacon = -1; }
     reset_game();
-    for (int t = 0; t < NET_DELAY; t++) frames[t].active = g_active;
+    for (int t = 0; t < net.delay; t++) frames[t].active = g_active;
     net.state = NET_PLAYING;
     return 1;
 }
@@ -523,7 +543,7 @@ static void host_game(void) {
     for (int p = 1; p < NET_PLAYERS; p++) {
         Peer *pe = &peers[p];
         if (!pe->used || pe->dropped || !pe->have_udp) continue;
-        uint32_t first = pe->acked < NET_DELAY ? NET_DELAY : pe->acked;
+        uint32_t first = pe->acked < (uint32_t)net.delay ? (uint32_t)net.delay : pe->acked;
         if (first + RING / 2 < frames_have) first = frames_have - RING / 2;
         int count = frames_have > first ? frames_have - first : 0;
         if (count > MAX_SEND) count = MAX_SEND;
@@ -588,37 +608,108 @@ int net_hosts(NetHost *out, int max) {
     return n;
 }
 
+// connecting to a host, on its own thread: over the internet, or to an address nobody's at,
+// connect() can take a long while, and the lobby must keep drawing
+static pthread_mutex_t g_conn_lock = PTHREAD_MUTEX_INITIALIZER;
+static unsigned g_conn_gen;          // each join (or leave): a thread on an older one keeps quiet
+static int g_conn_s = -1, g_conn_done;
+static char g_conn_why[48];
+
+typedef struct { unsigned gen; struct sockaddr_in a; } ConnJob;
+
+static void *connect_thread(void *arg) {
+    ConnJob job = *(ConnJob *)arg;
+    free(arg);
+    char why[48] = "";
+    int s = socket(AF_INET, SOCK_STREAM, 0), r = -1;
+    if (s < 0) snprintf(why, sizeof why, "tcp %d/%d", s, errno);
+    else if ((r = connect(s, (struct sockaddr *)&job.a, sizeof job.a)) < 0) {
+        snprintf(why, sizeof why, "connect %d/%d", r, errno);
+        close(s);
+        s = -1;
+    }
+    pthread_mutex_lock(&g_conn_lock);
+    if (job.gen == g_conn_gen) {
+        g_conn_s = s;
+        g_conn_done = 1;
+        snprintf(g_conn_why, sizeof g_conn_why, "%s", why);
+    } else if (s >= 0) close(s);
+    pthread_mutex_unlock(&g_conn_lock);
+    return NULL;
+}
+
+static void connect_cancel(void) {
+    pthread_mutex_lock(&g_conn_lock);
+    g_conn_gen++;
+    if (g_conn_done && g_conn_s >= 0) close(g_conn_s);
+    g_conn_s = -1;
+    g_conn_done = 0;
+    pthread_mutex_unlock(&g_conn_lock);
+}
+
 int net_join(uint32_t addr, const uint8_t *profile, int len) {
     if (!net_init()) { snprintf(net.error, sizeof net.error, "The network isn't available"); return 0; }
     net_leave();
-    int s = socket(AF_INET, SOCK_STREAM, 0);
-    struct sockaddr_in a;
-    set_addr(&a, addr, base_port(0));
-    // blocking: on the same network it's quick, and the host was heard a moment ago
-    int r = s < 0 ? fail("tcp", s) : connect(s, (struct sockaddr *)&a, sizeof a);
-    if (r < 0) {
-        if (s >= 0) { fail("connect", r); close(s); }
-        snprintf(net.error, sizeof net.error, "Couldn't reach that game (%s)", g_why);
+    ConnJob *job = malloc(sizeof *job);
+    set_addr(&job->a, addr, base_port(0));
+    g_host_udp = job->a;
+    g_host_udp.sin_port = htons(base_port(1));
+    pthread_mutex_lock(&g_conn_lock);
+    job->gen = ++g_conn_gen;
+    g_conn_done = 0;
+    g_conn_s = -1;
+    pthread_mutex_unlock(&g_conn_lock);
+    pthread_t th;
+    pthread_attr_t at;
+    pthread_attr_init(&at);
+    pthread_attr_setstacksize(&at, 64 * 1024);
+    pthread_attr_setdetachstate(&at, PTHREAD_CREATE_DETACHED);
+    int bad = pthread_create(&th, &at, connect_thread, job);
+    pthread_attr_destroy(&at);
+    if (bad) {
+        free(job);
+        snprintf(net.error, sizeof net.error, "Couldn't reach that game (thread %d)", bad);
         return 0;
+    }
+    set_profile(profile, len);
+    memset(net.names, 0, sizeof net.names);
+    net.port = 0;
+    net.state = NET_CONNECTING;
+    net.error[0] = 0;
+    g_host_heard = now_ms();
+    return 1;
+}
+
+static void lost(const char *why);
+
+static void client_connecting(void) {
+    pthread_mutex_lock(&g_conn_lock);
+    int done = g_conn_done, s = g_conn_s;
+    char why[48];
+    memcpy(why, g_conn_why, sizeof why);
+    if (done) { g_conn_done = 0; g_conn_s = -1; }
+    pthread_mutex_unlock(&g_conn_lock);
+    if (!done) {
+        if (now_ms() - g_host_heard > 20000) { connect_cancel(); lost("Couldn't reach that game (no answer)"); }
+        return;
+    }
+    if (s < 0) {
+        char m[96];
+        snprintf(m, sizeof m, "Couldn't reach that game (%s)", why);
+        lost(m);
+        return;
     }
     tcp_tune(s);
     g_host.s = s;
     s_udp = udp_open(getenv("NET_PORT") ? 0 : base_port(1), 0);
     if (s_udp < 0) s_udp = udp_open(0, 0);
-    g_host_udp = a;
-    g_host_udp.sin_port = htons(base_port(1));
     uint8_t head[4 + NET_NAME] = {0};
     put32(head, NET_VERSION);
     snprintf((char *)head + 4, NET_NAME, "%s", net_local_name());
-    conn_send(&g_host, MSG_HELLO, head, sizeof head, profile, len);
+    conn_send(&g_host, MSG_HELLO, head, sizeof head, g_my_profile, g_my_nprofile);
     conn_flush(&g_host);
-    set_profile(profile, len);
-    memset(net.names, 0, sizeof net.names);
-    net.port = 0;
     net.state = NET_JOINING;
-    net.error[0] = 0;
     g_host_heard = now_ms();
-    return 1;
 }
 
 static void lost(const char *why) {
@@ -640,9 +731,13 @@ static void client_lobby(void) {
         } else if (type == MSG_ROSTER && len >= (int)sizeof net.names) {
             memcpy(net.names, m, sizeof net.names);
             for (int p = 0; p < NET_PLAYERS; p++) net.names[p][NET_NAME - 1] = 0;
-        } else if (type == MSG_START && len >= 5 + (int)sizeof net.names) {
+        } else if (type == MSG_PING && len >= 4) {
+            conn_send(&g_host, MSG_PONG, m, 4, NULL, 0);
+        } else if (type == MSG_START && len >= 6 + (int)sizeof net.names) {
             const uint8_t *q = m, *end = m + len;
             net.seed = get32(q); q += 4;
+            net.delay = *q++;
+            if (net.delay < 1 || net.delay > NET_MAX_DELAY + 16) { lost("The game's start got lost"); return; }
             uint8_t active = *q++;
             memcpy(net.names, q, sizeof net.names); q += sizeof net.names;
             for (int p = 0; p < NET_PLAYERS; p++) {
@@ -655,7 +750,7 @@ static void client_lobby(void) {
                 q += n;
             }
             reset_game();
-            for (int t = 0; t < NET_DELAY; t++) frames[t].active = active;
+            for (int t = 0; t < net.delay; t++) frames[t].active = active;
             g_host_heard = now_ms();
             net.state = NET_PLAYING;
             return;
@@ -675,7 +770,9 @@ static void client_game(void) {
         socklen_t fl = sizeof from;
         int n = recvfrom(s_udp, buf, sizeof buf, 0, (struct sockaddr *)&from, &fl);
         if (n < 0) break;
-        if (n < 13 || memcmp(buf, "CCF", 3) || from.sin_addr.s_addr != g_host_udp.sin_addr.s_addr) continue;
+        // (from the host's frames port: its address can differ from the one joined, as when the
+        // router sends a game back in to its own network)
+        if (n < 13 || memcmp(buf, "CCF", 3) || from.sin_port != g_host_udp.sin_port) continue;
         g_host_heard = t;
         uint32_t have = get32(buf + 4), first = get32(buf + 8);
         if (have > mine_acked && have <= mine_have) mine_acked = have;
@@ -698,7 +795,7 @@ static void client_game(void) {
     if (g_host.closed) { lost("The host left the game"); return; }
     if (t - g_host_heard > TIMEOUT_MS) { lost("Lost the connection to the host"); return; }
     // my inputs the host hasn't got (and, in the same packet, how many frames I have)
-    uint32_t first = mine_acked < NET_DELAY ? NET_DELAY : mine_acked;
+    uint32_t first = mine_acked < (uint32_t)net.delay ? (uint32_t)net.delay : mine_acked;
     int count = mine_have > first ? mine_have - first : 0;
     if (count > MAX_SEND) count = MAX_SEND;
     memcpy(buf, "CCI", 3);
@@ -714,6 +811,7 @@ void net_poll(void) {
     switch (net.state) {
     case NET_HOSTING: host_lobby(); break;
     case NET_SCANNING: scan_poll(); break;
+    case NET_CONNECTING: client_connecting(); break;
     case NET_JOINING: case NET_LOBBY: client_lobby(); break;
     case NET_PLAYING:
         if (net.port == 1) host_game();
@@ -729,6 +827,8 @@ void net_leave(void) {
     for (int p = 1; p < NET_PLAYERS; p++)
         if (peers[p].c.s >= 0) { conn_send(&peers[p].c, MSG_BYE, NULL, 0, NULL, 0); conn_flush(&peers[p].c); }
     if (g_host.s >= 0) { conn_send(&g_host, MSG_BYE, NULL, 0, NULL, 0); conn_flush(&g_host); }
+    if (net.state == NET_CONNECTING) connect_cancel();
+    if (net.port == 1) upnp_close();
     close_all();
     net.state = NET_OFF;
     net.port = 0;
@@ -744,7 +844,45 @@ const NetFrame *net_frame(uint32_t t) {
 }
 
 void net_submit(uint32_t t, const NetInput *in) {
-    if (t != mine_have || t >= frames_have + RING - NET_DELAY - 1) return;
+    if (t != mine_have || t >= frames_have + RING - net.delay - 1) return;
     mine[t % RING] = *in;
     mine_have++;
+}
+
+// ---- the game code: the host's internet address, in 7 letters and numbers ----
+
+static const char CODE_CHARS[] = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";   // no I, L, O, U
+
+static unsigned code_check(uint32_t ip) { return (ip * 2654435761u) >> 29; }   // 3 bits
+
+void net_code(uint32_t addr, char *out) {
+    uint32_t ip = ntohl(addr);
+    uint64_t v = (uint64_t)ip << 3 | code_check(ip);
+    for (int i = NET_CODE_LEN - 1; i >= 0; i--) { out[i] = CODE_CHARS[v & 31]; v >>= 5; }
+    out[NET_CODE_LEN] = 0;
+}
+
+uint32_t net_code_addr(const char *code) {
+    uint64_t v = 0;
+    int n = 0;
+    for (const char *p = code; *p; p++) {
+        char c = *p >= 'a' && *p <= 'z' ? *p - 32 : *p;
+        if (c == '-' || c == ' ') continue;
+        if (c == 'O') c = '0';
+        if (c == 'I' || c == 'L') c = '1';
+        const char *k = strchr(CODE_CHARS, c);
+        if (!k || !c) return 0;
+        v = v << 5 | (k - CODE_CHARS);
+        n++;
+    }
+    if (n != NET_CODE_LEN || v >> 35) return 0;
+    uint32_t ip = (uint32_t)(v >> 3);
+    return ip && (v & 7) == code_check(ip) ? htonl(ip) : 0;
+}
+
+int net_internet(uint32_t *addr, const char **why) {
+    int st = upnp_state();
+    if (addr) *addr = st == UPNP_OPEN ? upnp_address() : 0;
+    if (why) *why = st == UPNP_FAILED ? upnp_why() : "";
+    return st == UPNP_OPEN ? 1 : st == UPNP_WORKING ? 0 : -1;
 }

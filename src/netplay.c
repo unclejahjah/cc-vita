@@ -46,7 +46,7 @@ int netplay_step(AsVm *vm, uint32_t t, NetInput *mine, int no_start) {
     if (!f) return 0;
     mine->loads = g_done;
     mine->check = t > 0 ? netplay_check(vm) : 0;   // the state after frame t - 1
-    net_submit(t + NET_DELAY, mine);
+    net_submit(t + net.delay, mine);
     memset(cc_keys, 0, sizeof cc_keys);
     int first = 1;
     for (int p = 0; p < NET_PLAYERS; p++) {

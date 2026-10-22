@@ -12,7 +12,7 @@ void netplay_begin(AsVm *vm);
 void netplay_end(void);
 
 // Frame t (from 0): 0 while it can't run yet. Else submits this Vita's input for t +
-// NET_DELAY, sets cc_keys[] and the ports' states from frame t, and returns 1: run as_tick.
+// net.delay, sets cc_keys[] and the ports' states from frame t, and returns 1: run as_tick.
 // no_start: Start means nothing to the game now (the pause menu has it in levels and the map).
 int netplay_step(AsVm *vm, uint32_t t, NetInput *mine, int no_start);
 

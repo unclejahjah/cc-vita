@@ -67,9 +67,9 @@ target_link_libraries(${PROJECT_NAME}
 )
 
 if(CC_NET)
-target_sources(${PROJECT_NAME} PRIVATE src/net.c src/netplay.c)
+target_sources(${PROJECT_NAME} PRIVATE src/net.c src/netplay.c src/upnp.c)
 target_compile_definitions(${PROJECT_NAME} PRIVATE CC_NET)
-target_link_libraries(${PROJECT_NAME} SceNet_stub SceNetCtl_stub SceAppUtil_stub)
+target_link_libraries(${PROJECT_NAME} SceNet_stub SceNetCtl_stub SceAppUtil_stub pthread)
 endif()
 
 # Vita trophies (need the NoTrpDrm plugin): an unsigned trophy pack and its NP communication id.

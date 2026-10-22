@@ -23,8 +23,8 @@ This produces `cc_vita.vpk`. Install it with VitaShell. The game's files go in `
 ```
 gcc -O2 -Ithird_party/libtess2/Include -o hosttest tools/hosttest.c src/swf.c src/render.c \
   src/as_core.c src/as_mc.c src/as_lib.c src/as_render.c src/cc_host.c src/cc_native.c \
-  src/cc_buttons.c src/hostfont.c src/strtab.c src/pause_menu.c src/help_book.c src/net.c src/netplay.c \
-  third_party/libtess2/Source/*.c -lm -lz
+  src/cc_buttons.c src/hostfont.c src/strtab.c src/pause_menu.c src/help_book.c src/net.c src/netplay.c src/upnp.c \
+  third_party/libtess2/Source/*.c -lm -lz -lpthread
 ./hosttest --as GAME_DIR MAIN.swf out FRAMES EVERY
 ```
 
