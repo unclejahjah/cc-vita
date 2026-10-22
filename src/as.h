@@ -201,6 +201,10 @@ struct AsVm {
     long long ops;              // actions executed (profiling)
     uint32_t tick;              // frames run so far
     uint32_t rand_state;
+    // getTimer()'s clock in ms; NULL: the real one. Wi-Fi play gives every Vita the same
+    // clock (from the frame count), as their games must stay the same frame by frame.
+    double (*time_ms)(AsVm *vm);
+    unsigned next_instance;     // unnamed clips enumerated: "instanceN"
     void (*trace)(AsVm *vm, const char *msg);
     void (*loaded)(AsVm *vm, AsMc *target);    // after a loadMovie finished (its first frame has run)
     void (*warn)(AsVm *vm, const char *msg);   // missing functions and other surprises

@@ -19,6 +19,10 @@
 #include "../src/help_book.h"
 #include "../src/strtab.h"
 #include "../src/swf.h"
+#include "../src/net.h"
+#include "../src/netplay.h"
+#include <arpa/inet.h>
+#include <unistd.h>
 
 #define SCREEN_W 960
 #define SCREEN_H 544
@@ -359,6 +363,36 @@ static int as_mode(int argc, char **argv) {
             printf("font: %s\n", err);
         }
     }
+    // NET_MODE=host|join: a Wi-Fi game over this PC's network with other hosttests (see
+    // HANDOFF.md). NET_WAIT=n: the host starts once n players are in; NET_ADDR: the host's
+    // address for join (default 127.0.0.1); CC_PAD="frame:CCB bit[:hold],..." this copy's
+    // buttons; NET_JITTER=ms: a random wait each frame, as a slow Vita; CC_PREFETCH=N: each
+    // level file takes N frames to arrive. NET_LOG=1 prints each frame's check.
+    const char *net_mode = getenv("NET_MODE");
+    if (net_mode) {
+        static uint8_t prof[3 * 65536];
+        int plen = cc_storage_pack(0, prof, sizeof prof);
+        if (!strcmp(net_mode, "host")) {
+            if (!net_host(prof, plen)) { printf("net: %s\n", net.error); return 1; }
+            int want = getenv("NET_WAIT") ? atoi(getenv("NET_WAIT")) : 2;
+            for (int i = 0; i < 30000; i++) {
+                net_poll();
+                int n = 0;
+                for (int p = 0; p < NET_PLAYERS; p++) n += net.names[p][0] != 0;
+                if (n >= want) break;
+                usleep(1000);
+            }
+            net_start();
+        } else {
+            const char *addr = getenv("NET_ADDR") ? getenv("NET_ADDR") : "127.0.0.1";
+            if (!net_join(inet_addr(addr), prof, plen)) { printf("net: %s\n", net.error); return 1; }
+            for (int i = 0; i < 30000 && net.state != NET_PLAYING && net.state != NET_LOST; i++) { net_poll(); usleep(1000); }
+        }
+        if (net.state != NET_PLAYING) { printf("net: no game (%s)\n", net.error); return 1; }
+        printf("net: playing as port %d, seed %u\n", net.port, net.seed);
+        netplay_begin(vm);
+        vm->prefetch = netplay_prefetch;
+    }
     vm->root = as_mc_new(vm, start, &start->root, NULL, 0);
     if (!strcasecmp(argv[3], "MAIN.swf") && !getenv("CC_NO_LOADING")) cc_loading_attach(vm);
     W = SCREEN_W; H = SCREEN_H;
@@ -399,8 +433,44 @@ static int as_mode(int argc, char **argv) {
             render_begin(&vb);
             printf("  [restart at %d]\n", f);
         }
-        memset(cc_keys, 0, sizeof cc_keys);
-        for (const char *p = keys; p && *p;) {
+        if (net_mode) {   // this frame from everyone's buttons, once they're here
+            NetInput in = {0};
+            for (const char *p = getenv("CC_PAD"); p && *p;) {
+                int kf = 0, bit = 0, hold = 2;
+                int n = sscanf(p, "%d:%d:%d", &kf, &bit, &hold);
+                // frame kf: the frame the buttons are read on (used NET_DELAY frames later)
+                if (n >= 2 && f >= kf && f < kf + (n == 3 ? hold : 2) && bit >= 0 && bit < CCB_COUNT) in.buttons |= 1u << bit;
+                p = strchr(p, ',');
+                if (p) p++;
+            }
+            static int file_wait;
+            const char *want = netplay_file_wanted();
+            if (want && ++file_wait > (getenv("CC_PREFETCH") ? atoi(getenv("CC_PREFETCH")) : 0)) {
+                netplay_file_ready();
+                file_wait = 0;
+            }
+            if (getenv("NET_JITTER")) usleep(rand() % (atoi(getenv("NET_JITTER")) * 1000 + 1));
+            int waited = 0;
+            while (!netplay_step(vm, f, &in, 0)) {
+                net_poll();
+                if (net.state != NET_PLAYING || ++waited > 20000) { printf("net: stopped at frame %d (%s)\n", f, net.error); return 1; }
+                usleep(500);
+                want = netplay_file_wanted();
+                if (want && ++file_wait > (getenv("CC_PREFETCH") ? atoi(getenv("CC_PREFETCH")) : 0)) {
+                    netplay_file_ready();
+                    file_wait = 0;
+                }
+            }
+            net_poll();
+            if (getenv("NET_TEST_DESYNC") && f == atoi(getenv("NET_TEST_DESYNC"))) vm->rand_state ^= 1;   // to see it caught
+            if (f == frames - 1)
+                printf("net: last frame %d, check %04x, %s\n", f, netplay_check(vm),
+                       net_desync_tick ? "OUT OF STEP" : "in step all the way");
+            if (net_desync_tick && !getenv("NET_LOG")) { static int said; if (!said++) printf("net: out of step from frame %u\n", net_desync_tick); }
+            if (getenv("NET_LOG")) printf("  [net] frame %d check %04x%s\n", f, netplay_check(vm), net_desync_tick ? " DESYNC" : "");
+        }
+        if (!net_mode) memset(cc_keys, 0, sizeof cc_keys);
+        for (const char *p = net_mode ? NULL : keys; p && *p;) {
             int kf = 0, code = 0, hold = 2;
             int n = sscanf(p, "%d:%d:%d", &kf, &code, &hold);
             if (n >= 2 && f >= kf && f < kf + (n == 3 ? hold : 2) && code > 0 && code < 256) cc_keys[code] = 1;
@@ -563,6 +633,7 @@ static int as_mode(int argc, char **argv) {
             if (getenv("CC_MENU") && f == atoi(getenv("CC_MENU"))) {   // CC_MENU=frame: the Vita's title menu
                 if (!panel) {
                     cc_native_root_functions(vm, &vm->root->obj);
+                    cc_menu_wifi = getenv("CC_MENU_WIFI") != NULL;   // the co-op build's menu
                     panel = cc_menu_attach(vm, vm->root->movie->stage_w * 0.226f, vm->root->movie->stage_h * 0.635f);
                     if (panel) cc_menu_highlight(vm, panel, getenv("CC_MENU_ITEM") ? atoi(getenv("CC_MENU_ITEM")) : 0);
                 }

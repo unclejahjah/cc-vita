@@ -19,6 +19,22 @@
 
 uint8_t cc_keys[256];
 
+static const uint8_t PORT_KEYS[4][CCB_COUNT] = {
+    {49, 2, 3, 53, 37, 38, 39, 40, 117, 118, 119, 120, 65, 87, 83, 68, 81, 69, 67, 66},
+    {50, 4, 5, 54, 8, 9, 12, 13, 121, 122, 123, 124, 16, 20, 17, 18, 27, 33, 32, 34},
+    {51, 6, 7, 55, 88, 89, 90, 96, 125, 126, 127, 128, 97, 100, 98, 99, 101, 103, 102, 104},
+    {52, 10, 11, 56, 105, 106, 107, 108, 129, 130, 131, 132, 109, 112, 110, 111, 113, 115, 114, 116},
+};
+
+void cc_port_keys(int port, uint32_t buttons) {
+    if (port < 1 || port > 4) return;
+    for (int b = 0; b < CCB_COUNT; b++)
+        if (buttons >> b & 1) cc_keys[PORT_KEYS[port - 1][b]] = 1;
+}
+
+int cc_net_port;
+char cc_net_names[4][32];
+
 static AsVal key_isdown(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
     (void)this_;
     int code = as_toint32(vm, ARG(0));
@@ -76,7 +92,8 @@ static AsVal ret_zero(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
 
 // GetLocalSecond(): the clock's seconds (0-59); the loading screen picks its hint with it
 static AsVal local_second(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
-    (void)vm; (void)this_; (void)argc; (void)argv;
+    (void)this_; (void)argc; (void)argv;
+    if (cc_net_port) return as_num(vm->tick / 30 % 60);   // the same on every Vita
     time_t t = time(NULL);
     struct tm *tm = localtime(&t);
     return as_num(tm ? tm->tm_sec : 0);
@@ -228,6 +245,80 @@ int cc_storage_load(const char *path) {
     return ok;
 }
 
+// ---- profiles over Wi-Fi ----
+// A port's profile as (address u16 LE, value u8) for each non-zero slot: the values are bytes,
+// as WriteStorage keeps them.
+int cc_storage_pack(int port, uint8_t *out, int max) {
+    int n = 0;
+    for (int a = 0; a < STORAGE_SIZE; a++) {
+        if (storage[port][a] == 0) continue;
+        if (n + 3 > max) return -1;
+        out[n++] = a & 255;
+        out[n++] = a >> 8;
+        out[n++] = (uint8_t)(int)storage[port][a];
+    }
+    return n;
+}
+
+void cc_storage_unpack(int port, const uint8_t *in, int len) {
+    memset(storage[port], 0, sizeof storage[port]);
+    for (int i = 0; i + 3 <= len; i += 3) storage[port][in[i] | in[i + 1] << 8] = in[i + 2];
+}
+
+void cc_storage_clear(void) {
+    memset(storage, 0, sizeof storage);
+    memset(cursor, 0, sizeof cursor);
+}
+
+// The save file with port 0 (this Vita's own player) replaced by from_port's profile; the
+// file's other ports are kept. For a Wi-Fi game, where this Vita's player is on another port.
+int cc_storage_save_as(const char *path, int from_port) {
+    uint32_t *keys = NULL, nkeys = 0;
+    double *vals = NULL;
+    FILE *f = fopen(path, "rb");
+    if (f) {
+        char magic[4];
+        uint32_t n = 0;
+        if (fread(magic, 1, 4, f) == 4 && !memcmp(magic, "CCS2", 4) && fread(&n, 4, 1, f) == 1 && n <= 4 * STORAGE_SIZE) {
+            keys = malloc(n * sizeof *keys + 1);
+            vals = malloc(n * sizeof *vals + 1);
+            for (uint32_t i = 0; keys && vals && i < n; i++) {
+                uint32_t k;
+                double v;
+                if (fread(&k, 4, 1, f) != 1 || fread(&v, 8, 1, f) != 1) break;
+                if ((k >> 16) == 0 || (k >> 16) >= 4) continue;   // port 0 is replaced
+                keys[nkeys] = k;
+                vals[nkeys++] = v;
+            }
+        }
+        fclose(f);
+    }
+    f = fopen(path, "wb");
+    int ok = 0;
+    if (f) {
+        uint32_t n = nkeys;
+        for (int a = 0; a < STORAGE_SIZE; a++) n += storage[from_port][a] != 0;
+        fwrite("CCS2", 1, 4, f);
+        fwrite(&n, 4, 1, f);
+        for (int a = 0; a < STORAGE_SIZE; a++)
+            if (storage[from_port][a] != 0) {
+                uint32_t key = (uint32_t)a;
+                fwrite(&key, 4, 1, f);
+                fwrite(&storage[from_port][a], 8, 1, f);
+            }
+        for (uint32_t i = 0; i < nkeys; i++) {
+            fwrite(&keys[i], 4, 1, f);
+            fwrite(&vals[i], 8, 1, f);
+        }
+        ok = !ferror(f);
+        fclose(f);
+    }
+    free(keys);
+    free(vals);
+    cc_storage_dirty = 0;
+    return ok;
+}
+
 // SetTextNumeric(textField, value): shows a number in a text field, as a whole number (the
 // executable's is an integer: Giraffey's +10% leaves exp with a fraction that never shows)
 static AsVal set_text_numeric(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
@@ -246,8 +337,10 @@ static AsVal set_text_numeric(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
 // and the stat screen. The Vita has one local profile per port, so "Player N".
 static AsVal gamer_tag(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
     (void)this_;
-    char s[16];
-    snprintf(s, sizeof s, "Player %d", (int)as_tonum(vm, ARG(0)) + 1);
+    char s[40];
+    int p = (int)as_tonum(vm, ARG(0));
+    if (cc_net_port && p >= 0 && p < 4 && cc_net_names[p][0]) return as_strv(as_str(vm, cc_net_names[p]));
+    snprintf(s, sizeof s, "Player %d", p + 1);
     return as_strv(as_str(vm, s));
 }
 
@@ -294,6 +387,9 @@ void cc_achievements_load(const char *path) {
 static AsVal unlock_achievement(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
     (void)this_;
     int id = as_toint32(vm, ARG(1));
+    // in a Wi-Fi game every Vita runs everyone's unlocks: only this Vita's player's count
+    // (the port is 0-based here, as in ReadStorage)
+    if (cc_net_port && as_toint32(vm, ARG(0)) != cc_net_port - 1) return as_undef();
     if (id < 1 || id > CC_ACHIEVEMENTS || (ach_bits >> id & 1)) return as_undef();
     ach_bits |= 1u << id;
     ach_new = id;
@@ -650,6 +746,8 @@ static const char *text_for_number(AsVm *vm, int n) {
 }
 
 void cc_host_init(AsVm *vm) {
+    bsp_pending = 0;   // a new game: nothing left over from the last one
+    memset(cursor, 0, sizeof cursor);
     vm->loaded = on_loaded;
     vm->hold_load = hold_load;
     vm->text_for_number = text_for_number;

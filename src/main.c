@@ -37,12 +37,21 @@
 #ifdef CC_TROPHIES
 #include "trophies.h"
 #endif
+#ifdef CC_NET
+#include "netplay.h"
+#endif
 
 // parsed SWFs and the script heap (meshes live in GPU memory blocks outside it)
 int _newlib_heap_size_user = 160 * 1024 * 1024;
 
 #define DATA_DIR "ux0:data/CastleCrashers/"
+#ifdef CC_NET
+// the co-op app keeps a save of its own (a copy of save.dat the first time), so it can't harm
+// the main app's while Wi-Fi play is new
+#define SAVE_PATH DATA_DIR "save_coop.dat"
+#else
 #define SAVE_PATH DATA_DIR "save.dat"   // the game's storage (profiles, levels, unlocks)
+#endif
 #define ACH_PATH DATA_DIR "achievements.dat"
 #define SETTINGS_PATH DATA_DIR "settings.txt"   // Help & Options' Settings: music and sound effects volume
 #define MAX_BATCH 65535   // u16 indices; a multiple of 3
@@ -676,49 +685,41 @@ static int free_unused_movies(AsVm *vm, RecolourCache *cache, void *cache_mem, s
     return unused;
 }
 
-// ---- controls -> the key codes f_GetButtons gives port 1 ---------------------------
-
-enum {
-    K_ACCEPT = 2, K_BACK = 3, K_LEFT = 37, K_UP = 38, K_RIGHT = 39, K_DOWN = 40,
-    K_START = 49, K_SELECT = 53, K_PUNCH1 = 65, K_R2 = 66, K_L2 = 67, K_PROJECTILE = 68,
-    K_MAGIC = 69, K_SHIELD = 81, K_JUMP = 83, K_PUNCH2 = 87,
-    // the light-tilt directions (f_Walk: these walk, the full ones above run)
-    K_WALK_LEFT = 117, K_WALK_UP = 118, K_WALK_RIGHT = 119, K_WALK_DOWN = 120,
-};
+// ---- controls -> the game's buttons (cc_port_keys gives them port 1's key codes) -------
 
 #define STICK_DEAD 40   // of 128: below this the stick is centred
 #define STICK_RUN 100   // at or beyond this it's a full tilt
 
-static void map_pad(const SceCtrlData *pad, int debug, int in_game) {
-    memset(cc_keys, 0, sizeof cc_keys);
-    if (debug) return;
+static uint32_t pad_buttons(const SceCtrlData *pad, int in_game) {
+    uint32_t k = 0;
     unsigned b = pad->buttons;
     int lx = pad->lx - 128, ly = pad->ly - 128;
     // the console scripts run on a full tilt and walk on a light one; the D-pad runs. Outside a
     // level (map, stat screen, menus) only the full directions mean anything: any tilt is one.
     int run = in_game ? STICK_RUN : STICK_DEAD;
-    if ((b & SCE_CTRL_LEFT) || lx <= -run) cc_keys[K_LEFT] = 1;
-    else if (lx <= -STICK_DEAD) cc_keys[K_WALK_LEFT] = 1;
-    if ((b & SCE_CTRL_RIGHT) || lx >= run) cc_keys[K_RIGHT] = 1;
-    else if (lx >= STICK_DEAD) cc_keys[K_WALK_RIGHT] = 1;
-    if ((b & SCE_CTRL_UP) || ly <= -run) cc_keys[K_UP] = 1;
-    else if (ly <= -STICK_DEAD) cc_keys[K_WALK_UP] = 1;
-    if ((b & SCE_CTRL_DOWN) || ly >= run) cc_keys[K_DOWN] = 1;
-    else if (ly >= STICK_DEAD) cc_keys[K_WALK_DOWN] = 1;
+    if ((b & SCE_CTRL_LEFT) || lx <= -run) k |= 1u << CCB_LEFT;
+    else if (lx <= -STICK_DEAD) k |= 1u << CCB_WALK_LEFT;
+    if ((b & SCE_CTRL_RIGHT) || lx >= run) k |= 1u << CCB_RIGHT;
+    else if (lx >= STICK_DEAD) k |= 1u << CCB_WALK_RIGHT;
+    if ((b & SCE_CTRL_UP) || ly <= -run) k |= 1u << CCB_UP;
+    else if (ly <= -STICK_DEAD) k |= 1u << CCB_WALK_UP;
+    if ((b & SCE_CTRL_DOWN) || ly >= run) k |= 1u << CCB_DOWN;
+    else if (ly >= STICK_DEAD) k |= 1u << CCB_WALK_DOWN;
     // the right stick stands in for L2/R2 (switching items). The script steps once per
     // press and waits for the release, so a flick past the deadzone is one step and the
     // stick re-arms when it comes back to the centre.
     int rx = pad->rx - 128;
-    if (rx <= -STICK_RUN + 20) cc_keys[K_L2] = 1;
-    if (rx >= STICK_RUN - 20) cc_keys[K_R2] = 1;
-    if (b & SCE_CTRL_CROSS) cc_keys[K_ACCEPT] = cc_keys[K_JUMP] = 1;
-    if (b & SCE_CTRL_CIRCLE) cc_keys[K_BACK] = cc_keys[K_PROJECTILE] = 1;
-    if (b & SCE_CTRL_SQUARE) cc_keys[K_PUNCH1] = 1;
-    if (b & SCE_CTRL_TRIANGLE) cc_keys[K_PUNCH2] = 1;
+    if (rx <= -STICK_RUN + 20) k |= 1u << CCB_L2;
+    if (rx >= STICK_RUN - 20) k |= 1u << CCB_R2;
+    if (b & SCE_CTRL_CROSS) k |= 1u << CCB_ACCEPT | 1u << CCB_JUMP;
+    if (b & SCE_CTRL_CIRCLE) k |= 1u << CCB_BACK | 1u << CCB_PROJECTILE;
+    if (b & SCE_CTRL_SQUARE) k |= 1u << CCB_PUNCH1;
+    if (b & SCE_CTRL_TRIANGLE) k |= 1u << CCB_PUNCH2;
     // the PlayStation layout's sides: block on the left (L2), magic on the right (R2)
-    if (b & SCE_CTRL_LTRIGGER) cc_keys[K_SHIELD] = 1;
-    if (b & SCE_CTRL_RTRIGGER) cc_keys[K_MAGIC] = 1;
-    if (b & SCE_CTRL_START) cc_keys[K_START] = 1;
+    if (b & SCE_CTRL_LTRIGGER) k |= 1u << CCB_SHIELD;
+    if (b & SCE_CTRL_RTRIGGER) k |= 1u << CCB_MAGIC;
+    if (b & SCE_CTRL_START) k |= 1u << CCB_START;
+    return k;
 }
 
 // ---- pause menu ----------------------------------------------------------------------
@@ -820,7 +821,14 @@ static void pause_build_art(Pause *ps) {
     ps->have_art = 1;
 }
 
-static void pause_set_state(AsVm *vm, int state) { cc_set_flash_global(vm, "g_nPort1State", as_num(state)); }
+// Wi-Fi play: this Vita's player's state goes to every Vita with the next buttons (g_net_state:
+// the state + 1, 0 none waiting)
+static int g_netgame, g_net_state;
+
+static void pause_set_state(AsVm *vm, int state) {
+    if (g_netgame) g_net_state = state + 1;
+    else cc_set_flash_global(vm, "g_nPort1State", as_num(state));
+}
 
 // the achievements page over the pause book
 static void pause_book_draw(Pause *ps, int page, int dim) {
@@ -1029,6 +1037,140 @@ static void outlined_text(int x, int y, float size, const char *s) {
     vita2d_pgf_draw_text(g_font, x, y, RGBA8(255, 255, 255, 255), size, s);
 }
 
+#ifdef CC_NET
+// ---- Multiplayer: the Wi-Fi lobby, over the title ---------------------------------------
+// Host a game (this Vita is player 1) or join one heard on the same Wi-Fi; the host starts it
+// once someone has joined. Everyone then picks their knight at character select, with Cross.
+enum { W_CLOSED, W_MENU, W_HOST, W_SCAN, W_JOINED };
+static struct {
+    int page, item;
+    char note[96];
+    int note_timer;
+} g_wifi;
+
+static void wifi_note(const char *s) {
+    snprintf(g_wifi.note, sizeof g_wifi.note, "%s", s);
+    g_wifi.note_timer = 60 * 4;
+}
+
+static int my_profile(uint8_t **out) {
+    static uint8_t buf[3 * 65536];
+    *out = buf;
+    int n = cc_storage_pack(0, buf, sizeof buf);
+    return n < 0 ? 0 : n;
+}
+
+// one frame of the lobby: 1 to start the game (everyone's in NET_PLAYING), else 0
+static int wifi_update(unsigned pressed) {
+    net_poll();
+    if (net.state == NET_LOST) {
+        wifi_note(net.error);
+        net_leave();
+        g_wifi.page = W_MENU;
+        g_wifi.item = 0;
+    }
+    if (net.state == NET_PLAYING) return 1;
+    int sound = -1;
+    switch (g_wifi.page) {
+    case W_MENU:
+        if (pressed & (SCE_CTRL_UP | SCE_CTRL_DOWN)) { g_wifi.item ^= 1; sound = 0; }
+        if (pressed & SCE_CTRL_CROSS) {
+            sound = 1;
+            uint8_t *pr;
+            int n = my_profile(&pr);
+            if (g_wifi.item == 0 && net_host(pr, n)) g_wifi.page = W_HOST;
+            else if (g_wifi.item == 1 && net_scan()) { g_wifi.page = W_SCAN; g_wifi.item = 0; }
+            else wifi_note(net.error);
+        }
+        if (pressed & SCE_CTRL_CIRCLE) { g_wifi.page = W_CLOSED; sound = 1; }
+        break;
+    case W_HOST: {
+        int n = 0;
+        for (int p = 0; p < NET_PLAYERS; p++) n += net.names[p][0] != 0;
+        if (pressed & (SCE_CTRL_START | SCE_CTRL_CROSS)) {
+            sound = 1;
+            if (n < 2) wifi_note("Waiting for someone to join first");
+            else if (net_start()) return 1;
+        }
+        if (pressed & SCE_CTRL_CIRCLE) { net_leave(); g_wifi.page = W_MENU; sound = 1; }
+        break;
+    }
+    case W_SCAN: {
+        NetHost hosts[8];
+        int n = net_hosts(hosts, 8);
+        if (g_wifi.item >= n) g_wifi.item = n ? n - 1 : 0;
+        if (n && (pressed & SCE_CTRL_UP)) { g_wifi.item = (g_wifi.item + n - 1) % n; sound = 0; }
+        if (n && (pressed & SCE_CTRL_DOWN)) { g_wifi.item = (g_wifi.item + 1) % n; sound = 0; }
+        if (n && (pressed & SCE_CTRL_CROSS)) {
+            sound = 1;
+            uint8_t *pr;
+            int len = my_profile(&pr);
+            if (net_join(hosts[g_wifi.item].addr, pr, len)) g_wifi.page = W_JOINED;
+            else { wifi_note(net.error); net_scan(); }
+        }
+        if (pressed & SCE_CTRL_CIRCLE) { net_leave(); g_wifi.page = W_MENU; g_wifi.item = 1; sound = 1; }
+        break;
+    }
+    case W_JOINED:
+        if (pressed & SCE_CTRL_CIRCLE) { net_leave(); g_wifi.page = W_MENU; g_wifi.item = 1; sound = 1; }
+        break;
+    }
+    if (sound >= 0) audio_sfx_play(sound ? "sound_player_select.wav" : "sound_toggle_b.wav", 1, 0, 0, &g_wifi);
+    return 0;
+}
+
+static void wifi_draw(unsigned frame) {
+    const float x0 = 250, y0 = 120, w = 460, h = 300;
+    vita2d_draw_rectangle(0, 0, SCREEN_W, SCREEN_H, RGBA8(0, 0, 0, 120));
+    vita2d_draw_rectangle(x0, y0, w, h, RGBA8(40, 30, 24, 230));
+    vita2d_draw_rectangle(x0, y0, w, 4, RGBA8(255, 236, 170, 255));
+    unsigned ink = RGBA8(255, 255, 255, 255), dim = RGBA8(170, 160, 150, 255), hi = RGBA8(255, 220, 90, 255);
+    float tx = x0 + 30, ty = y0 + 46;
+    const char *help = "";
+    switch (g_wifi.page) {
+    case W_MENU:
+        vita2d_pgf_draw_text(g_font, tx, ty, ink, 1.2f, "Multiplayer (Wi-Fi)");
+        vita2d_pgf_draw_text(g_font, tx, ty + 30, dim, 0.8f, "Play together on Vitas on the same Wi-Fi.");
+        vita2d_pgf_draw_text(g_font, tx + 20, ty + 90, g_wifi.item == 0 ? hi : ink, 1.1f, "Host a game");
+        vita2d_pgf_draw_text(g_font, tx + 20, ty + 130, g_wifi.item == 1 ? hi : ink, 1.1f, "Join a game");
+        vita2d_pgf_draw_text(g_font, tx, ty + 130 + (g_wifi.item ? 0 : -40), hi, 1.1f, ">");
+        help = "Cross: choose    Circle: back";
+        break;
+    case W_HOST: case W_JOINED: {
+        if (g_wifi.page == W_HOST) vita2d_pgf_draw_text(g_font, tx, ty, ink, 1.2f, "Your game");
+        else vita2d_pgf_draw_text(g_font, tx, ty, ink, 1.2f, net.state == NET_JOINING ? "Joining..." : "Joined");
+        for (int p = 0; p < NET_PLAYERS; p++) {
+            char line[64];
+            if (net.names[p][0]) snprintf(line, sizeof line, "Player %d   %s%s", p + 1, net.names[p], p + 1 == net.port ? "  (you)" : "");
+            else snprintf(line, sizeof line, "Player %d   waiting%s", p + 1, ((frame / 20) % 4 == 0) ? "" : (frame / 20) % 4 == 1 ? "." : (frame / 20) % 4 == 2 ? ".." : "...");
+            vita2d_pgf_draw_text(g_font, tx + 10, ty + 50 + p * 34, net.names[p][0] ? ink : dim, 1.0f, line);
+        }
+        help = g_wifi.page == W_HOST ? "START: play    Circle: close the game" : "Waiting for the host to start    Circle: leave";
+        break;
+    }
+    case W_SCAN: {
+        vita2d_pgf_draw_text(g_font, tx, ty, ink, 1.2f, "Join a game");
+        NetHost hosts[8];
+        int n = net_hosts(hosts, 8);
+        if (!n) vita2d_pgf_draw_text(g_font, tx + 10, ty + 60, dim, 0.9f, (frame / 30) % 2 ? "Looking for games on this Wi-Fi..." : "Looking for games on this Wi-Fi");
+        for (int i = 0; i < n && i < 5; i++) {
+            char line[64];
+            snprintf(line, sizeof line, "%s's game   %d/4", hosts[i].name, hosts[i].players);
+            vita2d_pgf_draw_text(g_font, tx + 20, ty + 60 + i * 34, i == g_wifi.item ? hi : ink, 1.0f, line);
+        }
+        help = "Cross: join    Circle: back";
+        break;
+    }
+    }
+    vita2d_pgf_draw_text(g_font, tx, y0 + h - 20, dim, 0.8f, help);
+    if (g_wifi.note_timer > 0) {
+        g_wifi.note_timer--;
+        int tw = vita2d_pgf_text_width(g_font, 0.9f, g_wifi.note);
+        outlined_text((SCREEN_W - tw) / 2, y0 + h + 34, 0.9f, g_wifi.note);
+    }
+}
+#endif
+
 static void hide_sprite(AsMc *mc, int cid) {   // every clip of sprite cid under mc
     for (int i = 0; i < mc->ndisp; i++)
         if (mc->disp[i].kind == DISP_MC && mc->disp[i].mc) {
@@ -1037,9 +1179,23 @@ static void hide_sprite(AsMc *mc, int cid) {   // every clip of sprite cid under
         }
 }
 
-static void title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, size_t cache_bytes) {
+// the menu's buttons, top to bottom
+#ifdef CC_NET
+static const int g_menu_order[] = {CC_MENU_PLAY, CC_MENU_WIFI, CC_MENU_OPTIONS, CC_MENU_QUIT};
+#else
+static const int g_menu_order[] = {CC_MENU_PLAY, CC_MENU_OPTIONS, CC_MENU_QUIT};
+#endif
+#define MENU_N ((int)(sizeof g_menu_order / sizeof *g_menu_order))
+
+// 1: a Wi-Fi game was started (net.state NET_PLAYING), 0: Local Game
+static int title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, size_t cache_bytes) {
     Movie *m = vita_loader(NULL, "MENU.swf");
-    if (!m) return;
+    if (!m) return 0;
+    int wifi_game = 0;
+#ifdef CC_NET
+    cc_menu_wifi = 1;
+    g_wifi.page = W_CLOSED;
+#endif
     AsVm *t = as_new(vita_loader);
     t->sound_start = vita_sound_start;
     t->sound_stop = vita_sound_stop;
@@ -1070,6 +1226,12 @@ static void title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, si
         if (lx < -80 && olx >= -80) pressed |= SCE_CTRL_LEFT;
         if (lx > 80 && olx <= 80) pressed |= SCE_CTRL_RIGHT;
         old = pad;
+#ifdef CC_NET
+        if (g_wifi.page != W_CLOSED || net.state != NET_OFF) {
+            if (wifi_update(pressed)) { wifi_game = 1; break; }
+            pressed = 0;
+        }
+#endif
         if (controls.open) {
             SceUInt64 tnow = sceKernelGetProcessTimeWide();
             static SceUInt64 tlast;
@@ -1081,27 +1243,35 @@ static void title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, si
                 // left of the knights, over the (hidden, empty) news box
                 panel = cc_menu_attach(t, m->stage_w * 0.226f, m->stage_h * 0.635f);
                 if (!panel) break;   // no panel in this copy of the file: straight into the game
-                cc_menu_highlight(t, panel, item);
+                cc_menu_highlight(t, panel, g_menu_order[item]);
             }
-        } else {
+        } else if (pressed) {
             int moved = 0;
-            if (pressed & (SCE_CTRL_UP | SCE_CTRL_LEFT)) { item = (item + CC_MENU_ITEMS - 1) % CC_MENU_ITEMS; moved = 1; }
-            if (pressed & (SCE_CTRL_DOWN | SCE_CTRL_RIGHT)) { item = (item + 1) % CC_MENU_ITEMS; moved = 1; }
+            if (pressed & (SCE_CTRL_UP | SCE_CTRL_LEFT)) { item = (item + MENU_N - 1) % MENU_N; moved = 1; }
+            if (pressed & (SCE_CTRL_DOWN | SCE_CTRL_RIGHT)) { item = (item + 1) % MENU_N; moved = 1; }
             if (moved) {
-                cc_menu_highlight(t, panel, item);
+                cc_menu_highlight(t, panel, g_menu_order[item]);
                 audio_sfx_play("sound_toggle_b.wav", 1, 0, 0, &controls);   // the menus' move sound
             }
             if (pressed & SCE_CTRL_CROSS) {
                 audio_sfx_play("sound_player_select.wav", 1, 0, 0, &controls);
-                if (item == CC_MENU_PLAY) break;
-                if (item == CC_MENU_QUIT) {
+                int chosen = g_menu_order[item];
+                if (chosen == CC_MENU_PLAY) break;
+#ifdef CC_NET
+                if (chosen == CC_MENU_WIFI) {
+                    g_wifi.page = W_MENU;
+                    g_wifi.item = 0;
+                    if (!net_init()) { wifi_note("The network isn't available"); g_wifi.page = W_CLOSED; }
+                }
+#endif
+                if (chosen == CC_MENU_QUIT) {
                     vita2d_wait_rendering_done();
                     audio_shutdown();
                     log_flush_wait();
                     vita2d_fini();
                     sceKernelExitProcess(0);
                 }
-                if (item == CC_MENU_OPTIONS) {
+                if (chosen == CC_MENU_OPTIONS) {
                     controls.open = 1;
                     pause_menu_open_help(&controls.m);
                 }
@@ -1177,6 +1347,14 @@ static void title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, si
             outlined_text((SCREEN_W - w) / 2, SCREEN_H - 24, 1.0f, unavailable);
         }
         if (controls.open) pause_draw(&controls);
+#ifdef CC_NET
+        if (g_wifi.page != W_CLOSED) wifi_draw(frame);
+        else if (g_wifi.note_timer > 0) {   // why the last Wi-Fi game ended
+            g_wifi.note_timer--;
+            int w = vita2d_pgf_text_width(g_font, 1.0f, g_wifi.note);
+            outlined_text((SCREEN_W - w) / 2, SCREEN_H - 24, 1.0f, g_wifi.note);
+        }
+#endif
         vita2d_end_drawing();
         vita2d_swap_buffers();
     }
@@ -1184,6 +1362,7 @@ static void title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, si
     if (cc_music_stop) cc_music_stop();
     memset(cc_keys, 0, sizeof cc_keys);
     as_free(t);
+    return wifi_game;
 }
 int main(void) {
     scePowerSetArmClockFrequency(444);
@@ -1217,6 +1396,18 @@ int main(void) {
         return 0;
     }
 
+#ifdef CC_NET
+    FILE *have = fopen(SAVE_PATH, "rb");   // the first start: the main app's save to begin with
+    if (have) fclose(have);
+    else {
+        FILE *in = fopen(DATA_DIR "save.dat", "rb"), *out = in ? fopen(SAVE_PATH, "wb") : NULL;
+        char buf[4096];
+        size_t n;
+        while (out && (n = fread(buf, 1, sizeof buf, in)) > 0) fwrite(buf, 1, n, out);
+        if (in) fclose(in);
+        if (out) fclose(out);
+    }
+#endif
     cc_storage_load(SAVE_PATH);
     cc_achievements_load(ACH_PATH);
 #ifdef CC_TROPHIES
@@ -1272,7 +1463,7 @@ int main(void) {
 
 new_game:   // the title again after Exit to Main Menu
     g_npreloaded = 0;
-    title_screen(&vb, &cache, cache_mem, cache_bytes);
+    g_netgame = title_screen(&vb, &cache, cache_mem, cache_bytes);
 
     AsVm *vm = as_new(vita_loader);
     vm->rand_state = (uint32_t)sceKernelGetProcessTimeWide() ^ 0x9E3779B9u;   // Flash's random() differs each session
@@ -1282,6 +1473,17 @@ new_game:   // the title again after Exit to Main Menu
     vm->prefetch = vita_prefetch;   // files load on a second thread while the game runs
     cc_host_init(vm);
     as_render_init(vm);
+    int net_wait = 0;        // Wi-Fi play: passes spent waiting for the others
+#ifdef CC_NET
+    uint32_t net_tick = 0;   // the next frame to run
+    NetInput mine = {0};
+    if (g_netgame) {   // the same game on every Vita: seed, clock, everyone's profiles
+        netplay_begin(vm);
+        vm->prefetch = netplay_prefetch;
+        g_net_state = 0;
+        log_line("Wi-Fi game: port %d, seed %u", net.port, net.seed);
+    }
+#endif
     vm->root = as_mc_new(vm, start, &start->root, NULL, 0);
     cc_loading_attach(vm);   // the game's loading screen over level changes
 
@@ -1318,13 +1520,15 @@ new_game:   // the title again after Exit to Main Menu
         if (debug && (pressed & SCE_CTRL_UP)) overlay = !overlay;
         // in a level and on the map, Start is the pause menu's (the executable's in the original)
         int level = in_level(vm), on_map = !level && in_map(vm);
-        map_pad(&pad, debug, level);
-        if (level || on_map) cc_keys[K_START] = 0;
+        uint32_t buttons = debug ? 0 : pad_buttons(&pad, level);
+        memset(cc_keys, 0, sizeof cc_keys);
+        cc_port_keys(1, (level || on_map) ? buttons & ~(1u << CCB_START) : buttons);
         if (pause.open) {
             float dt = (sceKernelGetProcessTimeWide() - prev) / 1000000.0f;
             int r = pause_input(&pause, vm, nav, dt > 0.1f ? 0.1f : dt);
             if (r == 2) exit_to_title = 1;
             memset(cc_keys, 0, sizeof cc_keys);
+            buttons = 0;   // (Wi-Fi play: the game runs on under the menu, without this player)
         } else if ((level || on_map) && !debug && (pressed & SCE_CTRL_START) &&
                    !as_tobool(vm, cc_flash_global(vm, "g_bNoPause"))) {
             pause_open(&pause, on_map);
@@ -1338,11 +1542,34 @@ new_game:   // the title again after Exit to Main Menu
         acc += now - prev;
         prev = now;
         if (acc > 2 * tick_us) acc = 2 * tick_us;
-        if (pause.open) acc = 0;   // the game stands still under the menu
-        int ticked = 0;
+        if (pause.open && !g_netgame) acc = 0;   // the game stands still under the menu (not in a Wi-Fi game)
+#ifdef CC_NET
+        if (g_netgame) {
+            net_poll();
+            if (net.state == NET_LOST) {   // back to the title, saying why
+                wifi_note(net.error);
+                log_line("Wi-Fi game ended: %s", net.error);
+                exit_to_title = 1;
+                acc = 0;
+            }
+            const char *want = netplay_file_wanted();   // a level file every Vita must have first
+            if (want && !vita_prefetch(vm, want)) netplay_file_ready();
+        }
+#endif
+        int ticked = 0, stalled = 0;
         float hitch_script = 0, hitch_gc = 0, hitch_build = 0;   // this pass, for the slow-frame log
         const char *hitch_what = "";
         while (acc >= tick_us) {
+#ifdef CC_NET
+            if (g_netgame) {   // this frame from everyone's buttons, once they're all here
+                mine.buttons = buttons;
+                mine.state = g_net_state;
+                int lv = in_level(vm), om = !lv && in_map(vm);
+                if (!netplay_step(vm, net_tick, &mine, lv || om)) { acc = tick_us; stalled = 1; break; }
+                g_net_state = 0;
+                net_tick++;
+            }
+#endif
             SceUInt64 t0 = sceKernelGetProcessTimeWide();
             as_tick(vm);
             SceUInt64 t1 = sceKernelGetProcessTimeWide();
@@ -1355,8 +1582,14 @@ new_game:   // the title again after Exit to Main Menu
             acc -= tick_us;
             ticked = 1;
         }
+        net_wait = stalled ? net_wait + 1 : 0;
         if (cc_save_requested) {
             cc_save_requested = 0;
+#ifdef CC_NET
+            if (g_netgame) {   // this Vita's player only, as their own profile
+                if (!cc_storage_save_as(SAVE_PATH, net.port - 1)) snprintf(g_last_error, sizeof g_last_error, "couldn't write " SAVE_PATH);
+            } else
+#endif
             if (!cc_storage_save(SAVE_PATH)) snprintf(g_last_error, sizeof g_last_error, "couldn't write " SAVE_PATH);
             saving_timer = 60;   // "Saving..." at the bottom for two seconds, as the original shows it
         }
@@ -1409,7 +1642,7 @@ new_game:   // the title again after Exit to Main Menu
         // showed the same frame twice and doubled the GPU's work: the map (66k triangles, ~22 ms
         // of GPU a frame) then missed every other vblank and ran unevenly at 45 fps. The pause
         // menu animates on its own and is drawn every vblank.
-        if (!ticked && !pause.open) {
+        if (!ticked && !pause.open && net_wait < 20) {
             sceDisplayWaitVblankStart();
             continue;
         }
@@ -1418,6 +1651,17 @@ new_game:   // the title again after Exit to Main Menu
         draw_frame(&vb, heat_clock);
         if (ticked) heat_clock += 2;   // the shimmer's speed, as when it was drawn 60 times a second
         if (pause.open) pause_draw(&pause);
+#ifdef CC_NET
+        if (g_netgame && net_wait >= 20) {   // the others haven't sent this frame yet
+            const char *w = "Waiting for the other players...";
+            outlined_text((SCREEN_W - vita2d_pgf_text_width(g_font, 1.0f, w)) / 2, SCREEN_H / 2, 1.0f, w);
+        }
+        if (g_netgame && net_desync_tick) {
+            static int said;
+            if (!said++) log_line("Wi-Fi game out of step from frame %u", net_desync_tick);
+            vita2d_pgf_draw_text(g_font, 12, SCREEN_H - 12, RGBA8(255, 90, 80, 255), 0.7f, "Out of step with the other Vitas");
+        }
+#endif
         int ach = cc_achievement_take_new();
         if (trophies && cc_achievements() != trophies_synced) {
 #ifdef CC_TROPHIES
@@ -1470,6 +1714,15 @@ new_game:   // the title again after Exit to Main Menu
         }
     }
     if (exit_to_title) {   // the game is left: everything of it goes, then the title's menu
+#ifdef CC_NET
+        if (g_netgame) {   // leave the Wi-Fi game, and this Vita's own profile back from its save
+            net_leave();
+            netplay_end();
+            cc_storage_clear();
+            cc_storage_load(SAVE_PATH);
+            g_netgame = 0;
+        }
+#endif
         vita2d_wait_rendering_done();
         audio_sfx_stop(NULL);
         if (cc_music_stop) cc_music_stop();
