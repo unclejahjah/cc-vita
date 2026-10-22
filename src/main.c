@@ -1155,8 +1155,30 @@ static void wifi_words(const char *key, const char *fallback, char *out, int cap
 }
 #define WORDS(key, fallback) (strtab_get(key) ? strtab_get(key) : (fallback))
 
+static int wifi_depth(int page) { return page == W_CLOSED ? 0 : page == W_MENU ? 1 : page == W_JOINED ? 3 : 2; }
+
 static void wifi_draw(unsigned frame) {
     static DrawList ui;
+    // a page turn each time a page opens (forward going in, back coming out): the old page
+    // under the first half of the flip, the new one after; opening from the title turns from
+    // an empty page
+    static int shown = W_CLOSED, from = W_CLOSED, dir = 1;
+    static unsigned last_frame;
+    static float turn;
+    static SceUInt64 last_us;
+    SceUInt64 now = sceKernelGetProcessTimeWide();
+    float dt = frame == last_frame + 1 ? (now - last_us) / 1e6f : 0;
+    if (frame != last_frame + 1) shown = W_CLOSED;   // the lobby was closed in between
+    last_frame = frame;
+    last_us = now;
+    if (g_wifi.page != shown) {
+        from = shown;
+        dir = wifi_depth(g_wifi.page) >= wifi_depth(shown) ? 1 : -1;
+        turn = HB_TURN_SECONDS;
+        shown = g_wifi.page;
+    }
+    int page = turn > HB_TURN_SECONDS / 2 ? from : shown;
+    if (turn > 0) turn -= dt > 0.1f ? 0.1f : dt;
     static char lines[HB_PAGE_LINES][64], note[128], code[NET_CODE_LEN + 2];
     Movie *pm = host_movie("PAUSE.swf");
     HbPage pg = {0};
@@ -1167,8 +1189,11 @@ static void wifi_draw(unsigned frame) {
     for (int i = 0; i < HB_PAGE_LINES; i++) { lines[i][0] = 0; pg.line[i] = lines[i]; }
     note[0] = 0;
     pg.note = note;
+    pg.turn = turn > 0 ? turn : 0;
+    pg.turn_dir = dir;
     const char *dots = (frame / 20) % 4 == 0 ? "" : (frame / 20) % 4 == 1 ? "." : (frame / 20) % 4 == 2 ? ".." : "...";
-    switch (g_wifi.page) {
+    if (page == W_CLOSED) pg.back = NULL;   // the empty page under the first turn
+    switch (page) {
     case W_MENU:
         pg.title = WORDS("vita.wifi.title", "Multiplayer");
         wifi_words("vita.wifi.host", "Host a Game", lines[0], 64);
@@ -1180,7 +1205,7 @@ static void wifi_draw(unsigned frame) {
         pg.accept = WORDS("vita.wifi.select", "Select");
         break;
     case W_HOST: case W_JOINED: {
-        if (g_wifi.page == W_HOST) pg.title = WORDS("vita.wifi.your_game", "Your Game");
+        if (page == W_HOST) pg.title = WORDS("vita.wifi.your_game", "Your Game");
         else pg.title = net.state == NET_CONNECTING ? WORDS("vita.wifi.connecting", "Connecting...")
                         : net.state == NET_JOINING   ? WORDS("vita.wifi.joining", "Joining...")
                                                      : WORDS("vita.wifi.joined", "Joined");
@@ -1189,7 +1214,7 @@ static void wifi_draw(unsigned frame) {
             else { snprintf(lines[p], 64, "%d   %s%s", p + 1, WORDS("vita.wifi.waiting", "waiting"), dots); pg.dim |= 1u << p; }
         }
         pg.nlines = NET_PLAYERS;
-        if (g_wifi.page == W_HOST) {
+        if (page == W_HOST) {
             uint32_t ext;
             const char *why;
             int open = net_internet(&ext, &why);

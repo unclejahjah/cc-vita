@@ -19,7 +19,7 @@
 
 #define STAGE_W 848.0f
 #define STAGE_H 480.0f
-#define TURN_SECONDS 0.45f
+#define TURN_SECONDS HB_TURN_SECONDS
 
 void help_book_open(HelpBook *hb, int book, int music, int sfx) {
     memset(hb, 0, sizeof *hb);
@@ -639,6 +639,14 @@ void help_book_build_page(const HbPage *pg, Movie *mv, float k, DrawList *out) {
         to_stage(a, 0, 362, &dummy, &ny);
         for (int l = 0; l < 2 && wrap(&s, 560 * sc, 18 * sc, line, sizeof line); l++, ny += 21 * sc)
             text(out, k, line, mx, ny, 18 * sc, 2, 0xe8e0d0, alpha);
+    }
+    if (pg->turn > 0 && a->pageturn >= 0) {   // as How to Play's: the flip over the page
+        float t = 1 - pg->turn / TURN_SECONDS;
+        int first = pg->turn_dir > 0 ? 1 : 17, last = pg->turn_dir > 0 ? 16 : 29;
+        int fr = first + (int)(t * (last - first) + 0.5f);
+        Mat screen = {k, 0, 0, k, 0, 0};
+        CXform cx = {{1, 1, 1, alpha}, {0, 0, 0, 0}};
+        sprite_frame(mv, a->pageturn, fr, mat_mul(screen, a->place), cx, out);
     }
     if (pg->accept) prompt(out, a, k, a->buttons[0], a->button_b[0], STAGE_W * 0.60f, pg->accept, alpha);
     if (pg->back) prompt(out, a, k, a->buttons[1], a->button_b[1], STAGE_W * 0.82f, pg->back, alpha);
