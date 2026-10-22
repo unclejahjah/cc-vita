@@ -322,7 +322,7 @@ static void show_message(const char *line1, const char *line2) {
 // player.swf into every player slot and fx.swf into every effect. Files nothing uses any
 // more (levels left behind, the title's menu) are freed by free_unused_movies.
 #define MAX_MOVIES 160
-static struct { char name[64]; Movie *m; GpuBlock gpu; int keep; } g_movies[MAX_MOVIES];
+static struct { char name[64]; Movie *m; GpuBlock gpu; int keep; } g_movies[MAX_MOVIES];   // keep: 1 always, 2 until first used (preloaded)
 static int g_nmovies;
 static char g_last_error[256];
 
@@ -469,6 +469,7 @@ static Movie *register_movie(const char *base, const char *path, Movie *m) {
     blk->uid = -1;
     if (render_upload(m, mesh_alloc, blk)) render_release_cpu(m);
     snprintf(g_movies[g_nmovies].name, sizeof g_movies[0].name, "%s", base);
+    g_movies[g_nmovies].keep = 0;
     g_movies[g_nmovies++].m = m;
     return m;
 }
@@ -487,11 +488,14 @@ static void make_room(AsVm *vm) {
 enum { BG_IDLE, BG_RUNNING, BG_DONE };
 static struct {
     char base[64], path[256], err[256];
-    int is_level;
+    int is_level, preload;
     volatile int state;
     Movie *m;
 } g_bg;
 static SceUID g_bg_sema = -1;
+
+static SceUID g_main_thread;
+static int thread_slot(void) { return sceKernelGetThreadId() != g_main_thread; }
 
 static int bg_thread(SceSize args, void *argp) {
     (void)args; (void)argp;
@@ -505,6 +509,8 @@ static int bg_thread(SceSize args, void *argp) {
 }
 
 static void bg_init(void) {
+    g_main_thread = sceKernelGetThreadId();
+    render_thread_slot = thread_slot;
     g_bg_sema = sceKernelCreateSema("cc_load", 0, 0, 1, NULL);
     SceUID th = sceKernelCreateThread("cc_load", bg_thread, 0x10000100 + 20, 1024 * 1024, 0, 0, NULL);
     if (g_bg_sema < 0 || th < 0 || sceKernelStartThread(th, 0, NULL) < 0) g_bg_sema = -1;
@@ -521,13 +527,50 @@ static Movie *bg_finish(void) {
         return NULL;
     }
     if (g_nmovies == MAX_MOVIES) { swf_free(m); return NULL; }
-    return register_movie(g_bg.base, g_bg.path, m);
+    m = register_movie(g_bg.base, g_bg.path, m);
+    if (g_bg.preload) g_movies[g_nmovies - 1].keep = 2;   // not freed before the game asks for it
+    return m;
 }
 
 static Movie *cached_movie(const char *base) {
     for (int i = 0; i < g_nmovies; i++)
-        if (!strcasecmp(g_movies[i].name, base)) return g_movies[i].m;
+        if (!strcasecmp(g_movies[i].name, base)) {
+            if (g_movies[i].keep == 2) g_movies[i].keep = 0;   // a preloaded file in use: an ordinary one now
+            return g_movies[i].m;
+        }
     return NULL;
+}
+
+static int cached_movie_peek(const char *base) {
+    for (int i = 0; i < g_nmovies; i++)
+        if (!strcasecmp(g_movies[i].name, base)) return 1;
+    return 0;
+}
+
+// ---- preloading ----
+// The files the next screens need, read on the loading thread while nothing else loads: the
+// character select's on the title, the game's (effects, players, animals, the map) after it.
+// Each took the Vita seconds with the screen standing still (fx, player and animals 15 s).
+static const char *const g_preload[] = {"lobby.swf", "fx.swf", "player.swf", "animals.swf", "map.swf"};
+static int g_npreloaded;   // of g_preload, started
+
+static void preload_step(void) {
+    if (g_bg_sema < 0) return;
+    if (g_bg.state == BG_DONE && g_bg.preload) bg_finish();
+    if (g_bg.state != BG_IDLE || g_npreloaded == (int)(sizeof g_preload / sizeof *g_preload)) return;
+    if (mallinfo().uordblks > (size_t)_newlib_heap_size_user * 6 / 10) return;   // room for the game first
+    const char *base = g_preload[g_npreloaded++];
+    char path[256];
+    int is_level;
+    if (cached_movie_peek(base) || g_nmovies == MAX_MOVIES || !find_file(base, path, sizeof path, &is_level)) return;
+    snprintf(g_bg.base, sizeof g_bg.base, "%s", base);
+    snprintf(g_bg.path, sizeof g_bg.path, "%s", path);
+    g_bg.is_level = is_level;
+    g_bg.preload = 1;
+    g_bg.m = NULL;
+    g_bg.state = BG_RUNNING;
+    __sync_synchronize();
+    sceKernelSignalSema(g_bg_sema, 1);
 }
 
 static int vita_prefetch(AsVm *vm, const char *url) {
@@ -550,6 +593,7 @@ static int vita_prefetch(AsVm *vm, const char *url) {
     snprintf(g_bg.base, sizeof g_bg.base, "%s", base);
     snprintf(g_bg.path, sizeof g_bg.path, "%s", path);
     g_bg.is_level = is_level;
+    g_bg.preload = 0;
     g_bg.m = NULL;
     g_bg.state = BG_RUNNING;
     __sync_synchronize();
@@ -565,7 +609,7 @@ static Movie *vita_loader(AsVm *vm, const char *url) {
     if (g_bg.state != BG_IDLE) {   // never two loads at once (the tessellator is shared)
         int same = !strcasecmp(g_bg.base, base);
         m = bg_finish();
-        if (same && m) return m;
+        if (same && m) return cached_movie(base);
     }
     if (g_nmovies == MAX_MOVIES) return NULL;
     char path[256], err[256];
@@ -1010,7 +1054,9 @@ static void title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, si
     SceUInt64 prev = sceKernelGetProcessTimeWide(), acc = 0;
     const SceUInt64 tick_us = 1000000 / 30;
     unsigned frame = 0;
+    g_npreloaded = 0;
     for (;;) {
+        preload_step();
         sceCtrlPeekBufferPositive(0, &pad, 1);
         unsigned pressed = pad.buttons & ~old.buttons;
         int ly = pad.ly - 128, lx = pad.lx - 128, oly = old.ly - 128, olx = old.lx - 128;
@@ -1252,6 +1298,7 @@ new_game:   // the title again after Exit to Main Menu
     if (!pause.have_art) pause_build_art(&pause);
 
     while (!exit_to_title) {
+        preload_step();
         sceCtrlPeekBufferPositive(0, &pad, 1);
         unsigned pressed = pad.buttons & ~old.buttons;
         unsigned nav = pressed;   // menus: the stick moves once per push too

@@ -97,6 +97,7 @@ void render_display_list(Movie *m, const Frame *f, Mat mtx, CXform cx, int tick,
 void render_char(Movie *m, int cid, Mat mtx, CXform cx, int tick, DrawList *out);
 void render_shape(Shape *s, Mat mtx, CXform cx, DrawList *out);   // one shape (e.g. a font glyph)
 void render_bitmap_fill(const BitmapFill *bf, Mat mtx, CXform cx, DrawList *out);   // one textured mesh
+extern int (*render_thread_slot)(void);   // 0/1: the tessellator for the calling thread (NULL: one)
 void render_tessellate_all(Movie *m);   // optional warm-up so the first frames don't stall
 const float *render_shape_bounds(Shape *s);   // min x, min y, max x, max y in twips (tessellates if needed)
 
