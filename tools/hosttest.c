@@ -367,7 +367,9 @@ static int as_mode(int argc, char **argv) {
     // HANDOFF.md). NET_WAIT=n: the host starts once n players are in; NET_ADDR: the host's
     // address for join (default 127.0.0.1); CC_PAD="frame:CCB bit[:hold],..." this copy's
     // buttons; NET_JITTER=ms: a random wait each frame, as a slow Vita; CC_PREFETCH=N: each
-    // level file takes N frames to arrive. NET_LOG=1 prints each frame's check.
+    // level file takes N frames to arrive. NET_LOG=1 prints each frame's check. NET_CODE: join by
+    // game code; NET_DELAY: the host's delay instead of the one from the pings; UPNP_ROUTER: the
+    // router to ask (as well as everyone, by multicast).
     const char *net_mode = getenv("NET_MODE");
     if (net_mode) {
         static uint8_t prof[3 * 65536];
@@ -377,19 +379,35 @@ static int as_mode(int argc, char **argv) {
             int want = getenv("NET_WAIT") ? atoi(getenv("NET_WAIT")) : 2;
             for (int i = 0; i < 30000; i++) {
                 net_poll();
+                uint32_t ext;
+                static int told;
+                if (!told && net_internet(&ext, NULL) > 0) {
+                    char code[NET_CODE_LEN + 1];
+                    net_code(ext, code);
+                    printf("net: internet game code %s\n", code);
+                    fflush(stdout);
+                    told = 1;
+                }
                 int n = 0;
                 for (int p = 0; p < NET_PLAYERS; p++) n += net.names[p][0] != 0;
                 if (n >= want) break;
                 usleep(1000);
             }
+            for (int i = 0; i < 1000; i++) { net_poll(); usleep(1000); }   // a few pings: the delay
+            uint32_t ext;
+            const char *why;
+            int open = net_internet(&ext, &why);
+            if (open <= 0) printf("net: not on the internet (%s)\n", open ? why : "still asking the router");
             net_start();
         } else {
             const char *addr = getenv("NET_ADDR") ? getenv("NET_ADDR") : "127.0.0.1";
-            if (!net_join(inet_addr(addr), prof, plen)) { printf("net: %s\n", net.error); return 1; }
+            uint32_t ip = getenv("NET_CODE") ? net_code_addr(getenv("NET_CODE")) : inet_addr(addr);
+            if (getenv("NET_CODE") && !ip) { printf("net: %s isn't a game code\n", getenv("NET_CODE")); return 1; }
+            if (!net_join(ip, prof, plen)) { printf("net: %s\n", net.error); return 1; }
             for (int i = 0; i < 30000 && net.state != NET_PLAYING && net.state != NET_LOST; i++) { net_poll(); usleep(1000); }
         }
         if (net.state != NET_PLAYING) { printf("net: no game (%s)\n", net.error); return 1; }
-        printf("net: playing as port %d, seed %u\n", net.port, net.seed);
+        printf("net: playing as port %d, seed %u, delay %d\n", net.port, net.seed, net.delay);
         netplay_begin(vm);
         vm->prefetch = netplay_prefetch;
     }
@@ -438,7 +456,7 @@ static int as_mode(int argc, char **argv) {
             for (const char *p = getenv("CC_PAD"); p && *p;) {
                 int kf = 0, bit = 0, hold = 2;
                 int n = sscanf(p, "%d:%d:%d", &kf, &bit, &hold);
-                // frame kf: the frame the buttons are read on (used NET_DELAY frames later)
+                // frame kf: the frame the buttons are read on (used net.delay frames later)
                 if (n >= 2 && f >= kf && f < kf + (n == 3 ? hold : 2) && bit >= 0 && bit < CCB_COUNT) in.buttons |= 1u << bit;
                 p = strchr(p, ',');
                 if (p) p++;

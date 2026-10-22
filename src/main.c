@@ -1039,11 +1039,15 @@ static void outlined_text(int x, int y, float size, const char *s) {
 
 #ifdef CC_NET
 // ---- Multiplayer: the Wi-Fi lobby, over the title ---------------------------------------
-// Host a game (this Vita is player 1) or join one heard on the same Wi-Fi; the host starts it
-// once someone has joined. Everyone then picks their knight at character select, with Cross.
-enum { W_CLOSED, W_MENU, W_HOST, W_SCAN, W_JOINED };
+// Host a game (this Vita is player 1) or join one heard on the same Wi-Fi, or one over the
+// internet by its game code; the host starts it once someone has joined. Everyone then picks
+// their knight at character select, with Cross.
+enum { W_CLOSED, W_MENU, W_HOST, W_SCAN, W_CODE, W_JOINED };
+static const char WIFI_CODE_CHARS[] = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 static struct {
     int page, item;
+    int back;                  // W_JOINED: the menu item to go back to
+    int code[NET_CODE_LEN];    // W_CODE: the code typed in (index in WIFI_CODE_CHARS), kept for next time
     char note[96];
     int note_timer;
 } g_wifi;
@@ -1068,20 +1072,22 @@ static int wifi_update(unsigned pressed) {
     if (net.state == NET_LOST) {
         wifi_note(net.error);
         net_leave();
+        g_wifi.item = g_wifi.page == W_JOINED ? g_wifi.back : 0;
         g_wifi.page = W_MENU;
-        g_wifi.item = 0;
     }
     if (net.state == NET_PLAYING) return 1;
     int sound = -1;
     switch (g_wifi.page) {
     case W_MENU:
-        if (pressed & (SCE_CTRL_UP | SCE_CTRL_DOWN)) { g_wifi.item ^= 1; sound = 0; }
+        if (pressed & SCE_CTRL_UP) { g_wifi.item = (g_wifi.item + 2) % 3; sound = 0; }
+        if (pressed & SCE_CTRL_DOWN) { g_wifi.item = (g_wifi.item + 1) % 3; sound = 0; }
         if (pressed & SCE_CTRL_CROSS) {
             sound = 1;
             uint8_t *pr;
             int n = my_profile(&pr);
             if (g_wifi.item == 0 && net_host(pr, n)) g_wifi.page = W_HOST;
             else if (g_wifi.item == 1 && net_scan()) { g_wifi.page = W_SCAN; g_wifi.item = 0; }
+            else if (g_wifi.item == 2) { g_wifi.page = W_CODE; g_wifi.item = 0; }
             else wifi_note(net.error);
         }
         if (pressed & SCE_CTRL_CIRCLE) { g_wifi.page = W_CLOSED; sound = 1; }
@@ -1107,14 +1113,35 @@ static int wifi_update(unsigned pressed) {
             sound = 1;
             uint8_t *pr;
             int len = my_profile(&pr);
-            if (net_join(hosts[g_wifi.item].addr, pr, len)) g_wifi.page = W_JOINED;
+            if (net_join(hosts[g_wifi.item].addr, pr, len)) { g_wifi.page = W_JOINED; g_wifi.back = 1; }
             else { wifi_note(net.error); net_scan(); }
         }
         if (pressed & SCE_CTRL_CIRCLE) { net_leave(); g_wifi.page = W_MENU; g_wifi.item = 1; sound = 1; }
         break;
     }
+    case W_CODE: {   // Left/Right: which letter, Up/Down: change it
+        int *c = &g_wifi.code[g_wifi.item];
+        if (pressed & SCE_CTRL_LEFT) { g_wifi.item = (g_wifi.item + NET_CODE_LEN - 1) % NET_CODE_LEN; sound = 0; }
+        if (pressed & SCE_CTRL_RIGHT) { g_wifi.item = (g_wifi.item + 1) % NET_CODE_LEN; sound = 0; }
+        if (pressed & SCE_CTRL_UP) { *c = (*c + 1) % 32; sound = 0; }
+        if (pressed & SCE_CTRL_DOWN) { *c = (*c + 31) % 32; sound = 0; }
+        if (pressed & SCE_CTRL_CROSS) {
+            sound = 1;
+            char code[NET_CODE_LEN + 1];
+            for (int i = 0; i < NET_CODE_LEN; i++) code[i] = WIFI_CODE_CHARS[g_wifi.code[i]];
+            code[NET_CODE_LEN] = 0;
+            uint32_t addr = net_code_addr(code);
+            uint8_t *pr;
+            int len = my_profile(&pr);
+            if (!addr) wifi_note("That isn't a game code: check it with the host");
+            else if (net_join(addr, pr, len)) { g_wifi.page = W_JOINED; g_wifi.back = 2; }
+            else wifi_note(net.error);
+        }
+        if (pressed & SCE_CTRL_CIRCLE) { g_wifi.page = W_MENU; g_wifi.item = 2; sound = 1; }
+        break;
+    }
     case W_JOINED:
-        if (pressed & SCE_CTRL_CIRCLE) { net_leave(); g_wifi.page = W_MENU; g_wifi.item = 1; sound = 1; }
+        if (pressed & SCE_CTRL_CIRCLE) { net_leave(); g_wifi.page = W_MENU; g_wifi.item = g_wifi.back; sound = 1; }
         break;
     }
     if (sound >= 0) audio_sfx_play(sound ? "sound_player_select.wav" : "sound_toggle_b.wav", 1, 0, 0, &g_wifi);
@@ -1132,15 +1159,33 @@ static void wifi_draw(unsigned frame) {
     switch (g_wifi.page) {
     case W_MENU:
         vita2d_pgf_draw_text(g_font, tx, ty, ink, 1.2f, "Multiplayer (Wi-Fi)");
-        vita2d_pgf_draw_text(g_font, tx, ty + 30, dim, 0.8f, "Play together on Vitas on the same Wi-Fi.");
-        vita2d_pgf_draw_text(g_font, tx + 20, ty + 90, g_wifi.item == 0 ? hi : ink, 1.1f, "Host a game");
-        vita2d_pgf_draw_text(g_font, tx + 20, ty + 130, g_wifi.item == 1 ? hi : ink, 1.1f, "Join a game");
-        vita2d_pgf_draw_text(g_font, tx, ty + 130 + (g_wifi.item ? 0 : -40), hi, 1.1f, ">");
+        vita2d_pgf_draw_text(g_font, tx, ty + 30, dim, 0.8f, "Play together on this Wi-Fi or over the internet.");
+        vita2d_pgf_draw_text(g_font, tx + 20, ty + 85, g_wifi.item == 0 ? hi : ink, 1.1f, "Host a game");
+        vita2d_pgf_draw_text(g_font, tx + 20, ty + 125, g_wifi.item == 1 ? hi : ink, 1.1f, "Join on this Wi-Fi");
+        vita2d_pgf_draw_text(g_font, tx + 20, ty + 165, g_wifi.item == 2 ? hi : ink, 1.1f, "Join by game code");
+        vita2d_pgf_draw_text(g_font, tx, ty + 85 + g_wifi.item * 40, hi, 1.1f, ">");
         help = "Cross: choose    Circle: back";
         break;
     case W_HOST: case W_JOINED: {
-        if (g_wifi.page == W_HOST) vita2d_pgf_draw_text(g_font, tx, ty, ink, 1.2f, "Your game");
-        else vita2d_pgf_draw_text(g_font, tx, ty, ink, 1.2f, net.state == NET_JOINING ? "Joining..." : "Joined");
+        if (g_wifi.page == W_HOST) {
+            vita2d_pgf_draw_text(g_font, tx, ty, ink, 1.2f, "Your game");
+            // over the internet: the code to give the others
+            uint32_t ext;
+            const char *why;
+            int open = net_internet(&ext, &why);
+            char line[96];
+            if (open > 0) {
+                char code[NET_CODE_LEN + 1];
+                net_code(ext, code);
+                snprintf(line, sizeof line, "Game code  %.4s-%s", code, code + 4);
+                vita2d_pgf_draw_text(g_font, tx + 190, ty, hi, 1.0f, line);
+            } else {
+                if (open == 0) snprintf(line, sizeof line, "Opening your router for internet play%s", (frame / 20) % 2 ? "..." : "");
+                else snprintf(line, sizeof line, "Wi-Fi only: %s", why);
+                vita2d_pgf_draw_text(g_font, tx, ty + 196, dim, 0.7f, line);
+            }
+        } else
+            vita2d_pgf_draw_text(g_font, tx, ty, ink, 1.2f, net.state == NET_CONNECTING ? "Connecting..." : net.state == NET_JOINING ? "Joining..." : "Joined");
         for (int p = 0; p < NET_PLAYERS; p++) {
             char line[64];
             if (net.names[p][0]) snprintf(line, sizeof line, "Player %d   %s%s", p + 1, net.names[p], p + 1 == net.port ? "  (you)" : "");
@@ -1161,6 +1206,26 @@ static void wifi_draw(unsigned frame) {
             vita2d_pgf_draw_text(g_font, tx + 20, ty + 60 + i * 34, i == g_wifi.item ? hi : ink, 1.0f, line);
         }
         help = "Cross: join    Circle: back";
+        break;
+    }
+    case W_CODE: {
+        vita2d_pgf_draw_text(g_font, tx, ty, ink, 1.2f, "Join by game code");
+        vita2d_pgf_draw_text(g_font, tx, ty + 30, dim, 0.8f, "The code is on the host's screen when they host.");
+        float cx = tx + 30, cy = ty + 130;
+        for (int i = 0; i < NET_CODE_LEN; i++) {
+            char ch[2] = {WIFI_CODE_CHARS[g_wifi.code[i]], 0};
+            float x = cx + i * 46 + (i >= 4 ? 24 : 0);
+            int sel = i == g_wifi.item;
+            vita2d_draw_rectangle(x - 6, cy - 38, 40, 50, sel ? RGBA8(90, 70, 40, 255) : RGBA8(60, 46, 36, 255));
+            int cw = vita2d_pgf_text_width(g_font, 1.4f, ch);
+            vita2d_pgf_draw_text(g_font, x + 14 - cw / 2, cy, sel ? hi : ink, 1.4f, ch);
+            if (sel) {
+                vita2d_pgf_draw_text(g_font, x + 6, cy - 46, hi, 0.8f, "^");
+                vita2d_pgf_draw_text(g_font, x + 6, cy + 34, hi, 0.8f, "v");
+            }
+        }
+        vita2d_pgf_draw_text(g_font, cx + 182, cy - 4, dim, 1.2f, "-");
+        help = "D-pad: type    Cross: join    Circle: back";
         break;
     }
     }
