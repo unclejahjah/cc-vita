@@ -11,8 +11,15 @@ endif()
 project(cc_vita C)
 include("$ENV{VITASDK}/share/vita.cmake" REQUIRED)
 
+# CC_NET: the co-op app (Wi-Fi play), installed next to the main one with its own title ID
+option(CC_NET "Wi-Fi co-op build (its own app, CCRV00003)" OFF)
+if(CC_NET)
+set(VITA_APP_NAME "Castle Crashers Co-op")
+set(VITA_TITLEID  "CCRV00003")
+else()
 set(VITA_APP_NAME "Castle Crashers")
 set(VITA_TITLEID  "CCRV00001")
+endif()
 set(VITA_VERSION  "00.02")
 
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O2 -Wall -std=gnu11")
@@ -58,6 +65,12 @@ target_link_libraries(${PROJECT_NAME}
   m
   c
 )
+
+if(CC_NET)
+target_sources(${PROJECT_NAME} PRIVATE src/net.c src/netplay.c)
+target_compile_definitions(${PROJECT_NAME} PRIVATE CC_NET)
+target_link_libraries(${PROJECT_NAME} SceNet_stub SceNetCtl_stub SceAppUtil_stub)
+endif()
 
 # Vita trophies (need the NoTrpDrm plugin): an unsigned trophy pack and its NP communication id.
 # TROPHY_ICONS=dir: your own ICON0.PNG / TROPnnn.PNG instead of the drawn ones.

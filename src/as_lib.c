@@ -394,9 +394,9 @@ static AsVal g_isnan(AsVm *vm, AsVal this_, int argc, AsVal *argv) { (void)this_
 static AsVal g_isfinite(AsVm *vm, AsVal this_, int argc, AsVal *argv) { (void)this_; return as_bool(isfinite(as_tonum(vm, ARG(0)))); }
 static AsVal g_string(AsVm *vm, AsVal this_, int argc, AsVal *argv) { (void)this_; return as_strv(as_tostr(vm, ARG(0))); }
 static AsVal g_gettimer(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
-    (void)vm; (void)this_; (void)argc; (void)argv;
+    (void)this_; (void)argc; (void)argv;
     extern double as_time_ms(void);
-    return as_num(floor(as_time_ms()));
+    return as_num(floor(vm->time_ms ? vm->time_ms(vm) : as_time_ms()));
 }
 
 // ---- MovieClip --------------------------------------------------------------------

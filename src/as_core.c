@@ -948,7 +948,7 @@ static void run(AsVm *vm, Ctx *c) {
             push(vm, as_num(n > 0 ? (int)((vm->rand_state >> 8) % (uint32_t)n) : 0));
             break;
         }
-        case 0x34: { extern double as_time_ms(void); push(vm, as_num(as_time_ms())); break; }
+        case 0x34: { extern double as_time_ms(void); push(vm, as_num(vm->time_ms ? vm->time_ms(vm) : as_time_ms())); break; }
         case 0x3C: {   // DefineLocal
             AsVal v = pop(vm);
             AsStr *n = as_intern(vm, as_tostr(vm, pop(vm)));
@@ -1124,9 +1124,8 @@ static void run(AsVm *vm, Ctx *c) {
                         AsMc *k = mc->disp[i].mc;
                         if (!k || k->removed) continue;
                         if (!k->name) {
-                            static unsigned next_instance;
                             char b[24];
-                            snprintf(b, sizeof b, "instance%u", ++next_instance);
+                            snprintf(b, sizeof b, "instance%u", ++vm->next_instance);
                             k->name = as_atom(vm, b);
                         }
                         if (!as_own(ob, k->name)) push(vm, as_strv(k->name));

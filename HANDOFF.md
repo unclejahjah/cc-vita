@@ -300,3 +300,27 @@ Both are the same developer-settings path as the magic bug, already fixed by pin
   under 128 a bit of slots 12-27, else slots 28-35. Pelter/Dragonhead and the King/Necromancer
   weapons (64-66) are the PC Insane Store's (LEVEL39), not DLC. Checked in hosttest: LEVEL15's
   rack (f_InitWeapons) shows the DLC weapons unlocked, 2x4/Wooden Sword/store items still locked.
+
+## Wi-Fi co-op (2026-10-22, branch claude/project-thread-pi6xr1)
+A separate app: `cmake -DCC_NET=ON` builds "Castle Crashers Co-op" (title ID CCRV00003) next to the
+main one. Same ux0:data/CastleCrashers files; its own save, save_coop.dat (copied from save.dat on
+its first start). Main menu: the original's MULTIPLAYER button (panel depth 11) between Local Game
+and Help & Options; Host a game / Join a game (hosts found by UDP broadcast on the same Wi-Fi).
+- Lockstep (`src/net.c`, `src/netplay.c`): every Vita runs the whole game; each frame's buttons of
+  every port go host -> everyone over UDP (TCP 47710 lobby, UDP 47711 frames, 47712 beacons).
+  Buttons are read NET_DELAY (4) frames before they're used. Host = port 1, joiners 2-4. Players
+  join at character select with Cross (f_CheckJoin reads each port's jump key: 83, 17, 98, 110).
+- What had to be made the same on every Vita: random seed (host's), getTimer/0x34 and
+  GetLocalSecond (from the frame count), the "instanceN" counter (per VM), cc_host statics reset
+  per game, and how long a level file takes (netplay_prefetch: the load waits until every Vita
+  says it has the file, `loads` in each input). Each input also carries a 16-bit check of the
+  game state; a difference shows "Out of step with the other Vitas" and goes to the log.
+- Pause doesn't stop the game in a Wi-Fi game; the pause menu's port state (2/1/3) goes out with
+  the buttons. A Vita that leaves or is silent 45 s is dropped (g_nPort<n>State 0).
+- Each Vita saves only its own player (cc_storage_save_as: port n -> its save's port 0) and
+  counts only its own achievements; leaving reloads its save.
+- PC test (hosttest): NET_MODE=host|join, NET_PORT, NET_WAIT, NET_ADDR, CC_PAD="frame:CCB bit[:hold]",
+  NET_JITTER, CC_PREFETCH, NET_LOG, NET_TEST_DESYNC. E.g. host
+  CC_PAD="150:14,300:1,450:0,600:1,750:14" and join CC_PAD="230:14,330:1" (P2 joins as Red).
+  Checked: 2 and 3 copies stay in step through LEVEL4 fights with random lag, slow loads and
+  file freeing on one side; a forced difference is caught; a leaver is dropped.

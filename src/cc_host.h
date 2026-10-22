@@ -9,6 +9,20 @@ extern uint8_t cc_keys[256];
 
 void cc_host_init(AsVm *vm);
 
+// A player's buttons as the game sees them, one bit each (the platform maps its pad to these);
+// cc_port_keys sets them in cc_keys[] as that port's key codes (port 1..4, f_GetButtons).
+enum {
+    CCB_START, CCB_ACCEPT, CCB_BACK, CCB_SELECT, CCB_LEFT, CCB_UP, CCB_RIGHT, CCB_DOWN,
+    CCB_WALK_LEFT, CCB_WALK_UP, CCB_WALK_RIGHT, CCB_WALK_DOWN, CCB_PUNCH1, CCB_PUNCH2, CCB_JUMP,
+    CCB_PROJECTILE, CCB_SHIELD, CCB_MAGIC, CCB_L2, CCB_R2, CCB_COUNT
+};
+void cc_port_keys(int port, uint32_t buttons);
+
+// Wi-Fi play: which port this Vita's player is (1..4; 0 when not in a Wi-Fi game) and every
+// port's player name ("" for nobody). Achievements count for this Vita's player only.
+extern int cc_net_port;
+extern char cc_net_names[4][32];
+
 // The executable-side settings the scripts read with GetFlashGlobal.
 AsVal cc_flash_global(AsVm *vm, const char *name);
 void cc_set_flash_global(AsVm *vm, const char *name, AsVal v);
@@ -18,7 +32,9 @@ void cc_native_init(AsVm *vm);   // native versions of hot game functions (cc_na
 void cc_native_root_functions(AsVm *vm, AsObj *root);
 // The title's menu panel (MENU.swf "buttonchoices"), trimmed to the Vita's three items, at x, y
 // (stage px); NULL if the file has no panel. cc_menu_highlight enlarges item 0..2.
-enum { CC_MENU_PLAY, CC_MENU_OPTIONS, CC_MENU_QUIT, CC_MENU_ITEMS };
+// CC_MENU_WIFI (the original's online button, as Wi-Fi Game) only with cc_menu_wifi set.
+enum { CC_MENU_PLAY, CC_MENU_OPTIONS, CC_MENU_QUIT, CC_MENU_WIFI, CC_MENU_ITEMS };
+extern int cc_menu_wifi;
 AsMc *cc_menu_attach(AsVm *vm, float x, float y);
 void cc_menu_highlight(AsVm *vm, AsMc *panel, int item);
 // The power button that stands for Quit, as triangles in screen pixels through screen (stage
@@ -37,6 +53,12 @@ extern int cc_storage_dirty;
 extern int cc_save_requested;           // WriteSaveGame was called: write the save file
 int cc_storage_save(const char *path);  // 1 on success
 int cc_storage_load(const char *path);  // 1 if a save was read
+// Wi-Fi play: a port's profile packed to send (bytes written, -1 if it doesn't fit), put
+// back on another Vita, everything cleared, and saving with from_port as this Vita's player.
+int cc_storage_pack(int port, uint8_t *out, int max);
+void cc_storage_unpack(int port, const uint8_t *in, int len);
+void cc_storage_clear(void);
+int cc_storage_save_as(const char *path, int from_port);
 
 // In-game achievements: the game calls UnlockAchievement(port, id) with the Xbox/Steam ids
 // 1..12. Unlocked ones are a bit set kept in a file of their own (not in the game's save).

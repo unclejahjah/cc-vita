@@ -194,10 +194,11 @@ static AsVal native_get_button_art(AsVm *vm, AsVal this_, int argc, AsVal *argv)
 // MENU.swf's "buttonchoices" panel as the Vita shows it: Local Game, Help & Options and Quit
 // (the online, download, leaderboard and store buttons are hidden), evenly spaced in the
 // panel's own top three slots. Buttons by timeline depth; labels in panel.txtClip.
-static const int MENU_DEPTH[CC_MENU_ITEMS] = {9, 13, 17};
+static const int MENU_DEPTH[CC_MENU_ITEMS] = {9, 13, 17, 11};
+int cc_menu_wifi;   // the co-op build: the online button comes back as Wi-Fi Game, in the 2nd slot
 #define MENU_SCALE 125     // the panel, larger than the original's
 // per item: its width (_xscale) and where it sits (_x)
-static float item_w[CC_MENU_ITEMS] = {100, 100, 100}, item_x[CC_MENU_ITEMS];
+static float item_w[CC_MENU_ITEMS] = {100, 100, 100, 100}, item_x[CC_MENU_ITEMS];
 #define HIGHLIGHT_DEPTH 21   // the chosen button's glowing frame and its button icon
 static float hl_pad[4];      // how far it reaches past a button: left, top, right, bottom (twips)
 
@@ -247,12 +248,12 @@ AsMc *cc_menu_attach(AsVm *vm, float x, float y) {
         memcpy(hl_pad, p, sizeof p);
     }
     static const int hide[] = {11, 15, 3, 5, 7, 19, 21, 24, 26, 28};   // online (+ its icon), download, the 3 icon buttons (+ icons), merch
-    for (size_t i = 0; i < sizeof hide / sizeof *hide; i++) {
+    for (size_t i = cc_menu_wifi; i < sizeof hide / sizeof *hide; i++) {
         AsMc *b = panel_child(panel, hide[i]);
         if (b) b->visible = 0;
     }
     static const char *hide_text[] = {"txtClip.textMultiplayer", "txtClip.textDownload", "txtClip.textMerch"};
-    for (size_t i = 0; i < 3; i++) {
+    for (size_t i = cc_menu_wifi; i < 3; i++) {
         AsMc *t = panel_path(vm, panel, hide_text[i]);
         if (t) t->visible = 0;
     }
@@ -260,27 +261,39 @@ AsMc *cc_menu_attach(AsVm *vm, float x, float y) {
     // with Local Game's left edge
     AsMc *opt = panel_child(panel, 13), *tile = panel_child(panel, 17), *local = panel_child(panel, 9);
     AsMc *topt = panel_path(vm, panel, "txtClip.textOptions"), *tquit = panel_path(vm, panel, "txtClip.textQuit");
+    // the co-op build: Wi-Fi Game (the online button) in the 2nd slot, Help & Options the 3rd
+    AsMc *wifi = cc_menu_wifi ? panel_child(panel, 11) : NULL;
+    AsMc *twifi = cc_menu_wifi ? panel_path(vm, panel, "txtClip.textMultiplayer") : NULL;
     AsMc *tlocal = panel_path(vm, panel, "txtClip.textLocalGame");
     if (tquit) tquit->visible = 0;
     if (opt && local && topt && tlocal) {
-        double ly = local->m.ty / 20, dy = ly + 57 - opt->m.ty / 20;
-        float lb[4], ob[4], tb[4];
+        float lb[4], tb[4];
         render_mc_bounds(local, local->m, lb);
-        render_mc_bounds(opt, opt->m, ob);
-        double dx = lb[2] > lb[0] && ob[2] > ob[0] ? (lb[0] - ob[0]) / 20 : 0;
-        set_num(vm, opt, "_y", opt->m.ty / 20 + dy);
-        set_num(vm, opt, "_x", opt->m.tx / 20 + dx);
-        // and as wide as Local Game (its art is a little narrower)
-        if (lb[2] > lb[0] && ob[2] > ob[0]) item_w[CC_MENU_OPTIONS] = 100 * (lb[2] - lb[0]) / (ob[2] - ob[0]);
-        set_num(vm, topt, "_y", topt->m.ty / 20 + dy);
-        set_num(vm, topt, "_x", topt->m.tx / 20 + dx);
+        // a button (and its label) into slot k under Local Game (57 px apart), in line with its
+        // left edge and as wide (Help & Options' art is a little narrower)
+        void place(AsMc *b, AsMc *label, int k, int item) {
+            float ob[4];
+            render_mc_bounds(b, b->m, ob);
+            double dy = local->m.ty / 20 + 57 * k - b->m.ty / 20;
+            double dx = lb[2] > lb[0] && ob[2] > ob[0] ? (lb[0] - ob[0]) / 20 : 0;
+            set_num(vm, b, "_y", b->m.ty / 20 + dy);
+            set_num(vm, b, "_x", b->m.tx / 20 + dx);
+            if (lb[2] > lb[0] && ob[2] > ob[0]) item_w[item] = 100 * (lb[2] - lb[0]) / (ob[2] - ob[0]);
+            if (label) {
+                set_num(vm, label, "_y", label->m.ty / 20 + dy);
+                set_num(vm, label, "_x", label->m.tx / 20 + dx);
+            }
+        }
+        int k = 1;
+        if (wifi) place(wifi, twifi, k++, CC_MENU_WIFI);
+        place(opt, topt, k, CC_MENU_OPTIONS);
         if (tile) {
             // Quit is the power button at the bottom left, as on the newer menu: its button
             // stays as the place (hidden) and the tile is drawn there (cc_menu_power_button)
             render_mc_bounds(tile, tile->m, tb);
             if (lb[2] > lb[0] && tb[2] > tb[0]) {
                 set_num(vm, tile, "_x", (tile->m.tx + lb[0] - tb[0]) / 20);
-                set_num(vm, tile, "_y", (tile->m.ty + (lb[3] - lb[1]) * 2 + 8 * 20 + lb[1] - tb[1]) / 20 + 6);
+                set_num(vm, tile, "_y", (tile->m.ty + ((lb[3] - lb[1]) + 8 * 20) * k + (lb[3] - lb[1]) + lb[1] - tb[1]) / 20 + 6);
             }
             tile->visible = 0;
         }
@@ -288,10 +301,11 @@ AsMc *cc_menu_attach(AsVm *vm, float x, float y) {
     // larger, and in the bottom left corner: what's left of the panel, MENU_SCALE %, its
     // bottom-left corner a margin in from the screen's
     if (item_w[CC_MENU_OPTIONS] != 100) set_num(vm, opt, "_xscale", item_w[CC_MENU_OPTIONS]);
+    if (cc_menu_wifi && item_w[CC_MENU_WIFI] != 100) set_num(vm, panel_child(panel, 11), "_xscale", item_w[CC_MENU_WIFI]);
     float bb[4] = {1e30f, 1e30f, -1e30f, -1e30f};
     for (int i = 0; i < CC_MENU_ITEMS; i++) {
         AsMc *b = panel_child(panel, MENU_DEPTH[i]);
-        if (!b) continue;
+        if (!b || (i == CC_MENU_WIFI && !cc_menu_wifi)) continue;
         float ib[4];
         render_mc_bounds(b, b->m, ib);
         if (ib[2] <= ib[0]) continue;
