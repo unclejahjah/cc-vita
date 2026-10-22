@@ -147,6 +147,8 @@ struct AsMc {
     int frame;                 // 0-based current frame
     uint8_t playing;
     uint8_t removed;
+    uint32_t gotos;            // frame changes by a goto (as_mc_parent)
+    uint32_t parent_gotos;     // removed: its parent's gotos then
     uint8_t scripted;          // a script set its transform: the timeline stops moving it
     uint8_t visible;
     uint8_t loaded;            // onClipEvent(load) done
@@ -233,7 +235,8 @@ void as_free(AsVm *vm);
 void as_gc(AsVm *vm);           // only between frames
 // which of movies[0..n) anything in the heap belongs to (used[i]); 0 if it can't tell yet
 int as_movies_used(AsVm *vm, Movie *const *movies, int n, uint8_t *used);
-void as_forget_movie(const Movie *m);   // before freeing a movie
+void as_forget_movie(const Movie *m);
+AsVal as_mc_parent(const AsMc *mc);   // _parent (a removed clip: until its parent moves on)   // before freeing a movie
 
 // values
 static inline AsVal as_undef(void) { AsVal v; v.t = V_UNDEF; v.n = 0; return v; }
