@@ -278,3 +278,12 @@ Both are the same developer-settings path as the magic bug, already fixed by pin
   now goes to the card at once on loads, frees and warnings and every 2 s (with a heartbeat every 10 s);
   SELECT+DOWN in a level jumps to the ending. The save is written only on reaching the map
   (f_FlushSaveData from MAP.swf), so a crash in the ending loses the Wizard win (Jah: keep it so).
+- Lag on Jah's Vita (2026-10-22): the log's flush every 2 s stalled the game (~370 ms while the card was busy).
+  The log is now written by a thread of its own (log_thread; log_flush hands the buffer over,
+  log_flush_wait before quitting). The animal-orb log lines are gone.
+- Preloading (2026-10-22): main menu -> character select (lobby.swf, ~7 s) and character select ->
+  map (fx/player/animals in one 15 s frame: they're loaded straight, not through loadMovie's
+  prefetch) stood still on the Vita. preload_step (title and game loops) reads lobby, fx, player,
+  animals, map on the loading thread whenever it's idle and the heap is under 60%; such files keep
+  keep=2 (not freed) until the game first asks for them. Tessellators are one per thread
+  (render_thread_slot).

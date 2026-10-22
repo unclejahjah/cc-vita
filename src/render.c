@@ -127,7 +127,9 @@ static void tessellate_line(const ShapeLine *sl, MeshBuf *mb) {
     }
 }
 
-static TESStesselator *g_tess;
+// One tessellator per thread (files also load on a second one): render_thread_slot says which.
+int (*render_thread_slot)(void);
+static TESStesselator *g_tessellators[2];
 
 static void grow_bounds(float bb[4], const float *xy, int n) {
     for (int i = 0; i < n; i++) {
@@ -171,7 +173,9 @@ static void tessellate_bitmap_fill(TESStesselator *tess, const ShapeFill *sf, Bi
 
 static void tessellate_shape(Shape *s) {
     if (s->tessellated) return;
-    if (!g_tess) g_tess = tessNewTess(NULL);
+    TESStesselator **slot = &g_tessellators[render_thread_slot ? render_thread_slot() & 1 : 0];
+    if (!*slot) *slot = tessNewTess(NULL);
+    TESStesselator *tess = *slot;
     MeshBuf mb = {0};
     for (int i = 0; i < s->nfills; i++) {
         const ShapeFill *sf = &s->fills[i];
@@ -179,9 +183,9 @@ static void tessellate_shape(Shape *s) {
             s->bfills = realloc(s->bfills, sizeof(BitmapFill) * (s->nbfills + 1));
             BitmapFill *bf = &s->bfills[s->nbfills++];
             memset(bf, 0, sizeof *bf);
-            tessellate_bitmap_fill(g_tess, sf, bf);
+            tessellate_bitmap_fill(tess, sf, bf);
         } else {
-            tessellate_fill(g_tess, sf, &mb);
+            tessellate_fill(tess, sf, &mb);
         }
     }
     for (int i = 0; i < s->nlines; i++) tessellate_line(&s->lines[i], &mb);
