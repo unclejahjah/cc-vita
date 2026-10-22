@@ -1098,7 +1098,7 @@ static int wifi_update(unsigned pressed) {
         if (pressed & (SCE_CTRL_START | SCE_CTRL_CROSS)) {
             sound = 1;
             if (n < 2) wifi_note("Waiting for someone to join first");
-            else if (net_start()) return 1;
+            else if (net_start()) { log_line("Wi-Fi game: delay %d frames", net.delay); return 1; }
         }
         if (pressed & SCE_CTRL_CIRCLE) { net_leave(); g_wifi.page = W_MENU; sound = 1; }
         break;
