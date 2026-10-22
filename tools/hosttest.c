@@ -1,7 +1,7 @@
 // Desktop check for the Vita renderer: same parser + tessellator, software
-// rasterised to PPM so output can be compared with code/swfproto.
-// usage: hosttest PLAYER.swf walk out_prefix [frames]
-//        hosttest --level LEVELn.swf PLAYER.swf out_prefix [frames]   (knight walks right)
+// rasterised to PPM.
+// usage: hosttest file.swf label out_prefix [frames]
+//        hosttest --as GAME_DIR MAIN.swf out frames every   (the game itself; see HANDOFF.md)
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
@@ -18,7 +18,7 @@
 #include "../src/pause_menu.h"
 #include "../src/help_book.h"
 #include "../src/strtab.h"
-#include "../src/enemy.h"
+#include "../src/swf.h"
 
 #define SCREEN_W 960
 #define SCREEN_H 544
@@ -145,205 +145,6 @@ static void write_frame(const char *prefix, int t) {
            render_stats.cached_tris);
 }
 
-static void line(float x0, float y0, float x1, float y1, const uint8_t rgb[3]) {
-    float dx = x1 - x0, dy = y1 - y0;
-    int n = (int)(fabsf(dx) > fabsf(dy) ? fabsf(dx) : fabsf(dy)) + 1;
-    for (int i = 0; i <= n; i++) {
-        int x = (int)(x0 + dx * i / n), y = (int)(y0 + dy * i / n);
-        for (int oy = 0; oy < 2; oy++)
-            for (int ox = 0; ox < 2; ox++)
-                if (x + ox >= 0 && x + ox < W && y + oy >= 0 && y + oy < H) memcpy(px + ((y + oy) * W + x + ox) * 3, rgb, 3);
-    }
-}
-
-static void *host_alloc(size_t bytes, void *ctx) {
-    (void)ctx;
-    return malloc(bytes);
-}
-
-static int level_mode(int argc, char **argv) {
-    if (argc < 5) { fprintf(stderr, "usage: %s --level LEVEL.swf PLAYER.swf out_prefix [frames]\n", argv[0]); return 1; }
-    int frames = argc > 5 ? atoi(argv[5]) : 4;
-    char err[256];
-    clock_t t0 = clock();
-    Level *lv = level_load(argv[2], err, sizeof err);
-    if (!lv) { fprintf(stderr, "%s\n", err); return 1; }
-    Movie *pl = swf_load(argv[3], err, sizeof err);
-    if (!pl) { fprintf(stderr, "%s\n", err); return 1; }
-    // same upload path as the Vita, so only colour-transformed shapes get recoloured
-    render_tessellate_all(lv->m);
-    render_tessellate_all(pl);
-    void *lv_block = render_upload(lv->m, host_alloc, NULL), *pl_block = render_upload(pl, host_alloc, NULL);
-    printf("loaded in %.2fs: %d layers, spawn %.0f,%.0f, edges %.0f..%.0f, %d markers hidden, bg %02x%02x%02x\n",
-           (double)(clock() - t0) / CLOCKS_PER_SEC, lv->nlayers, lv->spawn_x, lv->spawn_y, lv->edge_left,
-           lv->edge_right, lv->hidden, lv->m->bg[0], lv->m->bg[1], lv->m->bg[2]);
-    for (int i = 0; i < lv->nlayers; i++)
-        printf("  layer %s/%s factor %.2f\n", lv->m->names[lv->layer[i].container->name],
-               lv->m->names[lv->layer[i].inner->name], lv->layer[i].factor);
-    int walk = sprite_find_label(&pl->root, "walk");
-    if (walk < 0) walk = 0;
-    W = SCREEN_W; H = SCREEN_H;
-    float k = W / GAME_W;
-    Mat screen = {k / 20, 0, 0, k / 20, 0, 0};
-    DrawList vb = {0};
-    RecolourCache cache;
-    const size_t cache_bytes = 8 * 1024 * 1024;
-    void *cache_mem = malloc(cache_bytes);
-    recolour_cache_init(&cache, cache_mem, cache_bytes);
-    vb.cache = &cache;
-    vb.view[2] = W;
-    vb.view[3] = H;
-    int types[8] = {0}, type_ids[8] = {1, 2, 3, 4, 100, 101, 300, 400};
-    for (int i = 0; i < lv->nsegs; i++)
-        for (int k2 = 0; k2 < 8; k2++) types[k2] += lv->segs[i].type == type_ids[k2];
-    printf("%d play-layer objects depth-sorted, %d static\n", lv->nsorted, lv->game_static.count);
-    printf("%d collision segments: type1 %d, 2 %d, 3 %d, 4 %d, 100 %d, 101 %d, 300 %d, 400 %d\n", lv->nsegs, types[0],
-           types[1], types[2], types[3], types[4], types[5], types[6], types[7]);
-    // The knight walks right with collision (5 px steps, like holding right); one picture per 30 steps.
-    // Collision edges are drawn on top: red walls, blue stairs (100/101), green other types.
-    // optional: start x y and step size (negative walks left)
-    Mover km = {argc > 7 ? atof(argv[6]) : lv->spawn_x, argc > 7 ? atof(argv[7]) : lv->spawn_y, 0, 0};
-    float step_dx = argc > 8 ? atof(argv[8]) : 5, step_dy = argc > 9 ? atof(argv[9]) : 0;
-    for (int i = 0; i < lv->nsegs; i++)
-        if (lv->segs[i].type == 100 || lv->segs[i].type == 101)
-            printf("  stair edge %d type %d: %.0f,%.0f - %.0f,%.0f\n", i, lv->segs[i].type, lv->segs[i].x0,
-                   lv->segs[i].y0, lv->segs[i].x1, lv->segs[i].y1);
-    float kx, ky;
-    for (int t = 0; t < frames; t++) {
-        for (int step = 0; t && step < 30; step++) {
-            level_move(lv, &km, step_dx, argc > 9 ? step_dy : 0);
-            if (argc <= 7) level_move(lv, &km, 0, step & 1 ? 3 : -3);   // wiggle up/down to probe the floor edges
-        }
-        kx = km.x;
-        ky = km.y;
-        clear(lv->m->bg);
-        render_begin(&vb);
-        Actor knight = {pl, &pl->root.frames[walk], kx, ky, step_dx < 0 ? -1.0f : 1.0f, t, km.body_y};
-        float camx = level_clamp_camera_x(lv, kx);
-        level_render(lv, screen, camx, ky, 100, t, &knight, 1, &vb);
-        rasterise(&vb);
-        Mat gm = level_game_matrix(lv, screen, camx, ky, 100);
-        for (int i = 0; i < lv->nsegs; i++) {
-            const Segment *s = &lv->segs[i];
-            static const uint8_t red[3] = {255, 0, 0}, blue[3] = {0, 80, 255}, green[3] = {0, 200, 0};
-            const uint8_t *c = s->type <= 4 ? red : s->type < 200 ? blue : green;
-            line(gm.a * s->x0 * 20 + gm.c * s->y0 * 20 + gm.tx, gm.b * s->x0 * 20 + gm.d * s->y0 * 20 + gm.ty,
-                 gm.a * s->x1 * 20 + gm.c * s->y1 * 20 + gm.tx, gm.b * s->x1 * 20 + gm.d * s->y1 * 20 + gm.ty, c);
-        }
-        write_frame(argv[4], t);
-        printf("  knight at %.0f,%.0f body_y %.0f ground %d\n", kx, ky, km.body_y, km.ground);
-    }
-    level_free(lv);
-    swf_free(pl);
-    free(lv_block);
-    free(pl_block);
-    recolour_cache_free(&cache);
-    free(cache_mem);
-    return 0;
-}
-
-// Scripted knight test: walk, light combo, jump + kick, heavy. Writes a frame at each snapshot.
-static int player_mode(int argc, char **argv) {
-    if (argc < 5) { fprintf(stderr, "usage: %s --player LEVEL.swf PLAYER.swf out_prefix\n", argv[0]); return 1; }
-    char err[256];
-    Level *lv = level_load(argv[2], err, sizeof err);
-    Movie *pl = swf_load(argv[3], err, sizeof err);
-    if (!lv || !pl) { fprintf(stderr, "%s\n", err); return 1; }
-    static Rig rig;
-    rig_init(&rig, pl);
-    Player p;
-    player_init(&p, &rig, lv->spawn_x, lv->spawn_y);
-    for (int i = 0; i < A_COUNT; i++) printf("%s %d/%d  ", anim_name(i), rig.anims[i].fin, rig.anims[i].length);
-    printf("\n");
-    Enemies es;
-    enemies_reset(&es);
-    int fight = argc > 5 && !strcmp(argv[5], "fight");
-    W = SCREEN_W; H = SCREEN_H;
-    float k = W / GAME_W;
-    Mat screen = {k / 20, 0, 0, k / 20, 0, 0};
-    DrawList vb = {0};
-    vb.view[2] = W;
-    vb.view[3] = H;
-    static const char *names[] = {"idle", "walk", "dash", "attack", "jump", "land", "block", "hit"};
-    // 60 Hz frames; a script of presses: X = light, Y = heavy, A = jump, R/L = tap right/left
-    static const struct { int f; char key; } script[] = {
-        {10, 'X'}, {20, 'X'}, {30, 'X'}, {40, 'X'},             // X X X X
-        {120, 'X'}, {130, 'Y'},                                  // X Y: uppercut
-        {200, 'X'}, {210, 'X'}, {220, 'Y'}, {232, 'Y'},          // X X Y Y
-        {320, 'A'}, {330, 'X'}, {338, 'X'}, {346, 'Y'},          // air X X Y
-        {420, 'A'}, {432, 'Y'},                                  // air Y: slam down
-        {500, 'R'}, {506, 'R'}, {516, 'X'},                      // dash, X: dash punch
-    };
-    const char *last = "";
-    int shot = 0;
-    for (int f = 0; f < (fight ? 900 : 580); f++) {
-        PlayerInput in = {0};
-        char key = 0;
-        if (fight) {
-            // face the nearest enemy, walk up to it and mash X X Y (or X Y to launch, then air X)
-            const Enemy *t = NULL;
-            for (int i = 0; i < MAX_ENEMIES; i++)
-                if (es.e[i].alive && es.e[i].hp > 0 && (!t || fabsf(es.e[i].mv.x - p.mv.x) < fabsf(t->mv.x - p.mv.x)))
-                    t = &es.e[i];
-            if (t) {
-                float dx = t->mv.x - p.mv.x, dy = t->mv.y - p.mv.y;
-                if (fabsf(dx) > 55) in.dx = dx > 0 ? 1 : -1;
-                else if (dx * p.face < 0) in.dx = dx > 0 ? 0.6f : -0.6f;
-                if (fabsf(dy) > 8) in.dy = dy > 0 ? 1 : -1;
-                // X Y to launch, then jump and X X X to juggle
-                if (fabsf(dx) < 80 && fabsf(dy) < 15 && f % 8 == 0) {
-                    int step = (f / 8) % 6;
-                    key = step == 0 ? 'X' : step == 1 ? 'Y' : step == 2 ? 'A' : 'X';
-                }
-            }
-        }
-        for (size_t s = 0; !fight && s < sizeof script / sizeof *script; s++)
-            if (script[s].f == f) key = script[s].key;
-        if (key == 'X') in.light = 1;
-        if (key == 'Y') in.heavy = 1;
-        if (key == 'A') in.jump = 1;
-        // a tap holds the direction for 2 frames; the second tap is held until the dash punch
-        if (!fight && ((f >= 500 && f < 502) || (f >= 506 && f < 520))) in.dx = 1;
-        player_update(&p, lv, &in, 0.5f);
-        if (fight) enemies_update(&es, lv, &rig, &p, 0.5f);
-        const char *now = player_move_name(&p);
-        int snap = fight ? f % 45 == 0 : strcmp(now, last) && p.state == P_ATTACK;
-        if (!fight && strcmp(now, last))
-            printf("f%3d %-6s %-10s group %d num %d body_y %.0f x %.0f\n", f, names[p.state], now, p.punch_group,
-                   p.punch_num, p.mv.body_y, p.mv.x);
-        if (fight)
-            for (int i = 0; i < MAX_ENEMIES; i++) {
-                static int last_anim[MAX_ENEMIES];
-                const Enemy *e = &es.e[i];
-                if (e->alive && e->anim != last_anim[i] && (e->anim == A_BOUNCE1 || e->anim == A_BOUNCE2 ||
-                                                             e->anim == A_JUGGLE || e->anim == A_HITGROUND))
-                    printf("   f%3d enemy %d -> %-10s toss_y %.0f weight %.0f bounces %d hp %d\n", f, i,
-                           anim_name(e->anim), e->speed_toss_y, e->weight, e->bounces, e->hp);
-                last_anim[i] = e->anim;
-            }
-        if (fight && f % 30 == 0) {
-            printf("f%3d knight %-6s %-10s hp %3d x %.0f | wave %d kills %d |", f, names[p.state], now, p.hp, p.mv.x,
-                   es.wave, es.kills);
-            for (int i = 0; i < MAX_ENEMIES; i++)
-                if (es.e[i].alive)
-                    printf(" [%s hp%d st%d x%.0f by%.0f]", anim_name(es.e[i].anim), es.e[i].hp, es.e[i].state,
-                           es.e[i].mv.x, es.e[i].mv.body_y);
-            printf("\n");
-        }
-        last = now;
-        if (!snap) continue;
-        clear(lv->m->bg);
-        render_begin(&vb);
-        Actor actors[1 + MAX_ENEMIES];
-        actors[0] = player_actor(&p);
-        int na = 1 + enemies_actors(&es, &rig, actors + 1, MAX_ENEMIES);
-        level_render(lv, screen, level_clamp_camera_x(lv, p.mv.x), p.mv.y, 100, f / 2, actors, na, &vb);
-        rasterise(&vb);
-        write_frame(argv[4], shot++);
-    }
-    return 0;
-}
-
 // Every frame of one clip in a grid (to see which frame is which character part).
 static int sprite_mode(int argc, char **argv) {
     if (argc < 5) { fprintf(stderr, "usage: %s --sprite file.swf cid out_prefix [cell_px]\n", argv[0]); return 1; }
@@ -423,37 +224,6 @@ static int clips_mode(int argc, char **argv) {
         printf("%d: %.0f x %.0f twips\n", cid, w, h);
     }
     write_frame(argv[4], 0);
-    return 0;
-}
-
-// One character dressed as `who` in every root animation (to spot undressed parts).
-static int dress_mode(int argc, char **argv) {
-    if (argc < 6) { fprintf(stderr, "usage: %s --dress PLAYER.swf who weapon out_prefix\n", argv[0]); return 1; }
-    char err[256];
-    Movie *m = swf_load(argv[2], err, sizeof err);
-    if (!m) { fprintf(stderr, "%s\n", err); return 1; }
-    static Rig rig;
-    rig_init(&rig, m);
-    int who = atoi(argv[3]), weapon = atoi(argv[4]);
-    W = SCREEN_W; H = SCREEN_H;
-    static const uint8_t paper[3] = {237, 237, 224};
-    clear(paper);
-    DrawList vb = {0};
-    int cell = 80, cols = W / cell;
-    for (int l = 0; l < m->root.nlabels && (l / cols + 1) * cell <= H; l++) {
-        render_begin(&vb);
-        Mover mv = {0, 0, 0, 0};
-        // borrow the rig_actor dressing for this label's frame
-        Actor a = rig_actor(&rig, A_STAND, 4, &mv, 1, who, weapon);
-        a.frame = &m->root.frames[m->root.labels[l].frame];
-        vb.nparts = a.nparts;
-        for (int i = 0; i < a.nparts; i++) { vb.part_count[i] = a.part_count[i]; vb.part_frame[i] = a.part_frame[i]; }
-        float k = 0.35f / 20;
-        Mat mt = {k, 0, 0, k, (l % cols) * cell + cell / 2.0f, (l / cols) * cell + cell * 0.8f};
-        render_display_list(m, a.frame, mt, CX_IDENTITY, 4, &vb);
-        rasterise(&vb);
-    }
-    write_frame(argv[5], 0);
     return 0;
 }
 
@@ -1118,12 +888,9 @@ static int help_mode(int argc, char **argv) {
 int main(int argc, char **argv) {
     if (argc > 1 && !strcmp(argv[1], "--help")) return help_mode(argc, argv);
     if (argc > 1 && !strcmp(argv[1], "--as")) return as_mode(argc, argv);
-    if (argc > 1 && !strcmp(argv[1], "--dress")) return dress_mode(argc, argv);
     if (argc > 1 && !strcmp(argv[1], "--sprite")) return sprite_mode(argc, argv);
     if (argc > 1 && !strcmp(argv[1], "--clips")) return clips_mode(argc, argv);
     if (argc > 1 && !strcmp(argv[1], "--pause")) return pause_mode(argc, argv);
-    if (argc > 1 && !strcmp(argv[1], "--level")) return level_mode(argc, argv);
-    if (argc > 1 && !strcmp(argv[1], "--player")) return player_mode(argc, argv);
     if (argc < 4) { fprintf(stderr, "usage: %s file.swf label out_prefix [frames]\n", argv[0]); return 1; }
     int frames = argc > 4 ? atoi(argv[4]) : 4;
     char err[256];

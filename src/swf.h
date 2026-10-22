@@ -1,5 +1,5 @@
 // Minimal SWF reader for Castle Crashers' decompiled assets.
-// C port of code/swfproto/swf.py. Reads game files at runtime; ships no data.
+// Reads game files at runtime; ships no data.
 #ifndef CC_SWF_H
 #define CC_SWF_H
 
@@ -189,7 +189,6 @@ extern void (*swf_bitmap_loaded)(Bitmap *bm);
 void swf_free(Movie *m);
 int sprite_frame_at(const Sprite *s, int tick);
 int sprite_find_label(const Sprite *s, const char *name);
-const Place *frame_find_name(const Movie *m, const Frame *f, const char *name);
 
 Mat mat_mul(Mat m, Mat n);      // apply n first, then m
 CXform cx_mul(CXform outer, CXform inner);

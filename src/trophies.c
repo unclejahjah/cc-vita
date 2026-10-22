@@ -1,6 +1,6 @@
 // Vita trophies for the game's achievements. Works only with Rinnegatamante's NoTrpDrm plugin,
 // which lets an unsigned app use its own trophy pack (sce_sys/trophy/CCRV00001_00/TROPHY.TRP,
-// made by tools/scripts/make_trp.py). Without the plugin the context fails and only the in-game
+// made by tools/make_trp.py). Without the plugin the context fails and only the in-game
 // achievements list is kept. Trophy id = achievement id - 1.
 #include <psp2/common_dialog.h>
 #include <psp2/kernel/threadmgr.h>

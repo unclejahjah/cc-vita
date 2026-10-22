@@ -273,14 +273,6 @@ static AsProp *props_insert(AsProps *p, AsStr *atom) {
 
 AsProp *as_own(AsObj *o, AsStr *atom) { return props_find(&o->props, atom); }
 
-static void props_delete(AsProps *p, AsStr *atom) {
-    AsProp *s = props_find(p, atom);
-    if (!s) return;
-    s->key = DELETED;
-    s->v = as_undef();
-    p->count--;
-}
-
 // ---- objects ----------------------------------------------------------------------
 
 AsObj *as_obj_new(AsVm *vm, int type, AsObj *proto) {

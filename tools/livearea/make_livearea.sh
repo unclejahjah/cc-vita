@@ -10,8 +10,8 @@ REPO=$(cd "$(dirname "$0")/../.." && pwd)
 W=$(mktemp -d)
 trap 'rm -rf "$W"' EXIT
 cd "$REPO"
-gcc -O2 -w -Ithird_party/libtess2/Include -o "$W/hosttest" tools/hosttest.c src/swf.c src/render.c src/level.c \
-  src/player.c src/enemy.c src/as_core.c src/as_mc.c src/as_lib.c src/as_render.c src/cc_host.c src/cc_native.c \
+gcc -O2 -w -Ithird_party/libtess2/Include -o "$W/hosttest" tools/hosttest.c src/swf.c src/render.c \
+  src/as_core.c src/as_mc.c src/as_lib.c src/as_render.c src/cc_host.c src/cc_native.c \
   src/cc_buttons.c src/hostfont.c src/strtab.c src/pause_menu.c src/help_book.c third_party/libtess2/Source/*.c -lm -lz
 cd "$W"
 export CC_SCALE=2
