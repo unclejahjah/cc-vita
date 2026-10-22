@@ -283,7 +283,8 @@ Both are the same developer-settings path as the magic bug, already fixed by pin
   log_flush_wait before quitting). The animal-orb log lines are gone.
 - Preloading (2026-10-22): main menu -> character select (lobby.swf, ~7 s) and character select ->
   map (fx/player/animals in one 15 s frame: they're loaded straight, not through loadMovie's
-  prefetch) stood still on the Vita. preload_step (title and game loops) reads lobby, fx, player,
+  prefetch) stood still on the Vita. preload_step reads, in stages: MENU during the intro; LOADING,
+  PAUSE, sounds, lobby on the title; fx, player,
   animals, map on the loading thread whenever it's idle and the heap is under 60%; such files keep
   keep=2 (not freed) until the game first asks for them. Tessellators are one per thread
   (render_thread_slot).

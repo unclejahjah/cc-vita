@@ -548,16 +548,21 @@ static int cached_movie_peek(const char *base) {
 }
 
 // ---- preloading ----
-// The files the next screens need, read on the loading thread while nothing else loads: the
-// character select's on the title, the game's (effects, players, animals, the map) after it.
-// Each took the Vita seconds with the screen standing still (fx, player and animals 15 s).
-static const char *const g_preload[] = {"lobby.swf", "fx.swf", "player.swf", "animals.swf", "map.swf"};
+// The files the next screens need, read on the loading thread while nothing else loads, in the
+// order they're needed: the title's during the intro, the game's start and the character
+// select's on the title, the game's (effects, players, animals, the map) after that. Each took
+// the Vita seconds with the screen standing still (fx, player and animals 15 s). A file the
+// game asks for while another one is loading waits for it, so nothing is read ahead of its stage.
+static const char *const g_preload[] = {"MENU.swf",                                              // intro
+                                        "LOADING.swf", "PAUSE.swf", "sounds.swf", "lobby.swf",   // title
+                                        "fx.swf", "player.swf", "animals.swf", "map.swf"};       // game
+enum { PRELOAD_INTRO = 1, PRELOAD_TITLE = 5, PRELOAD_GAME = 9 };
 static int g_npreloaded;   // of g_preload, started
 
-static void preload_step(void) {
+static void preload_step(int upto) {   // upto: the PRELOAD_ stage
     if (g_bg_sema < 0) return;
     if (g_bg.state == BG_DONE && g_bg.preload) bg_finish();
-    if (g_bg.state != BG_IDLE || g_npreloaded == (int)(sizeof g_preload / sizeof *g_preload)) return;
+    if (g_bg.state != BG_IDLE || g_npreloaded >= upto) return;
     if (mallinfo().uordblks > (size_t)_newlib_heap_size_user * 6 / 10) return;   // room for the game first
     const char *base = g_preload[g_npreloaded++];
     char path[256];
@@ -964,6 +969,7 @@ static void intro_screen(DrawList *vb) {
     const SceUInt64 tick_us = 1000000 / 30;
     int last = 0;
     while (!g_intro_done) {
+        preload_step(PRELOAD_INTRO);   // the title's file while the intro plays
         sceCtrlPeekBufferPositive(0, &pad, 1);
         if (pad.buttons & ~old.buttons & (SCE_CTRL_START | SCE_CTRL_CROSS)) break;
         old = pad;
@@ -1054,9 +1060,8 @@ static void title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, si
     SceUInt64 prev = sceKernelGetProcessTimeWide(), acc = 0;
     const SceUInt64 tick_us = 1000000 / 30;
     unsigned frame = 0;
-    g_npreloaded = 0;
     for (;;) {
-        preload_step();
+        preload_step(PRELOAD_TITLE);
         sceCtrlPeekBufferPositive(0, &pad, 1);
         unsigned pressed = pad.buttons & ~old.buttons;
         int ly = pad.ly - 128, lx = pad.lx - 128, oly = old.ly - 128, olx = old.lx - 128;
@@ -1266,6 +1271,7 @@ int main(void) {
     intro_screen(&vb);
 
 new_game:   // the title again after Exit to Main Menu
+    g_npreloaded = 0;
     title_screen(&vb, &cache, cache_mem, cache_bytes);
 
     AsVm *vm = as_new(vita_loader);
@@ -1298,7 +1304,7 @@ new_game:   // the title again after Exit to Main Menu
     if (!pause.have_art) pause_build_art(&pause);
 
     while (!exit_to_title) {
-        preload_step();
+        preload_step(PRELOAD_GAME);
         sceCtrlPeekBufferPositive(0, &pad, 1);
         unsigned pressed = pad.buttons & ~old.buttons;
         unsigned nav = pressed;   // menus: the stick moves once per push too
