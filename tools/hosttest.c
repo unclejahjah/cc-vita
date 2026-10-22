@@ -973,6 +973,41 @@ static int help_mode(int argc, char **argv) {
             }
         }
     }
+    {   // the Wi-Fi lobby's pages (as main.c builds them)
+        static const char *menu[] = {"Host a Game", "Join on this Wi-Fi", "Join by Game Code"};
+        HbPage pages[4] = {{0}};
+        pages[0] = (HbPage){.title = "Multiplayer", .nlines = 3, .chosen = 0, .code_chosen = -1,
+                            .note = "Play on the same Wi-Fi, or online with a game code.",
+                            .accept = "Select", .back = "Back"};
+        for (int i = 0; i < 3; i++) pages[0].line[i] = menu[i];
+        pages[1] = (HbPage){.title = "Your Game", .nlines = 4, .chosen = -1, .dim = 12, .code = "A88M-AS9",
+                            .code_chosen = -1, .code_line = 4, .note = "Game code: friends over the internet join with it",
+                            .accept = "Play", .back = "Close"};
+        pages[1].line[0] = "1   Jah  (you)";
+        pages[1].line[1] = "2   PC";
+        pages[1].line[2] = "3   waiting...";
+        pages[1].line[3] = "4   waiting...";
+        pages[2] = (HbPage){.title = "Join by Game Code", .chosen = -1, .code = "A88M-AS9", .code_chosen = 2,
+                            .code_line = 1, .note = "Left / Right: pick a letter   Up / Down: change it",
+                            .accept = "Join", .back = "Back"};
+        pages[3] = (HbPage){.title = "Join on this Wi-Fi", .nlines = 2, .chosen = 1, .code_chosen = -1, .accept = "Join",
+                            .back = "Back"};
+        pages[3].line[0] = "Jah   1/4";
+        pages[3].line[1] = "Alex   2/4";
+        for (int i = 0; i < 4; i++) {
+            pages[i].alpha = 1;
+            pages[i].time = 0.4f;
+            if (have_back) memcpy(px, back, sizeof back), memset(stencil, 0, (size_t)W * H);
+            else clear((const uint8_t[3]){40, 44, 52});
+            render_begin(&vb);
+            vb.view[2] = W;
+            vb.view[3] = H;
+            help_book_build_page(&pages[i], m, W / 848.0f, &vb);
+            rasterise(&vb);
+            printf("%d: lobby page %d\n", shot, i);
+            write_frame(argv[3], shot++);
+        }
+    }
     return 0;
 }
 

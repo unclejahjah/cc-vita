@@ -576,3 +576,70 @@ void help_book_build(const HelpBook *hb, Movie *mv, float k, DrawList *out) {
     }
     prompt(out, a, k, a->buttons[1], a->button_b[1], STAGE_W * 0.82f, words("help.back", "Back"), alpha);
 }
+
+// ---- a page for other menus ------------------------------------------------------------
+
+static uint32_t pulse(float time) {   // the chosen line's yellow, as Settings'
+    int v = (int)(sinf(time * 10) * 34 + 221) & 255;
+    return (uint32_t)v << 16 | (uint32_t)v << 8;
+}
+
+void help_book_build_page(const HbPage *pg, Movie *mv, float k, DrawList *out) {
+    static const uint8_t BOX[4] = {0xff, 0xff, 0xff, 255};
+    Art *a = art_for(mv);
+    float alpha = pg->alpha, sc = place_scale(a);
+    book_art(out, a, k, alpha);
+    if (pg->title) page_title(out, a, k, pg->title, alpha);
+    float mx, my, bw;
+    book_middle(a, &mx, &my, &bw);
+    float dummy, y0, gap = 40 * sc;
+    to_stage(a, 0, 135, &dummy, &y0);
+    for (int i = 0; i < pg->nlines && i < HB_PAGE_LINES; i++) {
+        if (!pg->line[i] || !*pg->line[i]) continue;
+        uint32_t c = i == pg->chosen ? pulse(pg->time) : pg->dim >> i & 1 ? 0xb4aca0 : INK;
+        text(out, k, pg->line[i], mx, y0 + i * gap, 26 * sc, 2, c, alpha);
+    }
+    if (pg->code) {
+        // letters in boxes, centred, a wider gap at each '-'
+        int n = 0, gaps = 0;
+        for (const char *p = pg->code; *p; p++) *p == '-' ? gaps++ : n++;
+        float cw = 46 * sc, gw = 22 * sc, h = 54 * sc, cy = y0 + pg->code_line * gap + 10 * sc;
+        float x = mx - (n * cw + gaps * gw) / 2;
+        int slot = 0;
+        for (const char *p = pg->code; *p; p++) {
+            if (*p == '-') {
+                text(out, k, "-", x + gw / 2, cy, 34 * sc, 2, INK, alpha);
+                x += gw;
+                continue;
+            }
+            int chosen = slot == pg->code_chosen;
+            float bx0 = x + 4 * sc, bx1 = x + cw - 4 * sc, by0 = cy - h / 2, by1 = cy + h / 2;
+            float w = (chosen ? 3 : 1.6f) * sc, al = alpha * (chosen ? 1 : 0.7f);
+            stroke(out, k, bx0, by0, bx1, by0, w, BOX, al);
+            stroke(out, k, bx1, by0, bx1, by1, w, BOX, al);
+            stroke(out, k, bx1, by1, bx0, by1, w, BOX, al);
+            stroke(out, k, bx0, by1, bx0, by0, w, BOX, al);
+            char ch[2] = {*p, 0};
+            text(out, k, ch, x + cw / 2, cy + 2 * sc, 38 * sc, 2, chosen ? pulse(pg->time) : INK, alpha);
+            if (chosen) {   // up and down arrows: Up / Down change it
+                float ax = x + cw / 2, t = by0 - 8 * sc, b = by1 + 8 * sc, r = 7 * sc;
+                stroke(out, k, ax - r, t, ax, t - r, 2.5f * sc, BOX, alpha);
+                stroke(out, k, ax, t - r, ax + r, t, 2.5f * sc, BOX, alpha);
+                stroke(out, k, ax - r, b, ax, b + r, 2.5f * sc, BOX, alpha);
+                stroke(out, k, ax, b + r, ax + r, b, 2.5f * sc, BOX, alpha);
+            }
+            x += cw;
+            slot++;
+        }
+    }
+    if (pg->note && *pg->note) {
+        const char *s = pg->note;
+        char line[128];
+        float ny;
+        to_stage(a, 0, 362, &dummy, &ny);
+        for (int l = 0; l < 2 && wrap(&s, 560 * sc, 18 * sc, line, sizeof line); l++, ny += 21 * sc)
+            text(out, k, line, mx, ny, 18 * sc, 2, 0xe8e0d0, alpha);
+    }
+    if (pg->accept) prompt(out, a, k, a->buttons[0], a->button_b[0], STAGE_W * 0.60f, pg->accept, alpha);
+    if (pg->back) prompt(out, a, k, a->buttons[1], a->button_b[1], STAGE_W * 0.82f, pg->back, alpha);
+}

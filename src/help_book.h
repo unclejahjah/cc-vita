@@ -34,4 +34,22 @@ int help_book_update(HelpBook *hb, unsigned pressed, float dt, int *sound);
 // (as_render_set_font) draws the words. pause_swf: PAUSE.swf or MENU.swf (both carry the art).
 void help_book_build(const HelpBook *hb, Movie *pause_swf, float k, DrawList *out);
 
+// A page of the same book for other menus (the Wi-Fi lobby): a title, lines down the middle
+// (one chosen, pulsing like Settings' rows; dim ones greyed), a big code in boxes (one box
+// chosen), a small note near the bottom, and the Cross / Circle prompts.
+#define HB_PAGE_LINES 8
+typedef struct {
+    const char *title;
+    const char *line[HB_PAGE_LINES];
+    int nlines, chosen;        // chosen: -1 none
+    unsigned dim;              // bit i: line i greyed
+    const char *code;          // NULL none; '-' in it is a gap
+    int code_chosen;           // -1 none
+    int code_line;             // the code goes where this line would be
+    const char *note;
+    const char *accept, *back; // the prompts' words (NULL: no prompt)
+    float time, alpha;
+} HbPage;
+void help_book_build_page(const HbPage *pg, Movie *pause_swf, float k, DrawList *out);
+
 #endif

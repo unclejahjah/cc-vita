@@ -1148,92 +1148,111 @@ static int wifi_update(unsigned pressed) {
     return 0;
 }
 
+// the lobby as a page of the Help & Options book (PAUSE.swf's art, the game font)
+static void wifi_words(const char *key, const char *fallback, char *out, int cap) {
+    const char *s = strtab_get(key);
+    snprintf(out, cap, "%s", s ? s : fallback);
+}
+#define WORDS(key, fallback) (strtab_get(key) ? strtab_get(key) : (fallback))
+
 static void wifi_draw(unsigned frame) {
-    const float x0 = 250, y0 = 120, w = 460, h = 300;
-    vita2d_draw_rectangle(0, 0, SCREEN_W, SCREEN_H, RGBA8(0, 0, 0, 120));
-    vita2d_draw_rectangle(x0, y0, w, h, RGBA8(40, 30, 24, 230));
-    vita2d_draw_rectangle(x0, y0, w, 4, RGBA8(255, 236, 170, 255));
-    unsigned ink = RGBA8(255, 255, 255, 255), dim = RGBA8(170, 160, 150, 255), hi = RGBA8(255, 220, 90, 255);
-    float tx = x0 + 30, ty = y0 + 46;
-    const char *help = "";
+    static DrawList ui;
+    static char lines[HB_PAGE_LINES][64], note[128], code[NET_CODE_LEN + 2];
+    Movie *pm = host_movie("PAUSE.swf");
+    HbPage pg = {0};
+    pg.chosen = pg.code_chosen = -1;
+    pg.time = frame / 60.0f;
+    pg.alpha = 1;
+    pg.back = WORDS("help.back", "Back");
+    for (int i = 0; i < HB_PAGE_LINES; i++) { lines[i][0] = 0; pg.line[i] = lines[i]; }
+    note[0] = 0;
+    pg.note = note;
+    const char *dots = (frame / 20) % 4 == 0 ? "" : (frame / 20) % 4 == 1 ? "." : (frame / 20) % 4 == 2 ? ".." : "...";
     switch (g_wifi.page) {
     case W_MENU:
-        vita2d_pgf_draw_text(g_font, tx, ty, ink, 1.2f, "Multiplayer (Wi-Fi)");
-        vita2d_pgf_draw_text(g_font, tx, ty + 30, dim, 0.8f, "Play together on this Wi-Fi or over the internet.");
-        vita2d_pgf_draw_text(g_font, tx + 20, ty + 85, g_wifi.item == 0 ? hi : ink, 1.1f, "Host a game");
-        vita2d_pgf_draw_text(g_font, tx + 20, ty + 125, g_wifi.item == 1 ? hi : ink, 1.1f, "Join on this Wi-Fi");
-        vita2d_pgf_draw_text(g_font, tx + 20, ty + 165, g_wifi.item == 2 ? hi : ink, 1.1f, "Join by game code");
-        vita2d_pgf_draw_text(g_font, tx, ty + 85 + g_wifi.item * 40, hi, 1.1f, ">");
-        help = "Cross: choose    Circle: back";
+        pg.title = WORDS("vita.wifi.title", "Multiplayer");
+        wifi_words("vita.wifi.host", "Host a Game", lines[0], 64);
+        wifi_words("vita.wifi.join_wifi", "Join on this Wi-Fi", lines[1], 64);
+        wifi_words("vita.wifi.join_code", "Join by Game Code", lines[2], 64);
+        pg.nlines = 3;
+        pg.chosen = g_wifi.item;
+        wifi_words("vita.wifi.about", "Play on the same Wi-Fi, or online with a game code.", note, sizeof note);
+        pg.accept = WORDS("vita.wifi.select", "Select");
         break;
     case W_HOST: case W_JOINED: {
+        if (g_wifi.page == W_HOST) pg.title = WORDS("vita.wifi.your_game", "Your Game");
+        else pg.title = net.state == NET_CONNECTING ? WORDS("vita.wifi.connecting", "Connecting...")
+                        : net.state == NET_JOINING   ? WORDS("vita.wifi.joining", "Joining...")
+                                                     : WORDS("vita.wifi.joined", "Joined");
+        for (int p = 0; p < NET_PLAYERS; p++) {
+            if (net.names[p][0]) snprintf(lines[p], 64, "%d   %s%s", p + 1, net.names[p], p + 1 == net.port ? "  (you)" : "");
+            else { snprintf(lines[p], 64, "%d   %s%s", p + 1, WORDS("vita.wifi.waiting", "waiting"), dots); pg.dim |= 1u << p; }
+        }
+        pg.nlines = NET_PLAYERS;
         if (g_wifi.page == W_HOST) {
-            vita2d_pgf_draw_text(g_font, tx, ty, ink, 1.2f, "Your game");
-            // over the internet: the code to give the others
             uint32_t ext;
             const char *why;
             int open = net_internet(&ext, &why);
-            char line[96];
             if (open > 0) {
-                char code[NET_CODE_LEN + 1];
-                net_code(ext, code);
-                snprintf(line, sizeof line, "Game code  %.4s-%s", code, code + 4);
-                vita2d_pgf_draw_text(g_font, tx + 190, ty, hi, 1.0f, line);
+                char c[NET_CODE_LEN + 1];
+                net_code(ext, c);
+                snprintf(code, sizeof code, "%.4s-%s", c, c + 4);
+                pg.code = code;
+                pg.code_line = 4;
+                wifi_words("vita.wifi.code_note", "Game code: friends over the internet join with it", note, sizeof note);
+            } else if (open == 0) {
+                snprintf(note, sizeof note, "%s%s", WORDS("vita.wifi.opening", "Opening your router for internet play"), dots);
             } else {
-                if (open == 0) snprintf(line, sizeof line, "Opening your router for internet play%s", (frame / 20) % 2 ? "..." : "");
-                else snprintf(line, sizeof line, "Wi-Fi only: %s", why);
-                vita2d_pgf_draw_text(g_font, tx, ty + 196, dim, 0.7f, line);
+                snprintf(note, sizeof note, "%s: %s", WORDS("vita.wifi.wifi_only", "This Wi-Fi only"), why);
             }
-        } else
-            vita2d_pgf_draw_text(g_font, tx, ty, ink, 1.2f, net.state == NET_CONNECTING ? "Connecting..." : net.state == NET_JOINING ? "Joining..." : "Joined");
-        for (int p = 0; p < NET_PLAYERS; p++) {
-            char line[64];
-            if (net.names[p][0]) snprintf(line, sizeof line, "Player %d   %s%s", p + 1, net.names[p], p + 1 == net.port ? "  (you)" : "");
-            else snprintf(line, sizeof line, "Player %d   waiting%s", p + 1, ((frame / 20) % 4 == 0) ? "" : (frame / 20) % 4 == 1 ? "." : (frame / 20) % 4 == 2 ? ".." : "...");
-            vita2d_pgf_draw_text(g_font, tx + 10, ty + 50 + p * 34, net.names[p][0] ? ink : dim, 1.0f, line);
+            pg.accept = WORDS("vita.wifi.play", "Play");
+            pg.back = WORDS("vita.wifi.close", "Close");
+        } else {
+            wifi_words("vita.wifi.wait_host", "Waiting for the host to start", note, sizeof note);
+            pg.back = WORDS("vita.wifi.leave", "Leave");
         }
-        help = g_wifi.page == W_HOST ? "START: play    Circle: close the game" : "Waiting for the host to start    Circle: leave";
         break;
     }
     case W_SCAN: {
-        vita2d_pgf_draw_text(g_font, tx, ty, ink, 1.2f, "Join a game");
+        pg.title = WORDS("vita.wifi.join_wifi", "Join on this Wi-Fi");
         NetHost hosts[8];
         int n = net_hosts(hosts, 8);
-        if (!n) vita2d_pgf_draw_text(g_font, tx + 10, ty + 60, dim, 0.9f, (frame / 30) % 2 ? "Looking for games on this Wi-Fi..." : "Looking for games on this Wi-Fi");
-        for (int i = 0; i < n && i < 5; i++) {
-            char line[64];
-            snprintf(line, sizeof line, "%s's game   %d/4", hosts[i].name, hosts[i].players);
-            vita2d_pgf_draw_text(g_font, tx + 20, ty + 60 + i * 34, i == g_wifi.item ? hi : ink, 1.0f, line);
+        if (!n) {
+            snprintf(lines[0], 64, "%s%s", WORDS("vita.wifi.looking", "Looking for games"), dots);
+            pg.dim = 1;
+            pg.nlines = 1;
         }
-        help = "Cross: join    Circle: back";
+        for (int i = 0; i < n && i < 6; i++) snprintf(lines[i], 64, "%s   %d/4", hosts[i].name, hosts[i].players);
+        if (n) { pg.nlines = n < 6 ? n : 6; pg.chosen = g_wifi.item; pg.accept = WORDS("vita.wifi.join", "Join"); }
         break;
     }
     case W_CODE: {
-        vita2d_pgf_draw_text(g_font, tx, ty, ink, 1.2f, "Join by game code");
-        vita2d_pgf_draw_text(g_font, tx, ty + 30, dim, 0.8f, "The code is on the host's screen when they host.");
-        float cx = tx + 30, cy = ty + 130;
+        pg.title = WORDS("vita.wifi.join_code", "Join by Game Code");
+        int k = 0;
         for (int i = 0; i < NET_CODE_LEN; i++) {
-            char ch[2] = {WIFI_CODE_CHARS[g_wifi.code[i]], 0};
-            float x = cx + i * 46 + (i >= 4 ? 24 : 0);
-            int sel = i == g_wifi.item;
-            vita2d_draw_rectangle(x - 6, cy - 38, 40, 50, sel ? RGBA8(90, 70, 40, 255) : RGBA8(60, 46, 36, 255));
-            int cw = vita2d_pgf_text_width(g_font, 1.4f, ch);
-            vita2d_pgf_draw_text(g_font, x + 14 - cw / 2, cy, sel ? hi : ink, 1.4f, ch);
-            if (sel) {
-                vita2d_pgf_draw_text(g_font, x + 6, cy - 46, hi, 0.8f, "^");
-                vita2d_pgf_draw_text(g_font, x + 6, cy + 34, hi, 0.8f, "v");
-            }
+            if (i == 4) code[k++] = '-';
+            code[k++] = WIFI_CODE_CHARS[g_wifi.code[i]];
         }
-        vita2d_pgf_draw_text(g_font, cx + 182, cy - 4, dim, 1.2f, "-");
-        help = "D-pad: type    Cross: join    Circle: back";
+        code[k] = 0;
+        pg.code = code;
+        pg.code_chosen = g_wifi.item;
+        pg.code_line = 1;
+        wifi_words("vita.wifi.code_help", "Left / Right: pick a letter   Up / Down: change it", note, sizeof note);
+        pg.accept = WORDS("vita.wifi.join", "Join");
         break;
     }
     }
-    vita2d_pgf_draw_text(g_font, tx, y0 + h - 20, dim, 0.8f, help);
+    if (pm) {
+        render_begin(&ui);
+        ui.view[2] = SCREEN_W;
+        ui.view[3] = SCREEN_H;
+        help_book_build_page(&pg, pm, SCREEN_W / 848.0f, &ui);
+        draw_list(&ui);
+    }
     if (g_wifi.note_timer > 0) {
         g_wifi.note_timer--;
         int tw = vita2d_pgf_text_width(g_font, 0.9f, g_wifi.note);
-        outlined_text((SCREEN_W - tw) / 2, y0 + h + 34, 0.9f, g_wifi.note);
+        outlined_text((SCREEN_W - tw) / 2, SCREEN_H * 0.86f, 0.9f, g_wifi.note);
     }
 }
 #endif
