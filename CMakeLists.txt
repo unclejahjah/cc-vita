@@ -101,7 +101,12 @@ set(LIVEAREA_FILES
   FILE ${CMAKE_CURRENT_SOURCE_DIR}/sce_sys/livearea/contents/template.xml sce_sys/livearea/contents/template.xml)
 endif()
 
+# Wi-Fi hosting binds ports, which a "safe" homebrew may not (sceNetBind gives EACCES)
+if(CC_NET)
+vita_create_self(${PROJECT_NAME}.self ${PROJECT_NAME} UNSAFE)
+else()
 vita_create_self(${PROJECT_NAME}.self ${PROJECT_NAME})
+endif()
 vita_create_vpk(${PROJECT_NAME}.vpk ${VITA_TITLEID} ${PROJECT_NAME}.self
   VERSION ${VITA_VERSION}
   NAME ${VITA_APP_NAME}
