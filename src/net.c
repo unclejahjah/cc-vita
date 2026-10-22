@@ -219,7 +219,8 @@ typedef struct {
     uint32_t in_have;          // its inputs 0..in_have-1 are here
     uint32_t acked;            // it has frames 0..acked-1
     uint32_t heard;            // ms of the last packet
-    uint32_t rtt;              // ms there and back, the worst lately (lobby pings)
+    uint32_t pings[8];         // ms there and back, the last few lobby pings
+    int npings;
     uint8_t *profile;
     int nprofile;
 } Peer;
@@ -405,8 +406,7 @@ static void host_lobby(void) {
                 conn_send(&pe->c, MSG_WELCOME, &port, 1, NULL, 0);
                 changed = 1;
             } else if (type == MSG_PONG && len >= 4) {
-                uint32_t rtt = t - get32(m);
-                pe->rtt = rtt > pe->rtt ? rtt : pe->rtt - (pe->rtt - rtt) / 8;
+                pe->pings[pe->npings++ % 8] = t - get32(m);
             } else if (type == MSG_BYE) {
                 pe->c.closed = 1;
             }
@@ -422,6 +422,17 @@ static void host_lobby(void) {
     if (changed) roster();
 }
 
+// a player's usual round trip: the middle of the last pings (one slow frame on either Vita
+// while loading the menu isn't the network)
+static uint32_t ping_ms(const Peer *pe) {
+    int n = pe->npings < 8 ? pe->npings : 8;
+    uint32_t v[8];
+    memcpy(v, pe->pings, sizeof v);
+    for (int i = 1; i < n; i++)
+        for (int j = i; j > 0 && v[j] < v[j - 1]; j--) { uint32_t x = v[j]; v[j] = v[j - 1]; v[j - 1] = x; }
+    return n ? v[n / 2] : 0;
+}
+
 int net_start(void) {
     if (net.state != NET_HOSTING) return 0;
     net.seed = now_ms() * 2654435761u ^ 0x5bd1e995u;
@@ -429,7 +440,7 @@ int net_start(void) {
     uint32_t rtt = 0;
     for (int p = 1; p < NET_PLAYERS; p++) {
         g_active |= peers[p].used << p;
-        if (peers[p].used && peers[p].rtt > rtt) rtt = peers[p].rtt;
+        if (peers[p].used && ping_ms(&peers[p]) > rtt) rtt = ping_ms(&peers[p]);
     }
     // a frame's buttons go to the host and back before it runs: the furthest player's round trip
     // in frames, on top of the Wi-Fi delay
