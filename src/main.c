@@ -332,7 +332,7 @@ static char g_last_error[256];
 // before is kept as log_prev.txt. Lines collect in memory and go to the card every few
 // seconds (log_flush): a write per line cost frames in fights.
 #define LOG_PATH DATA_DIR "log.txt"
-#define LOG_MAX (1 << 20)
+#define LOG_MAX (4 << 20)
 static SceUID g_log = -1;
 static int g_log_bytes, g_log_used;
 static char g_log_buf[16384];
@@ -427,6 +427,7 @@ static Movie *prepare_movie(const char *path, int is_level, char *err, size_t n)
 static Movie *register_movie(const char *base, const char *path, Movie *m) {
     log_line("load %s%s (heap %u KB used)", path, m->truncated ? " (cut short)" : "",
              (unsigned)(mallinfo().uordblks >> 10));
+    log_flush();   // loads and frees go to the card at once: a crash right after keeps them
     GpuBlock *blk = &g_movies[g_nmovies].gpu;
     blk->uid = -1;
     if (render_upload(m, mesh_alloc, blk)) render_release_cpu(m);
@@ -585,6 +586,7 @@ static int free_unused_movies(AsVm *vm, RecolourCache *cache, void *cache_mem, s
         gpu_free(&g_movies[i].gpu);
     }
     g_nmovies = n;
+    log_flush();
     return unused;
 }
 
@@ -846,7 +848,10 @@ static void vita_sound_stop(AsVm *vm, const void *owner) {
 
 static void vita_warn(AsVm *vm, const char *msg) {
     snprintf(g_last_error, sizeof g_last_error, "%s", msg);
-    if (log_first(msg)) log_line("[%u] %s", vm ? (unsigned)vm->tick : 0, msg);
+    if (log_first(msg)) {
+        log_line("[%u] %s", vm ? (unsigned)vm->tick : 0, msg);
+        log_flush();
+    }
 }
 
 // the level's animal orbs (animal1, animal2... on the game layer), logged when they change:
@@ -1246,6 +1251,14 @@ new_game:   // the title again after Exit to Main Menu
         int debug = pad.buttons & SCE_CTRL_SELECT;
         if (debug && (pressed & SCE_CTRL_START)) break;
         if (debug && (pressed & SCE_CTRL_UP)) overlay = !overlay;
+        // SELECT+DOWN in a level: straight to the ending (for testing the final cutscene)
+        if (debug && (pressed & SCE_CTRL_DOWN) && in_level(vm)) {
+            int found;
+            AsVal fn = as_resolve_path(vm, vm->root, "f_ChangeLevel", &found);
+            AsVal arg = as_strv(as_str(vm, "../ending/ending.swf"));
+            log_line("[%u] SELECT+DOWN: to the ending", (unsigned)vm->tick);
+            if (found && fn.t == V_OBJ) as_call(vm, fn, as_objv(&vm->root->obj), 1, &arg);
+        }
         // in a level and on the map, Start is the pause menu's (the executable's in the original)
         int level = in_level(vm), on_map = !level && in_map(vm);
         map_pad(&pad, debug, level);
@@ -1296,7 +1309,17 @@ new_game:   // the title again after Exit to Main Menu
             // (levels played earlier, the title). Below that they stay, so going back to the
             // map or replaying a level doesn't load them again.
             if (vm->tick % 30 == 0) log_animals(vm);
-            if (vm->tick % 150 == 0) log_flush();
+            // (not on tick % 150: two ticks in one pass could step over it for minutes)
+            static SceUInt64 last_flush;
+            SceUInt64 t = sceKernelGetProcessTimeWide();
+            if (t - last_flush >= 2000000) {
+                static int beats;
+                if (++beats % 5 == 0)   // every 10 s, so a log that stops says roughly when
+                    log_line("[%u] running, heap %u KB, %d files", (unsigned)vm->tick,
+                             (unsigned)(mallinfo().uordblks >> 10), g_nmovies);
+                last_flush = t;
+                log_flush();
+            }
             // Only after a new file came in: once over half, a pass every 3 s that finds the
             // rest still in use costs frames for nothing (the map dropped to 45 fps).
             if (vm->tick - last_free >= 90 && g_nmovies != last_free_count &&
