@@ -288,3 +288,11 @@ Both are the same developer-settings path as the magic bug, already fixed by pin
   animals, map on the loading thread whenever it's idle and the heap is under 60%; such files keep
   keep=2 (not freed) until the game first asks for them. Tessellators are one per thread
   (render_thread_slot).
+
+## DLC weapons and Golden Whale (2026-10-22)
+- The packs' items are owned in every profile (cc_own_dlc_items, next to cc_own_dlc_characters):
+  weapons 63 71 75 76 77 (Pink Knight Pack), 72 78 79 85 (Blacksmith), 84 (Hatty's Gem Sword),
+  74 80 83 (PS3 Can't Stop Crying), animal 29 (Golden Whale). Unlock number = 50 + weapon:
+  under 128 a bit of slots 12-27, else slots 28-35. Pelter/Dragonhead and the King/Necromancer
+  weapons (64-66) are the PC Insane Store's (LEVEL39), not DLC. Checked in hosttest: LEVEL15's
+  rack (f_InitWeapons) shows the DLC weapons unlocked, 2x4/Wooden Sword/store items still locked.

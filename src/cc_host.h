@@ -32,6 +32,7 @@ AsMc *cc_menu_highlight_clip(AsMc *panel, Mat *m);
 // Save data per controller port (ReadStorage/WriteStorage); dirty when the game wrote to it.
 double *cc_storage(int port);
 void cc_own_dlc_characters(void);   // the DLC characters are unlocked in every profile
+void cc_own_dlc_items(void);        // and the DLC packs' weapons and Golden Whale
 extern int cc_storage_dirty;
 extern int cc_save_requested;           // WriteSaveGame was called: write the save file
 int cc_storage_save(const char *path);  // 1 on success

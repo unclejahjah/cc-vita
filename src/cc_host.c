@@ -145,6 +145,30 @@ void cc_own_dlc_characters(void) {
         }
 }
 
+// The weapons and the animal orb that came with the downloadable packs are owned too, as they
+// were in the profile of a Steam copy with the packs: Pink Knight Pack (Lollipop, Broccoli
+// Stick, Buffalo Mace, Electric Eel, Scissors), Legend of the Blacksmith (Man Catcher, Dinner
+// Fork, Cattle Prod, Blacksmith's Hammer), Hatty (Gem Sword, Golden Whale), and the PS3's
+// Can't Stop Crying (Ninja Claw, Lightning Bolt, Cardboard Tube). A weapon's unlock number is
+// 50 + its weapon number: under 128 a bit of slots 12-27, from 128 one of 28-35 (expansion);
+// animals are bits of slots 8-11. The weapons' level requirements still apply.
+static const int dlc_weapons[] = { 63, 71, 75, 76, 77, 72, 78, 79, 85, 84, 74, 80, 83 };
+static const int dlc_animals[] = { 29 };
+
+void cc_own_dlc_items(void) {
+    for (int p = 0; p < 4; p++) {
+        for (size_t i = 0; i < sizeof dlc_weapons / sizeof *dlc_weapons; i++) {
+            int id = 50 + dlc_weapons[i];
+            double *b = &storage[p][id < 128 ? 12 + id / 8 : 28 + (id - 128) / 8];
+            *b = (int)*b | 1 << (id % 8);
+        }
+        for (size_t i = 0; i < sizeof dlc_animals / sizeof *dlc_animals; i++) {
+            double *b = &storage[p][8 + dlc_animals[i] / 8];
+            *b = (int)*b | 1 << (dlc_animals[i] % 8);
+        }
+    }
+}
+
 // WriteSaveGame(): the game asks for its storage to be committed; the platform writes
 // it out when cc_save_requested is set (see cc_storage_save).
 int cc_save_requested;
@@ -678,6 +702,7 @@ void cc_host_init(AsVm *vm) {
     // executable sets this for the full game; the DLC characters are treated as owned)
     cc_set_flash_global(vm, "g_bAllowHiddenCharacters", as_bool(1));
     cc_own_dlc_characters();
+    cc_own_dlc_items();
     as_def_fn(vm, g, "GetGameMode", ret_zero);
     as_def_fn(vm, g, "GetWidescreen", ret_true);   // the Vita screen is 16:9
     as_def_fn(vm, g, "IsPalMode", ret_false);
