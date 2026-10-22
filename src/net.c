@@ -30,6 +30,8 @@
 #define BEACON_PORT 47712      // "a game here", broadcast by the host
 #define RING 256               // frames kept (lockstep keeps everyone within net.slowest of each other)
 #define MAX_SEND 32            // frames or inputs in one packet
+#define RESEND_MS 30           // nothing new: repeat the last packet this often (not every poll: a
+                               // phone's connection queues them up for seconds)
 #define TIMEOUT_MS 45000       // nothing heard for this long: that Vita is gone (a file can take 15 s to load)
 #define MAX_PROFILE (3 * 65536)
 
@@ -219,6 +221,7 @@ typedef struct {
     uint32_t in_have;          // its inputs 0..in_have-1 are here
     uint32_t acked;            // it has frames 0..acked-1
     uint32_t heard;            // ms of the last packet
+    uint32_t sent_ms, sent_frames, sent_in;   // the last packet to it: when, frames_have, in_have
     uint32_t pings[8];         // ms there and back, the last few lobby pings
     int npings;
     uint8_t *profile;
@@ -231,6 +234,7 @@ static Peer peers[NET_PLAYERS];    // host: index = port - 1 (0 is the host itse
 static Conn g_host;                // client: the connection to the host
 static struct sockaddr_in g_host_udp;
 static uint32_t g_host_heard, g_last_beacon, g_last_ping;
+static uint32_t g_sent_ms, g_sent_mine, g_sent_frames;   // client: the last packet to the host
 static NetHost g_found[8];
 static int g_nfound;
 static uint8_t *g_my_profile;
@@ -563,6 +567,10 @@ static void host_game(void) {
     for (int p = 1; p < NET_PLAYERS; p++) {
         Peer *pe = &peers[p];
         if (!pe->used || pe->dropped || !pe->have_udp) continue;
+        if (pe->sent_frames == frames_have && pe->sent_in == pe->in_have && t - pe->sent_ms < RESEND_MS) continue;
+        pe->sent_ms = t;
+        pe->sent_frames = frames_have;
+        pe->sent_in = pe->in_have;
         uint32_t first = pe->acked < (uint32_t)net.first ? (uint32_t)net.first : pe->acked;
         if (first + RING / 2 < frames_have) first = frames_have - RING / 2;
         int count = frames_have > first ? frames_have - first : 0;
@@ -816,6 +824,10 @@ static void client_game(void) {
     if (g_host.closed) { lost("The host left the game"); return; }
     if (t - g_host_heard > TIMEOUT_MS) { lost("Lost the connection to the host"); return; }
     // my inputs the host hasn't got (and, in the same packet, how many frames I have)
+    if (g_sent_mine == mine_have && g_sent_frames == frames_have && t - g_sent_ms < RESEND_MS) return;
+    g_sent_ms = t;
+    g_sent_mine = mine_have;
+    g_sent_frames = frames_have;
     uint32_t first = mine_acked < (uint32_t)net.delay ? (uint32_t)net.delay : mine_acked;
     int count = mine_have > first ? mine_have - first : 0;
     if (count > MAX_SEND) count = MAX_SEND;
