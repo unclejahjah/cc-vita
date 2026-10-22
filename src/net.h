@@ -4,7 +4,8 @@
 //
 // The lobby runs over TCP (who's in, everyone's profile, the start); the game's frames over
 // UDP, each packet repeating the ones not yet acknowledged. A Vita's buttons for frame t are
-// read net.delay frames earlier, so they can reach everyone before frame t runs.
+// read net.delay frames earlier, so they can reach everyone before frame t runs (the host's
+// a little, the others' their round trip to the host).
 //
 // Over the internet: the host's Vita asks its router to open the game's ports (UPnP) and shows
 // a game code (its internet address); the others join by typing it in. The delay grows with
@@ -16,17 +17,18 @@
 
 #define NET_PLAYERS 4
 #define NET_DELAY 4            // frames (at 30 a second) between reading the buttons and using them, on Wi-Fi
+#define NET_SPARE 3            // frames to spare on top of the round trip (the host's delay)
 #define NET_MAX_DELAY 15       // the most, however far away someone is (half a second)
 #define NET_CODE_LEN 7
 #define NET_NAME 32
-#define NET_VERSION 2          // both sides must have the same: the frame format and the game code
+#define NET_VERSION 3          // both sides must have the same: the frame format and the game code
 
 // One player's part of a frame.
 typedef struct {
     uint32_t buttons;          // CCB_ bits
     uint8_t state;             // 0: no change, else g_nPort<n>State becomes state - 1
     uint8_t loads;             // background file loads this Vita has finished (mod 256)
-    uint16_t check;            // this Vita's game state net.delay + 1 frames before (0: none)
+    uint16_t check;            // the game state net.slowest + 1 frames before (0: none)
 } NetInput;
 
 typedef struct {
@@ -48,7 +50,9 @@ typedef struct {
     int port;                  // this Vita's player: 1..4
     char names[NET_PLAYERS][NET_NAME];   // the lobby's players ("" for nobody)
     uint32_t seed;             // the game's random seed, from the host
-    int delay;                 // frames between reading the buttons and using them (from the start)
+    int delay;                 // frames between reading this Vita's buttons and using them (from the start)
+    int first;                 // the host's delay: frames 0..first-1 have no buttons
+    int slowest;               // the joiners' delay (the longest)
     char error[96];            // why the last join or game ended
 } NetInfo;
 

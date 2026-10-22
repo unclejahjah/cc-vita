@@ -330,6 +330,9 @@ and Help & Options; Host a game / Join a game (hosts found by UDP broadcast on t
   "Game code XXXX-XXX" (net_code: the internet address + 3 check bits in 7 base-32 letters);
   "Join by game code" takes it in with the D-pad. A shared provider address (CGNAT, 100.64/10 or
   private) says "Wi-Fi only" with the reason. Joining connects on a thread (NET_CONNECTING).
-  The delay is per game (net.delay, sent in START): 4 + the furthest joiner's lobby ping in
-  frames (MSG_PING/PONG every 250 ms), at most 15. NET_VERSION 2. hosttest: NET_CODE, NET_DELAY,
+  The delay is per game and per side (sent in START): the host's buttons NET_SPARE (3) frames,
+  the joiners' 3 + the furthest joiner's round trip in frames (median of the lobby's
+  MSG_PING/PONG, every 250 ms), 4 to 15. The joiners settle behind the host by themselves.
+  The state checks in the inputs are all of frame k - slowest - 1 (the host keeps a few old
+  ones). NET_VERSION 3. tools: a lag proxy (Python, delays TCP+UDP both ways) checked 200 ms. hosttest: NET_CODE, NET_DELAY,
   UPNP_ROUTER (and a pretend router was used to test it: SSDP + SOAP in Python).

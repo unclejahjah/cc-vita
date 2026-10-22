@@ -28,7 +28,7 @@
 #define TCP_PORT 47710         // the host's lobby
 #define UDP_PORT 47711         // the host's frames
 #define BEACON_PORT 47712      // "a game here", broadcast by the host
-#define RING 256               // frames kept (lockstep keeps everyone within net.delay of each other)
+#define RING 256               // frames kept (lockstep keeps everyone within net.slowest of each other)
 #define MAX_SEND 32            // frames or inputs in one packet
 #define TIMEOUT_MS 45000       // nothing heard for this long: that Vita is gone (a file can take 15 s to load)
 #define MAX_PROFILE (3 * 65536)
@@ -301,8 +301,10 @@ static void set_profile(const uint8_t *profile, int len) {
 static void reset_game(void) {
     memset(frames, 0, sizeof frames);
     memset(mine, 0, sizeof mine);
-    // the first net.delay frames have no buttons: nobody read any yet
-    frames_have = mine_have = net.delay;
+    // the first frames have no buttons: nobody read any yet (net.first for the host's,
+    // net.delay for this Vita's)
+    frames_have = net.first;
+    mine_have = net.delay;
     mine_acked = 0;
     net_desync_tick = 0;
 }
@@ -442,17 +444,23 @@ int net_start(void) {
         g_active |= peers[p].used << p;
         if (peers[p].used && ping_ms(&peers[p]) > rtt) rtt = ping_ms(&peers[p]);
     }
-    // a frame's buttons go to the host and back before it runs: the furthest player's round trip
-    // in frames, on top of the Wi-Fi delay
-    net.delay = NET_DELAY + rtt * 30 / 1000;
-    if (net.delay > NET_MAX_DELAY) net.delay = NET_MAX_DELAY;
-    if (getenv("NET_DELAY")) net.delay = atoi(getenv("NET_DELAY"));
+    // A joiner's buttons go to the host and back (in a frame) before that frame runs: the
+    // furthest player's round trip in frames, and some to spare. The host's own only have to
+    // reach the others, and the joiners settle that far behind the host by themselves, so the
+    // host's need just the spare.
+    net.slowest = NET_SPARE + (rtt * 30 + 999) / 1000;
+    if (net.slowest < NET_DELAY) net.slowest = NET_DELAY;
+    if (net.slowest > NET_MAX_DELAY) net.slowest = NET_MAX_DELAY;
+    net.first = NET_SPARE;
+    if (getenv("NET_DELAY")) net.first = net.slowest = atoi(getenv("NET_DELAY"));
+    net.delay = net.first;
     // the start: seed, delay, who's in, names, then each port's profile
-    int total = 4 + 1 + 1 + sizeof net.names;
+    int total = 4 + 2 + 1 + sizeof net.names;
     for (int p = 0; p < NET_PLAYERS; p++) total += 4 + (p == 0 ? g_my_nprofile : peers[p].used ? peers[p].nprofile : 0);
     uint8_t *b = malloc(total), *q = b;
     put32(q, net.seed); q += 4;
-    *q++ = net.delay;
+    *q++ = net.first;
+    *q++ = net.slowest;
     *q++ = g_active;
     memcpy(q, net.names, sizeof net.names); q += sizeof net.names;
     for (int p = 0; p < NET_PLAYERS; p++) {
@@ -469,14 +477,15 @@ int net_start(void) {
         if (peers[p].used) {
             conn_send(&peers[p].c, MSG_START, b, total, NULL, 0);
             conn_flush(&peers[p].c);
-            peers[p].in_have = net.delay;
+            memset(peers[p].in, 0, sizeof peers[p].in);
+            peers[p].in_have = net.slowest;
             peers[p].acked = 0;
             peers[p].heard = now_ms();
         }
     free(b);
     if (s_beacon >= 0) { close(s_beacon); s_beacon = -1; }
     reset_game();
-    for (int t = 0; t < net.delay; t++) frames[t].active = g_active;
+    for (int t = 0; t < net.first; t++) frames[t].active = g_active;
     net.state = NET_PLAYING;
     return 1;
 }
@@ -554,7 +563,7 @@ static void host_game(void) {
     for (int p = 1; p < NET_PLAYERS; p++) {
         Peer *pe = &peers[p];
         if (!pe->used || pe->dropped || !pe->have_udp) continue;
-        uint32_t first = pe->acked < (uint32_t)net.delay ? (uint32_t)net.delay : pe->acked;
+        uint32_t first = pe->acked < (uint32_t)net.first ? (uint32_t)net.first : pe->acked;
         if (first + RING / 2 < frames_have) first = frames_have - RING / 2;
         int count = frames_have > first ? frames_have - first : 0;
         if (count > MAX_SEND) count = MAX_SEND;
@@ -744,11 +753,12 @@ static void client_lobby(void) {
             for (int p = 0; p < NET_PLAYERS; p++) net.names[p][NET_NAME - 1] = 0;
         } else if (type == MSG_PING && len >= 4) {
             conn_send(&g_host, MSG_PONG, m, 4, NULL, 0);
-        } else if (type == MSG_START && len >= 6 + (int)sizeof net.names) {
+        } else if (type == MSG_START && len >= 7 + (int)sizeof net.names) {
             const uint8_t *q = m, *end = m + len;
             net.seed = get32(q); q += 4;
-            net.delay = *q++;
-            if (net.delay < 1 || net.delay > NET_MAX_DELAY + 16) { lost("The game's start got lost"); return; }
+            net.first = *q++;
+            net.slowest = net.delay = *q++;
+            if (net.first < 1 || net.slowest < net.first || net.slowest > 64) { lost("The game's start got lost"); return; }
             uint8_t active = *q++;
             memcpy(net.names, q, sizeof net.names); q += sizeof net.names;
             for (int p = 0; p < NET_PLAYERS; p++) {
@@ -761,7 +771,7 @@ static void client_lobby(void) {
                 q += n;
             }
             reset_game();
-            for (int t = 0; t < net.delay; t++) frames[t].active = active;
+            for (int t = 0; t < net.first; t++) frames[t].active = active;
             g_host_heard = now_ms();
             net.state = NET_PLAYING;
             return;

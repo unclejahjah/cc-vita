@@ -10,6 +10,8 @@ static uint32_t g_clock_tick, g_clock_calls;   // getTimer(): the frame's time, 
 static uint8_t g_req, g_done;                  // level files asked for / ready on this Vita
 static uint8_t g_loads_min;                    // ready on every Vita (this frame)
 static char g_url[128];                        // the file being waited for ("" none)
+#define CHECKS 64
+static uint16_t g_checks[CHECKS];              // netplay_check after each frame lately
 
 // 30 frames a second, and a millisecond more on each call in the same frame (so a script that
 // waits for the clock to move still gets there)
@@ -34,6 +36,7 @@ void netplay_begin(AsVm *vm) {
     g_req = g_done = g_loads_min = 0;
     g_url[0] = 0;
     g_clock_tick = g_clock_calls = 0;
+    memset(g_checks, 0, sizeof g_checks);
 }
 
 void netplay_end(void) {
@@ -45,7 +48,12 @@ int netplay_step(AsVm *vm, uint32_t t, NetInput *mine, int no_start) {
     const NetFrame *f = net_frame(t);
     if (!f) return 0;
     mine->loads = g_done;
-    mine->check = t > 0 ? netplay_check(vm) : 0;   // the state after frame t - 1
+    // the state after frame t - 1, and the check that goes with these buttons: every Vita's for
+    // frame k is of the state after k - slowest - 1 (the host's buttons go out sooner than the
+    // others', so it sends an older one)
+    if (t > 0) g_checks[(t - 1) % CHECKS] = netplay_check(vm);
+    int k = (int)(t + net.delay) - net.slowest - 1;
+    mine->check = k >= 0 && (int)t - 1 - k < CHECKS ? g_checks[k % CHECKS] : 0;
     net_submit(t + net.delay, mine);
     memset(cc_keys, 0, sizeof cc_keys);
     int first = 1;
