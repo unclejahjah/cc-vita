@@ -21,6 +21,10 @@ game's own ActionScript 1 from the user's PC copy on a small AVM1 engine written
 - `src/hostfont.c, strtab.c` – BMFont atlas; text table by ntext number (strings_en.txt, not in git).
 - `src/audio.c` – mpg123 mixer: sfx/<linkage>.mp3, music/<name>.mp3.
 - `src/main.c` – Vita app: loader, renderer, pad mapping, pause menu, overlay (SELECT+UP).
+- `src/pause_menu.c, help_book.c, audio.c, trophies.c` (trophies opt-in, -DCC_TROPHIES=ON, on hold).
+- `tools/` – hosttest.c, livearea/, extract_strings.py (strings_en.txt), extract_help.py,
+  make_save100.py, make_trp.py. 2026-10-22 clean-up removed the old hand-written viewer
+  (viewer/level/player/enemy.c), prototypes/ and the one-off tools/scripts.
 - `tools/hosttest.c` – PC harness (`--as GAME_DIR MAIN.swf out frames every`). Env: CC_KEYS,
   CC_CALL (frame:fn:args, 'str #num path; a.b.method is called on a.b), CC_SET
   (frame:path.name=num), AS_ARGS (print calls of named script functions), AS_PRINT, AS_TRACE_EVERY,
@@ -159,7 +163,7 @@ Both are the same developer-settings path as the magic bug, already fixed by pin
 ### Vita trophies (NoTrpDrm), 2026-10-20
 - `src/trophies.c`: sceNpTrophy with Rinnegatamante's NoTrpDrm plugin (`*main` → `ur0:tai/NoTrpDrm.suprx` or `ux0:tai/`). Comm id `CCRV00001_00` (param.sfo NP_COMMUNICATION_ID + `sce_sys/trophy/CCRV00001_00/TROPHY.TRP`). Each newly earned in-game achievement unlocks trophy id-1 (also syncs ones earned before). Without the plugin the context fails and only the in-game list is used.
 - ON HOLD (Jah 18:44): every build with the trophy code failed to start on the Vita ("Could not prepare the application to start"), even without the pack; default build has none (`-DCC_TROPHIES=ON` to try again). Suspects: the SceNpTrophy import itself, or the pack format.
-- `tools/scripts/make_trp.py` builds the unsigned pack at build time (TRP v2 header, dev flag 1, plain XML SFMs, drawn placeholder icons; `-DTROPHY_ICONS=dir` for real ICON0.PNG / TROPnnn.PNG, never committed). The TRP layout is from the PS3 format and untested on hardware: if the setup dialog errors, try dev flag 0 or a pack from withLogic's Vita TRP Builder.
+- `tools/make_trp.py` builds the unsigned pack at build time (TRP v2 header, dev flag 1, plain XML SFMs, drawn placeholder icons; `-DTROPHY_ICONS=dir` for real ICON0.PNG / TROPnnn.PNG, never committed). The TRP layout is from the PS3 format and untested on hardware: if the setup dialog errors, try dev flag 0 or a pack from withLogic's Vita TRP Builder.
 
 ### Crash dump, loading screen, pause menu (2026-10-20 evening)
 - Crash dump (19:06) = out of memory decoding sky2.swf (two 2048x2048 bitmaps): each bitmap is now a texture as soon as it's decoded (`swf_bitmap_loaded`), 32-bit ones are converted in place, a failed allocation drops the bitmap, and a load past half the heap frees unused files first. Decode dumps: gunzip the .psp2dmp, xyzz/vita-parse-core (py3-patched) with the ELF of the same commit.
@@ -276,7 +280,7 @@ Both are the same developer-settings path as the magic bug, already fixed by pin
   false shatters, `CC_SET 2000:loader.game.game.gold1.health=1` + `CC_CALL 2010:loader.f_Hit1:...gold1|#10|#1|#0|#0|#0` shatters it once.
 - Ending crash (Blue Knight, Triangle in ENDING.swf): not reproduced in the cloud or on a retry. The log
   now goes to the card at once on loads, frees and warnings and every 2 s (with a heartbeat every 10 s);
-  SELECT+DOWN in a level jumps to the ending. The save is written only on reaching the map
+  (The SELECT+DOWN jump to the ending was taken out in the 2026-10-22 clean-up.) The save is written only on reaching the map
   (f_FlushSaveData from MAP.swf), so a crash in the ending loses the Wizard win (Jah: keep it so).
 - Lag on Jah's Vita (2026-10-22): the log's flush every 2 s stalled the game (~370 ms while the card was busy).
   The log is now written by a thread of its own (log_thread; log_flush hands the buffer over,

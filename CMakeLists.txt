@@ -19,14 +19,7 @@ set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O2 -Wall -std=gnu11")
 
 include_directories(third_party/libtess2/Include)
 
-# Default: the game's own scripts on the ActionScript engine.
-# -DCC_VIEWER=ON: the earlier level/animation viewer with hand-written gameplay.
-option(CC_VIEWER "build the level and animation viewer" OFF)
-if(CC_VIEWER)
-  set(APP_SOURCES src/viewer.c src/level.c src/player.c src/enemy.c)
-else()
-  set(APP_SOURCES src/main.c src/as_core.c src/as_mc.c src/as_lib.c src/as_render.c src/cc_host.c src/cc_native.c src/hostfont.c src/audio.c src/strtab.c src/cc_buttons.c src/pause_menu.c src/help_book.c)
-endif()
+set(APP_SOURCES src/main.c src/as_core.c src/as_mc.c src/as_lib.c src/as_render.c src/cc_host.c src/cc_native.c src/hostfont.c src/audio.c src/strtab.c src/cc_buttons.c src/pause_menu.c src/help_book.c)
 
 add_executable(${PROJECT_NAME}
   ${APP_SOURCES}
@@ -77,8 +70,8 @@ target_sources(${PROJECT_NAME} PRIVATE src/trophies.c)
 target_compile_definitions(${PROJECT_NAME} PRIVATE CC_TROPHIES)
 target_link_libraries(${PROJECT_NAME} SceNpTrophy_stub_weak)
 add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/TROPHY.TRP
-  COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/tools/scripts/make_trp.py ${CMAKE_CURRENT_BINARY_DIR}/TROPHY.TRP ${TROPHY_ICONS}
-  DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/tools/scripts/make_trp.py)
+  COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/tools/make_trp.py ${CMAKE_CURRENT_BINARY_DIR}/TROPHY.TRP ${TROPHY_ICONS}
+  DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/tools/make_trp.py)
 set(VITA_MKSFOEX_FLAGS "${VITA_MKSFOEX_FLAGS} -s NP_COMMUNICATION_ID=CCRV00001_00")
 set(TROPHY_FILES FILE ${CMAKE_CURRENT_BINARY_DIR}/TROPHY.TRP sce_sys/trophy/CCRV00001_00/TROPHY.TRP)
 endif()

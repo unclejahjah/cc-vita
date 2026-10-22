@@ -760,12 +760,6 @@ int sprite_find_label(const Sprite *s, const char *name) {
     return -1;
 }
 
-const Place *frame_find_name(const Movie *m, const Frame *f, const char *name) {
-    for (int i = 0; i < f->count; i++)
-        if (f->places[i].name && !strcmp(m->names[f->places[i].name], name)) return &f->places[i];
-    return NULL;
-}
-
 // ---- movie -------------------------------------------------------------------
 
 Movie *swf_load(const char *path, char *err, int errlen) {

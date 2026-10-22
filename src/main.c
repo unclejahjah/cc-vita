@@ -1316,14 +1316,6 @@ new_game:   // the title again after Exit to Main Menu
         int debug = pad.buttons & SCE_CTRL_SELECT;
         if (debug && (pressed & SCE_CTRL_START)) break;
         if (debug && (pressed & SCE_CTRL_UP)) overlay = !overlay;
-        // SELECT+DOWN in a level: straight to the ending (for testing the final cutscene)
-        if (debug && (pressed & SCE_CTRL_DOWN) && in_level(vm)) {
-            int found;
-            AsVal fn = as_resolve_path(vm, vm->root, "f_ChangeLevel", &found);
-            AsVal arg = as_strv(as_str(vm, "../ending/ending.swf"));
-            log_line("[%u] SELECT+DOWN: to the ending", (unsigned)vm->tick);
-            if (found && fn.t == V_OBJ) as_call(vm, fn, as_objv(&vm->root->obj), 1, &arg);
-        }
         // in a level and on the map, Start is the pause menu's (the executable's in the original)
         int level = in_level(vm), on_map = !level && in_map(vm);
         map_pad(&pad, debug, level);
