@@ -80,6 +80,7 @@ static void decode_sfx(Sfx *s) {
     if (!h) { s->state = SFX_FAILED; return; }
     size_t cap = 65536, n = 0;   // frames
     int16_t *pcm = malloc(cap * 4);
+    if (!pcm) { mpg123_close(h); mpg123_delete(h); s->state = SFX_FAILED; return; }
     for (;;) {
         if (n + 4096 > cap) {
             cap *= 2;
