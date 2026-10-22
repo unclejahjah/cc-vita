@@ -850,6 +850,7 @@ static int as_mode(int argc, char **argv) {
             clear(bgc);
             render_begin(&vb);
             as_render_mc(vm->root, screen, CX_IDENTITY, &vb);
+            if (getenv("CC_SAVING")) pause_menu_saving(W / 848.0f, 1, &vb);   // the Vita's "Saving..." note
             if (getenv("CC_TITLE_PROMPT")) {   // CC_TITLE_PROMPT=text: the title's Press START, as the Vita draws it
                 float u = W / 960.0f;
                 Mat id = {u, 0, 0, u, 0, 0};
