@@ -270,6 +270,7 @@ void as_mc_goto(AsVm *vm, AsMc *mc, int frame, int play) {
     mc->playing = play;
     if (frame == mc->frame) return;
     mc->frame = frame;
+    mc->gotos++;
     // a timeline's frame script runs before the scripts of the children it places
     enqueue(mc, Q_FRAME, frame);
     apply_frame(vm, mc, frame);
@@ -316,6 +317,7 @@ static void mc_unload(AsVm *vm, AsMc *mc) {
     AsVal f = as_get(vm, as_objv(&mc->obj), as_atom(vm, "onUnload"));
     if (f.t == V_OBJ) as_call(vm, f, as_objv(&mc->obj), 0, NULL);
     mc->removed = 1;
+    if (mc->parent) mc->parent_gotos = mc->parent->gotos;
     for (int i = 0; i < mc->ndisp; i++)
         if (mc->disp[i].mc) mc_unload(vm, mc->disp[i].mc);
 }
@@ -641,14 +643,23 @@ void as_mc_set_prop(AsVm *vm, AsMc *mc, int i, AsVal v) {
     }
 }
 
+// _parent. A clip a goto of its parent has just removed still has it, until that parent goes to
+// another frame or goes too: the Wizard's crystals call f_CheckShardShatter(_parent) right after
+// the _parent.gotoAndStop that removed the clip running the script. A death frame that calls
+// _root.f_X(_parent._parent) after its enemy went "blank" and was sent on by a spawn reusing it
+// (Sand Castle Interior's second wave) reaches nothing.
+AsVal as_mc_parent(const AsMc *mc) {
+    AsMc *p = mc->parent;
+    if (!p || (mc->removed && (p->removed || p->gotos != mc->parent_gotos))) return as_undef();
+    return as_objv(&p->obj);
+}
+
 int as_mc_get_member(AsVm *vm, AsMc *mc, AsStr *atom, AsVal *out) {
     const char *s = atom->s;
     if (s[0] == '_') {
         int i = as_mc_prop_index(s);
         if (i >= 0) { *out = as_mc_get_prop(vm, mc, i); return 1; }
-        // a removed clip has no parent: a death frame that calls _root.f_X(_parent._parent) after its enemy
-        // was reused by a spawn (Sand Castle Interior's second wave) must not reach the new enemy
-        if (!strcasecmp(s, "_parent")) { *out = mc->parent && !mc->removed ? as_objv(&mc->parent->obj) : as_undef(); return 1; }
+        if (!strcasecmp(s, "_parent")) { *out = as_mc_parent(mc); return 1; }
         if (!strcasecmp(s, "_root") || !strcasecmp(s, "_level0")) { *out = as_objv(&vm->root->obj); return 1; }
         if (!strcasecmp(s, "_global")) { *out = as_objv(vm->global); return 1; }
     }

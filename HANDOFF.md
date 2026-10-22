@@ -264,3 +264,17 @@ Both are the same developer-settings path as the magic bug, already fixed by pin
   (strings/strings_en.txt; 266 was wrongly "We're sneaky like that.", a FRESH string).
 - Enemy health: f_SetEnemyHealth (x1/1.2/1.4/1.6 by players, x10 Insane) runs as is; checked
   active_players 1, insane_mode/ez_enemies false, a Barbarian gets 50.
+
+### Wizard crystals smashed early; ending crash log (2026-10-22, thread "Final cutscene crash")
+- LEVEL50's crystals (gold1..4, f_SpawnGem) have unnamed clips whose scripts run
+  `_parent.gotoAndStop("punch1_N"); _root.loader.f_CheckShardShatter(_parent)`. The goto removes the
+  clip running the script, and since 615afba a removed clip's `_parent` was undefined, so
+  f_CheckShardShatter got undefined, read health undefined (not > 0) and played the smash (sound,
+  shrapnel) while the crystal stayed. Now (`as_mc_parent`) a removed clip keeps its parent until that
+  parent goes to another frame or is removed itself: Sand Castle Interior still gets undefined (its
+  enemy is sent on by the respawn), the crystals get theirs. hosttest: LEVEL42 waves pass, LEVEL50 no
+  false shatters, `CC_SET 2000:loader.game.game.gold1.health=1` + `CC_CALL 2010:loader.f_Hit1:...gold1|#10|#1|#0|#0|#0` shatters it once.
+- Ending crash (Blue Knight, Triangle in ENDING.swf): not reproduced in the cloud or on a retry. The log
+  now goes to the card at once on loads, frees and warnings and every 2 s (with a heartbeat every 10 s);
+  SELECT+DOWN in a level jumps to the ending. The save is written only on reaching the map
+  (f_FlushSaveData from MAP.swf), so a crash in the ending loses the Wizard win (Jah: keep it so).
