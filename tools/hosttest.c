@@ -997,6 +997,7 @@ static int help_mode(int argc, char **argv) {
         for (int i = 0; i < 4; i++) {
             pages[i].alpha = 1;
             pages[i].time = 0.4f;
+            if (i == 3) { pages[i].turn = HB_TURN_SECONDS * 0.4f; pages[i].turn_dir = 1; }   // mid-turn
             if (have_back) memcpy(px, back, sizeof back), memset(stencil, 0, (size_t)W * H);
             else clear((const uint8_t[3]){40, 44, 52});
             render_begin(&vb);

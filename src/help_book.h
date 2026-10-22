@@ -49,7 +49,10 @@ typedef struct {
     const char *note;
     const char *accept, *back; // the prompts' words (NULL: no prompt)
     float time, alpha;
+    float turn;                // seconds left of a page turn over it (0 none; HB_TURN_SECONDS long)
+    int turn_dir;              // 1 forward, -1 back
 } HbPage;
+#define HB_TURN_SECONDS 0.45f
 void help_book_build_page(const HbPage *pg, Movie *pause_swf, float k, DrawList *out);
 
 #endif
