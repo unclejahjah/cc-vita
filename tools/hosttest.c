@@ -407,7 +407,7 @@ static int as_mode(int argc, char **argv) {
             for (int i = 0; i < 30000 && net.state != NET_PLAYING && net.state != NET_LOST; i++) { net_poll(); usleep(1000); }
         }
         if (net.state != NET_PLAYING) { printf("net: no game (%s)\n", net.error); return 1; }
-        printf("net: playing as port %d, seed %u, delay %d\n", net.port, net.seed, net.delay);
+        printf("net: playing as port %d, seed %u, delay %d (host %d, joiners %d)\n", net.port, net.seed, net.delay, net.first, net.slowest);
         netplay_begin(vm);
         vm->prefetch = netplay_prefetch;
     }
