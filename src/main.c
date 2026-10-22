@@ -728,6 +728,7 @@ static uint32_t pad_buttons(const SceCtrlData *pad, int in_game) {
 
 typedef struct {
     int open;
+    int select;                // opened at character select: no player state to set
     PauseMenu m;               // the menu (pause_menu.c)
     DrawList ui;               // this frame's backdrop, words and button prompts
     DrawList art;              // the pause book (controls and achievements pages)
@@ -777,6 +778,14 @@ static int in_map(AsVm *vm) {
     AsVal l = as_resolve_path(vm, vm->root, "loader", &found);
     Movie *map = cached_movie("MAP.swf");
     return found && map && l.t == V_OBJ && l.o->type == OBJ_MC && ((AsMc *)l.o)->movie == map;
+}
+
+// character select (lobby.swf in the loader): Start opens the pause menu there too, a knight is
+// picked with Cross
+static int in_select(AsVm *vm) {
+    int found;
+    AsVal s = as_resolve_path(vm, vm->root, "loader.selectscreen", &found);
+    return found && s.t == V_OBJ && s.o->type == OBJ_MC;
 }
 
 // the pause book from PAUSE.swf, centred, about 60% of the screen wide
@@ -921,6 +930,7 @@ static int pause_input(Pause *ps, AsVm *vm, unsigned pressed, float dt) {
     if (r == PM_OPEN) return 1;
     ps->open = 0;
     if (r == PM_TO_TITLE) return 2;
+    if (ps->select) { ps->select = 0; return 0; }
     pause_set_state(vm, r == PM_TO_MAP ? 3 : 1);   // 3: the scripts take the party back to the map
     return 0;
 }
@@ -1612,6 +1622,8 @@ new_game:   // the title again after Exit to Main Menu
     const SceUInt64 tick_us = 1000000 / 30;   // the game's frame rate
     int exit_to_title = 0;
     pause.open = 0;
+    pause.select = 0;
+    unsigned select_eat = 0;   // buttons held from closing the menu at character select
     // PAUSE.swf is read, tessellated and uploaded now: on the first Start that took ~3 s
     host_movie("PAUSE.swf");
     if (!pause.have_art) pause_build_art(&pause);
@@ -1630,14 +1642,19 @@ new_game:   // the title again after Exit to Main Menu
         if (debug && (pressed & SCE_CTRL_START)) break;
         if (debug && (pressed & SCE_CTRL_UP)) overlay = !overlay;
         // in a level and on the map, Start is the pause menu's (the executable's in the original)
-        int level = in_level(vm), on_map = !level && in_map(vm);
+        int level = in_level(vm), on_map = !level && in_map(vm), select = !level && !on_map && in_select(vm);
         uint32_t buttons = debug ? 0 : pad_buttons(&pad, level);
+        // character select: the Cross or Start that closed the menu isn't a pick until let go
+        if (select_eat && !(pad.buttons & select_eat)) select_eat = 0;
+        if (select_eat) buttons = 0;
         memset(cc_keys, 0, sizeof cc_keys);
-        cc_port_keys(1, (level || on_map) ? buttons & ~(1u << CCB_START) : buttons);
+        cc_port_keys(1, (level || on_map || select) ? buttons & ~(1u << CCB_START) : buttons);
         if (pause.open) {
             float dt = (sceKernelGetProcessTimeWide() - prev) / 1000000.0f;
+            int was_select = pause.select;
             int r = pause_input(&pause, vm, nav, dt > 0.1f ? 0.1f : dt);
             if (r == 2) exit_to_title = 1;
+            if (r == 0 && was_select) select_eat = pad.buttons & (SCE_CTRL_CROSS | SCE_CTRL_START | SCE_CTRL_CIRCLE);
             memset(cc_keys, 0, sizeof cc_keys);
             buttons = 0;   // (Wi-Fi play: the game runs on under the menu, without this player)
         } else if ((level || on_map) && !debug && (pressed & SCE_CTRL_START) &&
@@ -1645,6 +1662,11 @@ new_game:   // the title again after Exit to Main Menu
             pause_open(&pause, on_map);
             pause_set_state(vm, 2);
             log_flush();   // the log is complete while paused (to copy it off by FTP)
+            if (!pause.have_art) pause_build_art(&pause);
+        } else if (select && !debug && (pressed & SCE_CTRL_START)) {
+            // the same menu as the map's (no Exit To Map); the players' states stay as they are
+            pause_open(&pause, 1);
+            pause.select = 1;
             if (!pause.have_art) pause_build_art(&pause);
         }
 
