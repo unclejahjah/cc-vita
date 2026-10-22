@@ -1224,6 +1224,7 @@ new_game:   // the title again after Exit to Main Menu
     int frames = 0, ticks = 0;
     unsigned heat_clock = 0;
     int ach_shown = 0, ach_timer = 0;   // the "achievement unlocked" banner
+    int saving_timer = 0;               // game frames left of the "Saving..." note
     uint32_t last_free = 0;
     int last_free_count = -1;   // the files kept after the last pass
     const SceUInt64 tick_us = 1000000 / 30;   // the game's frame rate
@@ -1287,6 +1288,7 @@ new_game:   // the title again after Exit to Main Menu
         if (cc_save_requested) {
             cc_save_requested = 0;
             if (!cc_storage_save(SAVE_PATH)) snprintf(g_last_error, sizeof g_last_error, "couldn't write " SAVE_PATH);
+            saving_timer = 60;   // "Saving..." at the bottom for two seconds, as the original shows it
         }
 
         if (ticked) {
@@ -1316,6 +1318,10 @@ new_game:   // the title again after Exit to Main Menu
             Mat screen = {k / 20, 0, 0, k / 20, 0, 0};
             render_begin(&vb);
             as_render_mc(vm->root, screen, CX_IDENTITY, &vb);
+            if (saving_timer > 0) {
+                saving_timer--;
+                pause_menu_saving(k, saving_timer < 10 ? saving_timer / 10.0f : 1, &vb);
+            }
             hitch_build = (sceKernelGetProcessTimeWide() - t0) / 1000.0f;
             build_ms += hitch_build;
         }

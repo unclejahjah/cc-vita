@@ -258,3 +258,8 @@ void pause_menu_build(const PauseMenu *pm, Movie *mv, float k, DrawList *out) {
     prompt(out, mv, k, 0, "Select", a);
     prompt(out, mv, k, 1, "Back", a);
 }
+
+void pause_menu_saving(float k, float alpha, DrawList *out) {
+    const char *w = strtab_number(596);
+    text(out, k, w ? w : "Saving...", STAGE_W / 2, STAGE_H - 24, 0.7f, 2, 0xffffff, alpha);
+}

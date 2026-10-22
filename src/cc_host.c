@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <math.h>
 
 #define ARG(i) ((i) < argc ? argv[i] : as_undef())
 
@@ -203,11 +204,17 @@ int cc_storage_load(const char *path) {
     return ok;
 }
 
-// SetTextNumeric(textField, value): shows a number in a text field
+// SetTextNumeric(textField, value): shows a number in a text field, as a whole number (the
+// executable's is an integer: Giraffey's +10% leaves exp with a fraction that never shows)
 static AsVal set_text_numeric(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
     (void)this_;
     AsVal tf = ARG(0);
-    if (tf.t == V_OBJ) as_set(vm, tf, as_atom(vm, "text"), as_strv(as_tostr(vm, ARG(1))));
+    if (tf.t != V_OBJ) return as_undef();
+    double v = as_tonum(vm, ARG(1));
+    char s[32];
+    if (isfinite(v) && fabs(v) < 1e15) snprintf(s, sizeof s, "%.0f", trunc(v) + 0.0);
+    else snprintf(s, sizeof s, "%s", as_tostr(vm, ARG(1))->s);
+    as_set(vm, tf, as_atom(vm, "text"), as_strv(as_str(vm, s)));
     return as_undef();
 }
 

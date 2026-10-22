@@ -254,3 +254,13 @@ Both are the same developer-settings path as the magic bug, already fixed by pin
   is_mask, as_render.c): the mask clip is not drawn itself and its clip is drawn through it via
   the stencil, wherever the mask sits in the tree. The temple_splash fx (f_Jumping landing,
   f_FX) were drawn under the same boxes; they show fine now.
+
+## UI text fixes (2026-10-22)
+- "Saving..." (castle.exe string 596) shows small at the bottom for 2 s after each WriteSaveGame
+  (pause_menu_saving; hosttest CC_SAVING=1 draws it).
+- SetTextNumeric shows whole numbers (Giraffey's +10% exp left fractions on the stat screen).
+- The Vet's chalkboard (LEVEL16 f_Vet) shows ntext 180 + 3 * animal_type .. +2 (Golden Whale, type
+  29: 619). Those numbers were missing from strings_en.txt (blank board); added on Jah's PC
+  (strings/strings_en.txt; 266 was wrongly "We're sneaky like that.", a FRESH string).
+- Enemy health: f_SetEnemyHealth (x1/1.2/1.4/1.6 by players, x10 Insane) runs as is; checked
+  active_players 1, insane_mode/ez_enemies false, a Barbarian gets 50.

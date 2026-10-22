@@ -35,5 +35,8 @@ int pause_menu_update(PauseMenu *pm, unsigned pressed, float dt, int *sound);
 // k (stage pixels -> screen pixels). The book pages get only the backdrop. Needs the game
 // font (as_render_set_font) for the words.
 void pause_menu_build(const PauseMenu *pm, Movie *pause_swf, float k, DrawList *out);
+// The executable's "Saving..." note (its string 596), small at the bottom of the screen while
+// the save is written; alpha fades it.
+void pause_menu_saving(float k, float alpha, DrawList *out);
 
 #endif
