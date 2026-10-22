@@ -471,7 +471,9 @@ static int as_mode(int argc, char **argv) {
             int waited = 0;
             while (!netplay_step(vm, f, &in, 0)) {
                 net_poll();
-                if (net.state != NET_PLAYING || ++waited > 20000) { printf("net: stopped at frame %d (%s)\n", f, net.error); return 1; }
+                // ~60 s, as long as a Vita waits (the host's slow file loads take ~15 s)
+                if (net.state != NET_PLAYING || ++waited > 120000) { printf("net: stopped at frame %d (%s)\n", f, net.error); return 1; }
+                if (waited % 4000 == 0) { printf("net: waiting at frame %d, %d s\n", f, waited / 2000); fflush(stdout); }
                 usleep(500);
                 want = netplay_file_wanted();
                 if (want && ++file_wait > (getenv("CC_PREFETCH") ? atoi(getenv("CC_PREFETCH")) : 0)) {
