@@ -734,6 +734,19 @@ void as_tick(AsVm *vm) {
     do_loads(vm);
 }
 
+void as_drain(AsVm *vm) { drain_queue(vm); }
+
+// one frame of a single clip and what's in it, the rest of the tree standing still
+void as_tick_clip(AsVm *vm, AsMc *mc) {
+    if (!A_onEnterFrame) A_onEnterFrame = as_atom(vm, "onEnterFrame");
+    if (!mc || mc->removed) return;
+    vm->tick++;
+    advance(vm, mc);
+    drain_queue(vm);
+    enter_frame(vm, mc);
+    drain_queue(vm);
+}
+
 void as_mc_mark(AsVm *vm, AsMc *mc) {
     if (mc->parent) as_mark_obj(vm, &mc->parent->obj);
     if (mc->mask) as_mark_obj(vm, &mc->mask->obj);

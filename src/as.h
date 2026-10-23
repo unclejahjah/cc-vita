@@ -299,6 +299,8 @@ AsMc *as_mc_child(AsMc *mc, AsStr *name);
 AsMc *as_mc_attach(AsVm *vm, AsMc *mc, AsStr *linkage, AsStr *name, int depth);
 AsMc *as_mc_create_empty(AsVm *vm, AsMc *parent, AsStr *name, int depth);
 void as_tick(AsVm *vm);                               // one frame of the whole tree
+void as_tick_clip(AsVm *vm, AsMc *mc);                // one frame of one clip only
+void as_drain(AsVm *vm);                              // run the frame scripts a goto queued, now
 AsVal as_mc_get_prop(AsVm *vm, AsMc *mc, int index);
 void as_mc_set_prop(AsVm *vm, AsMc *mc, int index, AsVal v);
 int as_mc_prop_index(const char *name);               // "_x" -> 0, ... ; -1 if not a clip property

@@ -424,8 +424,14 @@ static int as_mode(int argc, char **argv) {
     // CC_KEYS="frame:code[:hold],...": scripted key presses (codes from f_GetButtons; port 1:
     // accept 2, back 3, start 49, d-pad 37-40, punch1 65, punch2 87, jump 83, magic 69)
     const char *keys = getenv("CC_KEYS");
+    int covering = 0;   // CC_RESTART_COVER: the loading screen comes in before the restart, as on the Vita
     for (int f = 0; f < frames; f++) {
-        if (getenv("CC_RESTART_AT") && f == atoi(getenv("CC_RESTART_AT"))) {   // the Vita's Exit to Main Menu
+        if (getenv("CC_RESTART_AT") && f == atoi(getenv("CC_RESTART_AT")) && getenv("CC_RESTART_COVER") && !covering)
+            covering = 1;
+        if (covering == 1 && cc_loading_cover(vm)) covering = 2;
+        if (getenv("CC_RESTART_AT") && (covering ? covering == 2 : f == atoi(getenv("CC_RESTART_AT")))) {   // the Vita's Exit to Main Menu
+            if (covering) printf("  [covered at %d]\n", f);
+            covering = covering ? 3 : 0;
             as_free(vm);
             Movie *first = start;
             if (getenv("CC_RESTART_MENU")) {   // as the Vita does: every file but MAIN goes, then the title
@@ -446,8 +452,10 @@ static int as_mode(int argc, char **argv) {
             cc_host_init(vm);
             as_render_init(vm);
             vm->root = as_mc_new(vm, first, &first->root, NULL, 0);
-            if (first != start) cc_native_root_functions(vm, &vm->root->obj);
-            else if (!strcasecmp(argv[3], "MAIN.swf") && !getenv("CC_NO_LOADING")) cc_loading_attach(vm);
+            if (first != start) {
+                cc_native_root_functions(vm, &vm->root->obj);
+                if (covering) cc_loading_reveal(vm);
+            } else if (!strcasecmp(argv[3], "MAIN.swf") && !getenv("CC_NO_LOADING")) cc_loading_attach(vm);
             render_begin(&vb);
             printf("  [restart at %d]\n", f);
         }
@@ -598,7 +606,7 @@ static int as_mode(int argc, char **argv) {
         extern double as_time_ms(void);
         double t0 = as_time_ms();
         long long ops0 = vm->ops;
-        as_tick(vm);
+        if (covering != 1) as_tick(vm);
         double tg = as_time_ms();
         size_t heap0 = vm->heap_count;
         as_gc(vm);
