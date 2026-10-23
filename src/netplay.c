@@ -119,8 +119,13 @@ uint16_t netplay_check(AsVm *vm) {
 // The knight's clip has its feet at 0,0; the tag sits this far above them (twips, the clip's own
 // units, so it follows the camera's zoom), clear of the helmet.
 #define TAG_HEAD_TWIPS (-1750)
+// Not there all the time: shown when a player's knight appears (a level starts, a respawn),
+// then faded out
+#define TAG_SHOW_TICKS 90
+#define TAG_FADE_TICKS 15
 
 void netplay_nametags(AsVm *vm, Mat screen, DrawList *out) {
+    static uint32_t seen_uid[NET_PLAYERS + 1], since[NET_PLAYERS + 1];
     for (int p = 1; p <= NET_PLAYERS; p++) {
         const char *name = net.names[p - 1];
         if (!name[0]) continue;
@@ -128,15 +133,19 @@ void netplay_nametags(AsVm *vm, Mat screen, DrawList *out) {
         snprintf(path, sizeof path, "loader.game.game.p%d", p);
         int found;
         AsVal pl = as_resolve_path(vm, vm->root, path, &found);
-        if (!found || pl.t != V_OBJ || pl.o->type != OBJ_MC) continue;
+        if (!found || pl.t != V_OBJ || pl.o->type != OBJ_MC) { seen_uid[p] = 0; continue; }
         AsMc *mc = (AsMc *)pl.o;
+        if (mc->uid != seen_uid[p] || vm->tick < since[p]) { seen_uid[p] = mc->uid; since[p] = vm->tick; }
+        uint32_t age = vm->tick - since[p];
+        if (age >= TAG_SHOW_TICKS + TAG_FADE_TICKS) continue;
+        float alpha = age < TAG_SHOW_TICKS ? 1 : 1 - (float)(age - TAG_SHOW_TICKS) / TAG_FADE_TICKS;
         int shown = !mc->removed;
         for (AsMc *c = mc; c && shown; c = c->parent) shown = c->visible && c->alpha > 0;
         if (!shown) continue;
         Mat g = mat_mul(screen, as_mc_global_matrix(mc));
         float x = g.c * TAG_HEAD_TWIPS + g.tx, y = g.d * TAG_HEAD_TWIPS + g.ty;
         if (x < -100 || x > 1060 || y < -40 || y > 600) continue;   // off screen
-        CXform cx = {{1, 1, 1, 1}, {0, 0, 0, 0}};
+        CXform cx = {{1, 1, 1, alpha}, {0, 0, 0, 0}};
         as_render_host_text_outlined(name, roundf(x), roundf(y), 1.1f, 1.1f, 2, 2, (Mat){1, 0, 0, 1, 0, 0}, cx, out);
     }
 }
