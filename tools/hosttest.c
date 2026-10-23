@@ -721,6 +721,20 @@ static int as_mode(int argc, char **argv) {
             render_begin(&vb);
             as_render_mc(vm->root, screen, CX_IDENTITY, &vb);
             if (getenv("CC_SAVING")) pause_menu_saving(W / 848.0f, 1, &vb);   // the Vita's "Saving..." note
+            if (getenv("CC_NAMETAGS")) {   // CC_NAMETAGS="Jah,Friend": the Wi-Fi game's name tags, as these players
+                char buf[256];
+                snprintf(buf, sizeof buf, "%s", getenv("CC_NAMETAGS"));
+                int p = 0;
+                for (char *t = strtok(buf, ","); t && p < NET_PLAYERS; t = strtok(NULL, ",")) snprintf(net.names[p++], NET_NAME, "%s", t);
+                netplay_nametags(vm, screen, &vb);
+                int found;
+                AsVal v = as_resolve_path(vm, vm->root, "loader.game.game.p1", &found);
+                if (v.t == V_OBJ && v.o->type == OBJ_MC) {   // how tall the knight is, in its own twips
+                    float b[4];
+                    render_mc_bounds((AsMc *)v.o, MAT_IDENTITY, b);
+                    printf("  [p1] bounds %.0f,%.0f - %.0f,%.0f twips\n", b[0], b[1], b[2], b[3]);
+                }
+            }
             if (getenv("CC_TITLE_PROMPT")) {   // CC_TITLE_PROMPT=text: the title's Press START, as the Vita draws it
                 float u = W / 960.0f;
                 Mat id = {u, 0, 0, u, 0, 0};
@@ -996,16 +1010,16 @@ static int help_mode(int argc, char **argv) {
                             .note = "Play on the same Wi-Fi, or online with a game code.",
                             .accept = "Select", .back = "Back"};
         for (int i = 0; i < 3; i++) pages[0].line[i] = menu[i];
-        pages[1] = (HbPage){.title = "Your Game", .nlines = 4, .chosen = -1, .dim = 12, .code = "A88M-AS9",
+        pages[1] = (HbPage){.title = "Your Game", .nlines = 4, .chosen = -1, .code = "A88M-AS9",
                             .code_chosen = -1, .code_line = 4, .note = "Game code: friends over the internet join with it",
                             .accept = "Play", .back = "Close"};
         pages[1].line[0] = "1   Jah  (you)";
         pages[1].line[1] = "2   PC";
         pages[1].line[2] = "3   waiting...";
         pages[1].line[3] = "4   waiting...";
-        pages[2] = (HbPage){.title = "Join by Game Code", .chosen = -1, .code = "A88M-AS9", .code_chosen = 2,
-                            .code_line = 1, .note = "Left / Right: pick a letter   Up / Down: change it",
-                            .accept = "Join", .back = "Back"};
+        pages[2] = (HbPage){.title = "Join by Game Code", .chosen = -1, .code = "A88M-A  ", .code_chosen = -1,
+                            .code_line = 1, .note = "Type in the game code the host's Multiplayer page shows",
+                            .accept = "Type Code", .back = "Back"};
         pages[3] = (HbPage){.title = "Join on this Wi-Fi", .nlines = 2, .chosen = 1, .code_chosen = -1, .accept = "Join",
                             .back = "Back"};
         pages[3].line[0] = "Jah   1/4";

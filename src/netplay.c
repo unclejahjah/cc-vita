@@ -1,10 +1,12 @@
 // The game's side of Wi-Fi co-op. See netplay.h.
 #include "netplay.h"
 #include "cc_host.h"
+#include "as_render.h"
 
 #include <stdio.h>
 #include <string.h>
 #include <strings.h>
+#include <math.h>
 
 static uint32_t g_clock_tick, g_clock_calls;   // getTimer(): the frame's time, and a step a call
 static uint8_t g_req, g_done;                  // level files asked for / ready on this Vita
@@ -112,4 +114,29 @@ uint16_t netplay_check(AsVm *vm) {
     }
     uint16_t c = h ^ h >> 16;
     return c ? c : 1;
+}
+
+// The knight's clip has its feet at 0,0; the tag sits this far above them (twips, the clip's own
+// units, so it follows the camera's zoom), clear of the helmet.
+#define TAG_HEAD_TWIPS (-1750)
+
+void netplay_nametags(AsVm *vm, Mat screen, DrawList *out) {
+    for (int p = 1; p <= NET_PLAYERS; p++) {
+        const char *name = net.names[p - 1];
+        if (!name[0]) continue;
+        char path[48];
+        snprintf(path, sizeof path, "loader.game.game.p%d", p);
+        int found;
+        AsVal pl = as_resolve_path(vm, vm->root, path, &found);
+        if (!found || pl.t != V_OBJ || pl.o->type != OBJ_MC) continue;
+        AsMc *mc = (AsMc *)pl.o;
+        int shown = !mc->removed;
+        for (AsMc *c = mc; c && shown; c = c->parent) shown = c->visible && c->alpha > 0;
+        if (!shown) continue;
+        Mat g = mat_mul(screen, as_mc_global_matrix(mc));
+        float x = g.c * TAG_HEAD_TWIPS + g.tx, y = g.d * TAG_HEAD_TWIPS + g.ty;
+        if (x < -100 || x > 1060 || y < -40 || y > 600) continue;   // off screen
+        CXform cx = {{1, 1, 1, 1}, {0, 0, 0, 0}};
+        as_render_host_text_outlined(name, roundf(x), roundf(y), 1.1f, 1.1f, 2, 2, (Mat){1, 0, 0, 1, 0, 0}, cx, out);
+    }
 }

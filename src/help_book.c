@@ -596,7 +596,7 @@ void help_book_build_page(const HbPage *pg, Movie *mv, float k, DrawList *out) {
     to_stage(a, 0, 135, &dummy, &y0);
     for (int i = 0; i < pg->nlines && i < HB_PAGE_LINES; i++) {
         if (!pg->line[i] || !*pg->line[i]) continue;
-        uint32_t c = i == pg->chosen ? pulse(pg->time) : pg->dim >> i & 1 ? 0xb4aca0 : INK;
+        uint32_t c = i == pg->chosen ? pulse(pg->time) : INK;
         text(out, k, pg->line[i], mx, y0 + i * gap, 26 * sc, 2, c, alpha);
     }
     if (pg->code) {

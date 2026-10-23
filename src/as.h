@@ -305,6 +305,7 @@ AsVal as_mc_get_prop(AsVm *vm, AsMc *mc, int index);
 void as_mc_set_prop(AsVm *vm, AsMc *mc, int index, AsVal v);
 int as_mc_prop_index(const char *name);               // "_x" -> 0, ... ; -1 if not a clip property
 void as_mc_mark(AsVm *vm, AsMc *mc);
+Mat as_mc_global_matrix(AsMc *mc);                    // its placement through all its parents
 AsVal as_resolve_path(AsVm *vm, AsMc *from, const char *path, int *found);
 AsMc *as_mc_resolve_target(AsVm *vm, AsMc *base, AsVal target);   // clip, path string, or "" for base
 
