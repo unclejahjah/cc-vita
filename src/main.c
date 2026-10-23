@@ -393,8 +393,6 @@ static void log_flush_wait(void) {
 static void log_line(const char *fmt, ...);
 // Exit to Main Menu steps, on the card at once (a freeze there left no trace)
 #define EXIT_TRACE(...) do { log_line(__VA_ARGS__); log_flush_wait(); } while (0)
-static int g_exit_trace;   // the title after an exit: each step of each pass, while > 0
-#define STEP_TRACE(...) do { if (g_exit_trace > 0) EXIT_TRACE(__VA_ARGS__); } while (0)
 
 static void log_line(const char *fmt, ...) {
     if (g_log < 0 || g_log_bytes > LOG_MAX) return;
@@ -471,14 +469,12 @@ static Movie *prepare_movie(const char *path, int is_level, char *err, size_t n)
 
 // uploads its meshes and keeps it
 static Movie *register_movie(const char *base, const char *path, Movie *m) {
-    STEP_TRACE("step: register %s", base);
     log_line("load %s%s (heap %u KB used)", path, m->truncated ? " (cut short)" : "",
              (unsigned)(mallinfo().uordblks >> 10));
     log_flush();   // loads and frees go to the writer at once: a crash right after keeps them
     GpuBlock *blk = &g_movies[g_nmovies].gpu;
     blk->uid = -1;
     if (render_upload(m, mesh_alloc, blk)) render_release_cpu(m);
-    STEP_TRACE("step: uploaded %s", base);
     snprintf(g_movies[g_nmovies].name, sizeof g_movies[0].name, "%s", base);
     g_movies[g_nmovies].keep = 0;
     g_movies[g_nmovies++].m = m;
@@ -529,7 +525,6 @@ static void bg_init(void) {
 
 // the running job's file, once the thread is done with it: kept, or NULL (failed)
 static Movie *bg_finish(void) {
-    STEP_TRACE("step: bg_finish %s state %d", g_bg.base, g_bg.state);
     while (g_bg.state == BG_RUNNING) sceKernelDelayThread(1000);
     __sync_synchronize();
     Movie *m = g_bg.m;
@@ -573,7 +568,6 @@ static int g_npreloaded;   // of g_preload, started
 
 static void preload_step(int upto) {   // upto: the PRELOAD_ stage
     if (g_bg_sema < 0) return;
-    if (g_bg.state == BG_DONE && g_bg.preload) STEP_TRACE("step: preload done %s", g_bg.base);
     if (g_bg.state == BG_DONE && g_bg.preload) bg_finish();
     if (g_bg.state != BG_IDLE || g_npreloaded >= upto) return;
     if (mallinfo().uordblks > (size_t)_newlib_heap_size_user * 6 / 10) return;   // room for the game first
@@ -585,7 +579,6 @@ static void preload_step(int upto) {   // upto: the PRELOAD_ stage
     snprintf(g_bg.path, sizeof g_bg.path, "%s", path);
     g_bg.is_level = is_level;
     g_bg.preload = 1;
-    STEP_TRACE("step: preload start %s", base);
     g_bg.m = NULL;
     g_bg.state = BG_RUNNING;
     __sync_synchronize();
@@ -947,7 +940,6 @@ static void pause_open(Pause *ps, int on_map) {
 
 static void vita_sound_start(AsVm *vm, const char *linkage, float volume, float pan, int loops, const void *owner) {
     (void)vm;
-    STEP_TRACE("step: sound %s", linkage);
     audio_sfx_play(linkage, volume, pan, loops, owner);
 }
 
@@ -1336,7 +1328,6 @@ static int title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, siz
         EXIT_TRACE("exit: title made");
         cc_loading_reveal(t);
         EXIT_TRACE("exit: loading screen on the title");
-        g_exit_trace = 1;
     }
     const char *prompt = strtab_number(1);   // the game's "Press START"
     if (!prompt) prompt = "Press START";
@@ -1418,12 +1409,8 @@ static int title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, siz
         if (acc > 2 * tick_us) acc = 2 * tick_us;
         int ticked = 0;
         while (acc >= tick_us) {
-            if (g_exit_trace > 0 && ++g_exit_trace > 300) g_exit_trace = 0;
-            STEP_TRACE("exit: title tick %u, loading %d, loads %d, loader %d", t->tick, cc_loading_busy(t), t->loads != NULL, g_bg.state);
             as_tick(t);
-            STEP_TRACE("step: ticked");
             as_gc(t);
-            STEP_TRACE("step: gc");
             acc -= tick_us;
             ticked = 1;
         }
@@ -1438,7 +1425,6 @@ static int title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, siz
             render_begin(vb);
             hide_sprite(t->root, 626);   // the news bar (no news on the Vita)
             as_render_mc(t->root, screen, CX_IDENTITY, vb);
-            STEP_TRACE("step: built");
             if (!panel && !cc_loading_busy(t) && (frame / 30) % 2 == 0 && as_render_host_line_height() > 0) {   // blinking, in the game's font, where the news bar was
                 Mat id = {1, 0, 0, 1, 0, 0};
                 CXform black = {{0, 0, 0, 1}, {0, 0, 0, 0}};
@@ -1449,11 +1435,9 @@ static int title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, siz
             }
         }
         vita2d_set_clear_color(RGBA8(m->bg[0], m->bg[1], m->bg[2], 255));
-        STEP_TRACE("step: draw frame %u", frame);
         vita2d_start_drawing();
         vita2d_clear_screen();
         draw_list(vb);
-        STEP_TRACE("step: drawn");
         if (panel) {   // the power button that stands for Quit
             static CcVert tris[4096];
             float k = SCREEN_W / m->stage_w;
@@ -1498,9 +1482,7 @@ static int title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, siz
 #endif
         vita2d_end_drawing();
         vita2d_swap_buffers();
-        STEP_TRACE("step: swapped");
     }
-    g_exit_trace = 0;
     vita2d_wait_rendering_done();
     if (cc_music_stop) cc_music_stop();
     memset(cc_keys, 0, sizeof cc_keys);
@@ -1641,7 +1623,7 @@ new_game:   // the title again after Exit to Main Menu
     if (!pause.have_art) pause_build_art(&pause);
 
     while (!exit_to_title) {
-        preload_step(PRELOAD_GAME);
+        if (!leaving) preload_step(PRELOAD_GAME);
         sceCtrlPeekBufferPositive(0, &pad, 1);
         unsigned pressed = pad.buttons & ~old.buttons;
         unsigned nav = pressed;   // menus: the stick moves once per push too
@@ -1874,7 +1856,14 @@ new_game:   // the title again after Exit to Main Menu
             g_netgame = 0;
         }
 #endif
-        EXIT_TRACE("exit: leaving the game (loader %d)", g_bg.state);
+        // Nothing loads while the files go: a file still loading is taken in first. The title's
+        // own files stay (as if just preloaded), so the title loads nothing in the background:
+        // a background load there (lobby.swf) froze the Vita in the title's drawing, ~3 s in.
+        if (g_bg.state != BG_IDLE) bg_finish();
+        for (int i = 0; i < g_nmovies; i++)
+            for (int j = 0; j < PRELOAD_TITLE; j++)
+                if (!g_movies[i].keep && !strcasecmp(g_movies[i].name, g_preload[j])) g_movies[i].keep = 2;
+        EXIT_TRACE("exit: leaving the game");
         vita2d_wait_rendering_done();
         audio_sfx_stop(NULL);
         if (cc_music_stop) cc_music_stop();
