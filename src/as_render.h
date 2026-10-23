@@ -11,6 +11,9 @@ void as_render_set_font(const struct HostFont *hf);   // the game's own text fon
 // the game font's text outside any field (the executable's own menus): see as_render.c
 void as_render_host_text(const char *s, float x, float y, float sx, float sy, int align, Mat m, CXform cx,
                          DrawList *out);
+// the same with a black outline o units wide all round (how the Vita's own notes are drawn)
+void as_render_host_text_outlined(const char *s, float x, float y, float sx, float sy, int align, float o, Mat m,
+                                  CXform cx, DrawList *out);
 float as_render_host_text_width(const char *s);   // pixels of the 20 pixel font
 float as_render_host_line_height(void);           // the same, 0 without the font
 void as_render_mc(AsMc *mc, Mat parent, CXform cx, DrawList *out);

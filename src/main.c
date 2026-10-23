@@ -8,8 +8,10 @@
 // jump/accept, CIRCLE projectile/item/back, L block, R magic, START pause,
 // right stick flicked left/right: previous/next item.
 // SELECT+UP shows the stats overlay, SELECT+START quits.
+#include <psp2/common_dialog.h>
 #include <psp2/ctrl.h>
 #include <psp2/display.h>
+#include <psp2/ime_dialog.h>
 #include <psp2/io/fcntl.h>
 #include <psp2/kernel/processmgr.h>
 #include <psp2/kernel/threadmgr.h>
@@ -1047,16 +1049,32 @@ static void outlined_text(int x, int y, float size, const char *s) {
 }
 
 #ifdef CC_NET
+// a line in the game's font with a black outline, centred on x (y: the line's middle), drawn
+// now; the system font when the game font isn't there
+static void game_text(int x, int y, float size, uint32_t rgb, const char *s) {
+    if (as_render_host_line_height() <= 0) {
+        outlined_text(x - vita2d_pgf_text_width(g_font, size * 0.9f, s) / 2, y + 8, size * 0.9f, s);
+        return;
+    }
+    static DrawList dl;
+    render_begin(&dl);
+    dl.view[2] = SCREEN_W;
+    dl.view[3] = SCREEN_H;
+    CXform cx = {{(rgb >> 16 & 255) / 255.0f, (rgb >> 8 & 255) / 255.0f, (rgb & 255) / 255.0f, 1}, {0, 0, 0, 0}};
+    as_render_host_text_outlined(s, x, y, size, size, 2, 2, (Mat){1, 0, 0, 1, 0, 0}, cx, &dl);
+    draw_list(&dl);
+}
+
 // ---- Multiplayer: the Wi-Fi lobby, over the title ---------------------------------------
 // Host a game (this Vita is player 1) or join one heard on the same Wi-Fi, or one over the
 // internet by its game code; the host starts it once someone has joined. Everyone then picks
 // their knight at character select, with Cross.
 enum { W_CLOSED, W_MENU, W_HOST, W_SCAN, W_CODE, W_JOINED };
-static const char WIFI_CODE_CHARS[] = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 static struct {
     int page, item;
     int back;                  // W_JOINED: the menu item to go back to
-    int code[NET_CODE_LEN];    // W_CODE: the code typed in (index in WIFI_CODE_CHARS), kept for next time
+    char code[NET_CODE_LEN + 1];   // W_CODE: the code typed in (letters only), kept for next time
+    int typing;                // W_CODE: the system keyboard is up
     char note[96];
     int note_timer;
 } g_wifi;
@@ -1073,6 +1091,58 @@ static int my_profile(uint8_t **out) {
     *out = buf;
     int n = cc_storage_pack(0, buf, sizeof buf);
     return n < 0 ? 0 : n;
+}
+
+// Join by Game Code takes the code in the Vita's own keyboard and text box (the IME dialog)
+static SceWChar16 g_ime_text[SCE_IME_DIALOG_MAX_TEXT_LENGTH + 1], g_ime_title[64], g_ime_start[16];
+
+static void wide(SceWChar16 *out, int cap, const char *s) {
+    int i = 0;
+    for (; s[i] && i < cap - 1; i++) out[i] = (unsigned char)s[i];
+    out[i] = 0;
+}
+
+static int wifi_keyboard_open(void) {
+    char start[NET_CODE_LEN + 2];
+    snprintf(start, sizeof start, "%.4s%s%s", g_wifi.code, g_wifi.code[4] ? "-" : "", g_wifi.code[4] ? g_wifi.code + 4 : "");
+    wide(g_ime_start, 16, start);
+    const char *title = strtab_get("vita.wifi.code_title");
+    wide(g_ime_title, 64, title ? title : "Game code (from the host's Multiplayer page)");
+    memset(g_ime_text, 0, sizeof g_ime_text);
+    SceImeDialogParam p;
+    sceImeDialogParamInit(&p);
+    p.supportedLanguages = SCE_IME_LANGUAGE_ENGLISH;
+    p.languagesForced = SCE_TRUE;
+    p.type = SCE_IME_TYPE_BASIC_LATIN;
+    p.option = SCE_IME_OPTION_NO_ASSISTANCE;
+    p.dialogMode = SCE_IME_DIALOG_DIALOG_MODE_WITH_CANCEL;
+    p.textBoxMode = SCE_IME_DIALOG_TEXTBOX_MODE_WITH_CLEAR;
+    p.title = g_ime_title;
+    p.maxTextLength = NET_CODE_LEN + 4;   // room for a dash and spaces
+    p.initialText = g_ime_start;
+    p.inputTextBuffer = g_ime_text;
+    int r = sceImeDialogInit(&p);
+    if (r < 0) log_line("Wi-Fi: keyboard didn't open (0x%08x)", r);
+    g_wifi.typing = r >= 0;
+    return g_wifi.typing;
+}
+
+// the keyboard is closed: 1 with the code in g_wifi.code (Enter), 0 if cancelled
+static int wifi_keyboard_done(void) {
+    SceImeDialogResult res;
+    memset(&res, 0, sizeof res);
+    sceImeDialogGetResult(&res);
+    sceImeDialogTerm();
+    g_wifi.typing = 0;
+    if (res.button != SCE_IME_DIALOG_BUTTON_ENTER) return 0;
+    int n = 0;   // letters and digits only, upper case (the dash and spaces are optional)
+    for (int i = 0; g_ime_text[i] && n < NET_CODE_LEN; i++) {
+        int c = g_ime_text[i];
+        if (c >= 'a' && c <= 'z') c -= 32;
+        if ((c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z')) g_wifi.code[n++] = (char)c;
+    }
+    g_wifi.code[n] = 0;
+    return 1;
 }
 
 // one frame of the lobby: 1 to start the game (everyone's in NET_PLAYING), else 0
@@ -1096,7 +1166,7 @@ static int wifi_update(unsigned pressed) {
             int n = my_profile(&pr);
             if (g_wifi.item == 0 && net_host(pr, n)) g_wifi.page = W_HOST;
             else if (g_wifi.item == 1 && net_scan()) { g_wifi.page = W_SCAN; g_wifi.item = 0; }
-            else if (g_wifi.item == 2) { g_wifi.page = W_CODE; g_wifi.item = 0; }
+            else if (g_wifi.item == 2) { g_wifi.page = W_CODE; wifi_keyboard_open(); }
             else wifi_note(net.error);
         }
         if (pressed & SCE_CTRL_CIRCLE) { g_wifi.page = W_CLOSED; sound = 1; }
@@ -1128,27 +1198,25 @@ static int wifi_update(unsigned pressed) {
         if (pressed & SCE_CTRL_CIRCLE) { net_leave(); g_wifi.page = W_MENU; g_wifi.item = 1; sound = 1; }
         break;
     }
-    case W_CODE: {   // Left/Right: which letter, Up/Down: change it
-        int *c = &g_wifi.code[g_wifi.item];
-        if (pressed & SCE_CTRL_LEFT) { g_wifi.item = (g_wifi.item + NET_CODE_LEN - 1) % NET_CODE_LEN; sound = 0; }
-        if (pressed & SCE_CTRL_RIGHT) { g_wifi.item = (g_wifi.item + 1) % NET_CODE_LEN; sound = 0; }
-        if (pressed & SCE_CTRL_UP) { *c = (*c + 1) % 32; sound = 0; }
-        if (pressed & SCE_CTRL_DOWN) { *c = (*c + 31) % 32; sound = 0; }
-        if (pressed & SCE_CTRL_CROSS) {
+    case W_CODE:   // the system keyboard takes the code; Cross types it again, Circle goes back
+        if (g_wifi.typing) {
+            if (sceImeDialogGetStatus() != SCE_COMMON_DIALOG_STATUS_FINISHED) break;   // the dialog has the buttons
+            if (!wifi_keyboard_done()) {   // cancelled: back to the menu (or to the code, if one was typed)
+                if (!g_wifi.code[0]) { g_wifi.page = W_MENU; g_wifi.item = 2; }
+                break;
+            }
             sound = 1;
-            char code[NET_CODE_LEN + 1];
-            for (int i = 0; i < NET_CODE_LEN; i++) code[i] = WIFI_CODE_CHARS[g_wifi.code[i]];
-            code[NET_CODE_LEN] = 0;
-            uint32_t addr = net_code_addr(code);
+            uint32_t addr = net_code_addr(g_wifi.code);
             uint8_t *pr;
             int len = my_profile(&pr);
             if (!addr) wifi_note("That isn't a game code: check it with the host");
             else if (net_join(addr, pr, len)) { g_wifi.page = W_JOINED; g_wifi.back = 2; }
             else wifi_note(net.error);
+            break;
         }
+        if (pressed & SCE_CTRL_CROSS) { sound = 1; wifi_keyboard_open(); }
         if (pressed & SCE_CTRL_CIRCLE) { g_wifi.page = W_MENU; g_wifi.item = 2; sound = 1; }
         break;
-    }
     case W_JOINED:
         if (pressed & SCE_CTRL_CIRCLE) { net_leave(); g_wifi.page = W_MENU; g_wifi.item = g_wifi.back; sound = 1; }
         break;
@@ -1220,7 +1288,7 @@ static void wifi_draw(unsigned frame) {
                                                      : WORDS("vita.wifi.joined", "Joined");
         for (int p = 0; p < NET_PLAYERS; p++) {
             if (net.names[p][0]) snprintf(lines[p], 64, "%d   %s%s", p + 1, net.names[p], p + 1 == net.port ? "  (you)" : "");
-            else { snprintf(lines[p], 64, "%d   %s%s", p + 1, WORDS("vita.wifi.waiting", "waiting"), dots); pg.dim |= 1u << p; }
+            else snprintf(lines[p], 64, "%d   %s%s", p + 1, WORDS("vita.wifi.waiting", "waiting"), dots);
         }
         pg.nlines = NET_PLAYERS;
         if (page == W_HOST) {
@@ -1253,7 +1321,6 @@ static void wifi_draw(unsigned frame) {
         int n = net_hosts(hosts, 8);
         if (!n) {
             snprintf(lines[0], 64, "%s%s", WORDS("vita.wifi.looking", "Looking for games"), dots);
-            pg.dim = 1;
             pg.nlines = 1;
         }
         for (int i = 0; i < n && i < 6; i++) snprintf(lines[i], 64, "%s   %d/4", hosts[i].name, hosts[i].players);
@@ -1262,17 +1329,16 @@ static void wifi_draw(unsigned frame) {
     }
     case W_CODE: {
         pg.title = WORDS("vita.wifi.join_code", "Join by Game Code");
-        int k = 0;
+        int k = 0;   // what was typed, in the boxes (blank ones for the rest)
         for (int i = 0; i < NET_CODE_LEN; i++) {
             if (i == 4) code[k++] = '-';
-            code[k++] = WIFI_CODE_CHARS[g_wifi.code[i]];
+            code[k++] = i < (int)strlen(g_wifi.code) ? g_wifi.code[i] : ' ';
         }
         code[k] = 0;
         pg.code = code;
-        pg.code_chosen = g_wifi.item;
         pg.code_line = 1;
-        wifi_words("vita.wifi.code_help", "Left / Right: pick a letter   Up / Down: change it", note, sizeof note);
-        pg.accept = WORDS("vita.wifi.join", "Join");
+        wifi_words("vita.wifi.code_help", "Type in the game code the host's Multiplayer page shows", note, sizeof note);
+        pg.accept = WORDS("vita.wifi.type_code", "Type Code");
         break;
     }
     }
@@ -1285,8 +1351,7 @@ static void wifi_draw(unsigned frame) {
     }
     if (g_wifi.note_timer > 0) {
         g_wifi.note_timer--;
-        int tw = vita2d_pgf_text_width(g_font, 0.9f, g_wifi.note);
-        outlined_text((SCREEN_W - tw) / 2, SCREEN_H * 0.86f, 0.9f, g_wifi.note);
+        game_text(SCREEN_W / 2, SCREEN_H * 0.86f, 1.1f, 0xffffff, g_wifi.note);
     }
 }
 #endif
@@ -1484,11 +1549,11 @@ static int title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, siz
         if (g_wifi.page != W_CLOSED) wifi_draw(frame);
         else if (g_wifi.note_timer > 0) {   // why the last Wi-Fi game ended
             g_wifi.note_timer--;
-            int w = vita2d_pgf_text_width(g_font, 1.0f, g_wifi.note);
-            outlined_text((SCREEN_W - w) / 2, SCREEN_H - 24, 1.0f, g_wifi.note);
+            game_text(SCREEN_W / 2, SCREEN_H - 30, 1.1f, 0xffffff, g_wifi.note);
         }
 #endif
         vita2d_end_drawing();
+        vita2d_common_dialog_update();   // the system keyboard, when it's up (Join by Game Code)
         vita2d_swap_buffers();
     }
     vita2d_wait_rendering_done();
@@ -1771,6 +1836,9 @@ new_game:   // the title again after Exit to Main Menu
             Mat screen = {k / 20, 0, 0, k / 20, 0, 0};
             render_begin(&vb);
             as_render_mc(vm->root, screen, CX_IDENTITY, &vb);
+#ifdef CC_NET
+            if (g_netgame) netplay_nametags(vm, screen, &vb);
+#endif
             if (saving_timer > 0) {
                 saving_timer--;
                 pause_menu_saving(k, saving_timer < 10 ? saving_timer / 10.0f : 1, &vb);
@@ -1794,13 +1862,14 @@ new_game:   // the title again after Exit to Main Menu
         if (pause.open) pause_draw(&pause);
 #ifdef CC_NET
         if (g_netgame && net_wait >= 20) {   // the others haven't sent this frame yet
-            const char *w = "Waiting for the other players...";
-            outlined_text((SCREEN_W - vita2d_pgf_text_width(g_font, 1.0f, w)) / 2, SCREEN_H / 2, 1.0f, w);
+            const char *w = strtab_get("vita.wifi.wait_players");
+            game_text(SCREEN_W / 2, SCREEN_H / 2, 1.4f, 0xffffff, w ? w : "Waiting for the other players...");
         }
         if (g_netgame && net_desync_tick) {
             static int said;
             if (!said++) log_line("Wi-Fi game out of step from frame %u", net_desync_tick);
-            vita2d_pgf_draw_text(g_font, 12, SCREEN_H - 12, RGBA8(255, 90, 80, 255), 0.7f, "Out of step with the other Vitas");
+            const char *w = strtab_get("vita.wifi.out_of_step");
+            game_text(SCREEN_W / 2, SCREEN_H - 20, 0.9f, 0xff5a50, w ? w : "Out of step with the other Vitas");
         }
 #endif
         int ach = cc_achievement_take_new();

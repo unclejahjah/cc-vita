@@ -156,6 +156,15 @@ void as_render_host_text(const char *s, float x, float y, float sx, float sy, in
     }
 }
 
+void as_render_host_text_outlined(const char *s, float x, float y, float sx, float sy, int align, float o, Mat m,
+                                  CXform cx, DrawList *out) {
+    CXform black = {{0, 0, 0, cx.mul[3]}, {0, 0, 0, 0}};
+    for (int dx = -1; dx <= 1; dx++)
+        for (int dy = -1; dy <= 1; dy++)
+            if (dx || dy) as_render_host_text(s, x + dx * o, y + dy * o, sx, sy, align, m, black, out);
+    as_render_host_text(s, x, y, sx, sy, align, m, cx, out);
+}
+
 float as_render_host_text_width(const char *s) {
     if (!g_host_font || !s) return 0;
     TextFont t = {g_host_font, NULL, 1};
