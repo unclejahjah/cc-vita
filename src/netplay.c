@@ -140,3 +140,27 @@ void netplay_nametags(AsVm *vm, Mat screen, DrawList *out) {
         as_render_host_text_outlined(name, roundf(x), roundf(y), 1.1f, 1.1f, 2, 2, (Mat){1, 0, 0, 1, 0, 0}, cx, out);
     }
 }
+
+// the HUD's name over each portrait (_root.hud<n>.stats.textstuff.gamertag and its shadow "bg"):
+// the game leaves "gamertag" there for the executable to fill
+void netplay_hud_names(AsVm *vm) {
+    static const char *const fields[] = {"gamertag", "gamertagbg"};
+    AsStr *text = as_atom(vm, "text");
+    for (int h = 1; h <= NET_PLAYERS; h++) {
+        char name[8];
+        snprintf(name, sizeof name, "hud%d", h);
+        AsMc *hud = as_mc_child(vm->root, as_atom(vm, name));
+        if (!hud) continue;
+        int port = as_toint32(vm, as_get(vm, as_objv(&hud->obj), as_atom(vm, "port")));
+        if (port < 1 || port > NET_PLAYERS || !net.names[port - 1][0]) continue;
+        AsMc *stats = as_mc_child(hud, as_atom(vm, "stats"));
+        AsMc *box = stats ? as_mc_child(stats, as_atom(vm, "textstuff")) : NULL;
+        for (int f = 0; box && f < 2; f++) {
+            AsMc *tf = as_mc_child(box, as_atom(vm, fields[f]));
+            if (!tf) continue;
+            AsVal tv = as_objv(&tf->obj), now = as_get(vm, tv, text);
+            if (now.t == V_STR && !strcmp(now.s->s, net.names[port - 1])) continue;
+            as_set(vm, tv, text, as_strv(as_str(vm, net.names[port - 1])));
+        }
+    }
+}

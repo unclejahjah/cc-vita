@@ -726,6 +726,9 @@ static int as_mode(int argc, char **argv) {
                 snprintf(buf, sizeof buf, "%s", getenv("CC_NAMETAGS"));
                 int p = 0;
                 for (char *t = strtok(buf, ","); t && p < NET_PLAYERS; t = strtok(NULL, ",")) snprintf(net.names[p++], NET_NAME, "%s", t);
+                netplay_hud_names(vm);
+                render_begin(&vb);   // again, with the HUD's names in
+                as_render_mc(vm->root, screen, CX_IDENTITY, &vb);
                 netplay_nametags(vm, screen, &vb);
                 int found;
                 AsVal v = as_resolve_path(vm, vm->root, "loader.game.game.p1", &found);

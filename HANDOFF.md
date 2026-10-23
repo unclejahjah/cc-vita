@@ -329,7 +329,8 @@ and Help & Options; Host a game / Join a game (hosts found by UDP broadcast on t
   "Game code XXXX-XXX" (net_code: the internet address + 3 check bits in 7 base-32 letters);
   "Join by game code" takes it in with the Vita's own keyboard (sceImeDialog; the title loop calls
   vita2d_common_dialog_update before each swap). In a Wi-Fi game each player's name is drawn over
-  their knight (netplay_nametags, 1750 twips over p<n>'s feet; hosttest CC_NAMETAGS="a,b"), and
+  their knight (netplay_nametags, 1750 twips over p<n>'s feet; hosttest CC_NAMETAGS="a,b") and in
+  the HUD over their portrait (netplay_hud_names: hud<n>.stats.textstuff.gamertag/bg), and
   the Vita's own notes (waiting, out of step, why a game ended) use the game font (game_text). A shared provider address (CGNAT, 100.64/10 or
   private) says "Wi-Fi only" with the reason. Joining connects on a thread (NET_CONNECTING).
   The delay is per game and per side (sent in START): the host's buttons NET_SPARE (3) frames,
