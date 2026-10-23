@@ -41,6 +41,11 @@ void cc_menu_highlight(AsVm *vm, AsMc *panel, int item);
 // twips -> screen); lit when chosen. Returns the vertices written (up to max; it needs about 1200).
 typedef struct { float x, y; uint8_t rgba[4]; } CcVert;
 int cc_menu_power_button(AsMc *panel, Mat screen, CcVert *out, int max);
+// The "BETA" sticker on the Multiplayer button: set CC_BETA_STICKER to 0 to take it off.
+// cc_menu_beta_place gives its matrix (sticker twips -> screen, through screen as above);
+// 0 when there's nothing to draw. The shape is cc_menu_beta_sticker (cc_buttons.h).
+#define CC_BETA_STICKER 1
+int cc_menu_beta_place(AsMc *panel, Mat screen, Mat *out);
 // The chosen button's highlight frame: hidden in the panel, the app draws it last (over the
 // power button) by rendering it on its own.
 AsMc *cc_menu_highlight_clip(AsMc *panel, Mat *m);

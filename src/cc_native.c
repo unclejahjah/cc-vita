@@ -518,6 +518,18 @@ int cc_menu_power_button(AsMc *panel, Mat screen, CcVert *out, int max) {
     return t.n;
 }
 
+int cc_menu_beta_place(AsMc *panel, Mat screen, Mat *out) {
+    if (!CC_BETA_STICKER || !cc_menu_wifi) return 0;
+    AsMc *b = panel_child(panel, MENU_DEPTH[CC_MENU_WIFI]);
+    float bb[4];
+    if (!b || !b->visible || (render_mc_bounds(b, b->m, bb), bb[2] <= bb[0])) return 0;
+    Mat m = mat_mul(screen, mat_mul(panel->parent ? panel->parent->m : (Mat){1, 0, 0, 1, 0, 0}, panel->m));
+    // stuck on at the button's top right corner, over its edge, tilted up a little
+    float x = bb[2] - 47 * 20, y = bb[1] + 2 * 20, a = -8 * 3.14159265f / 180, k = m.a;
+    *out = (Mat){cosf(a) * k, sinf(a) * k, -sinf(a) * k, cosf(a) * k, m.a * x + m.c * y + m.tx, m.b * x + m.d * y + m.ty};
+    return 1;
+}
+
 void cc_native_root_functions(AsVm *vm, AsObj *root) {
     as_def_fn(vm, root, "f_GetButtonArt", native_get_button_art);
 }
