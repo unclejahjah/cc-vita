@@ -390,6 +390,10 @@ static void log_flush_wait(void) {
     while (g_log_sema >= 0 && __atomic_load_n(&g_log_out_n, __ATOMIC_SEQ_CST)) sceKernelDelayThread(1000);
 }
 
+static void log_line(const char *fmt, ...);
+// Exit to Main Menu steps, on the card at once (a freeze there left no trace)
+#define EXIT_TRACE(...) do { log_line(__VA_ARGS__); log_flush_wait(); } while (0)
+
 static void log_line(const char *fmt, ...) {
     if (g_log < 0 || g_log_bytes > LOG_MAX) return;
     char buf[640];
@@ -1320,7 +1324,11 @@ static int title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, siz
     as_render_init(t);
     t->root = as_mc_new(t, m, &m->root, NULL, 0);
     cc_native_root_functions(t, &t->root->obj);
-    if (from_game) cc_loading_reveal(t);
+    if (from_game) {
+        EXIT_TRACE("exit: title made");
+        cc_loading_reveal(t);
+        EXIT_TRACE("exit: loading screen on the title");
+    }
     const char *prompt = strtab_number(1);   // the game's "Press START"
     if (!prompt) prompt = "Press START";
     const char *unavailable = strtab_get("vita.online.unavailable");
@@ -1401,6 +1409,9 @@ static int title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, siz
         if (acc > 2 * tick_us) acc = 2 * tick_us;
         int ticked = 0;
         while (acc >= tick_us) {
+            static int traced;
+            if (from_game && traced < 200 && traced++ % 10 == 0)
+                EXIT_TRACE("exit: title tick %u, loading %d, loads %d, loader %d", t->tick, cc_loading_busy(t), t->loads != NULL, g_bg.state);
             as_tick(t);
             as_gc(t);
             acc -= tick_us;
@@ -1640,7 +1651,7 @@ new_game:   // the title again after Exit to Main Menu
             float dt = (sceKernelGetProcessTimeWide() - prev) / 1000000.0f;
             int was_select = pause.select;
             int r = pause_input(&pause, vm, nav, dt > 0.1f ? 0.1f : dt);
-            if (r == 2) leaving = 1;
+            if (r == 2) { leaving = 1; EXIT_TRACE("exit: loading screen in"); }
             if (r == 0 && was_select) select_eat = pad.buttons & (SCE_CTRL_CROSS | SCE_CTRL_START | SCE_CTRL_CIRCLE);
             memset(cc_keys, 0, sizeof cc_keys);
             buttons = 0;   // (Wi-Fi play: the game runs on under the menu, without this player)
@@ -1680,7 +1691,7 @@ new_game:   // the title again after Exit to Main Menu
         const char *hitch_what = "";
         // leaving: only the loading screen moves; once it covers the screen the game goes
         while (leaving && acc >= tick_us) {
-            if (cc_loading_cover(vm)) exit_to_title = 1;
+            if (!exit_to_title && cc_loading_cover(vm)) { exit_to_title = 1; EXIT_TRACE("exit: covered"); }
             acc -= tick_us;
             ticked = 1;
         }
@@ -1848,11 +1859,15 @@ new_game:   // the title again after Exit to Main Menu
             g_netgame = 0;
         }
 #endif
+        EXIT_TRACE("exit: leaving the game (loader %d)", g_bg.state);
         vita2d_wait_rendering_done();
         audio_sfx_stop(NULL);
         if (cc_music_stop) cc_music_stop();
+        EXIT_TRACE("exit: sound stopped");
         as_free(vm);
+        EXIT_TRACE("exit: game freed");
         free_unused_movies(NULL, &cache, cache_mem, cache_bytes);
+        EXIT_TRACE("exit: files freed");
         memset(cc_keys, 0, sizeof cc_keys);
         render_begin(&vb);   // its meshes were in the files just freed
         from_game = 1;
