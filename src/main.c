@@ -1835,6 +1835,9 @@ new_game:   // the title again after Exit to Main Menu
             float k = SCREEN_W / start->stage_w;
             Mat screen = {k / 20, 0, 0, k / 20, 0, 0};
             render_begin(&vb);
+#ifdef CC_NET
+            if (g_netgame) netplay_hud_names(vm);
+#endif
             as_render_mc(vm->root, screen, CX_IDENTITY, &vb);
 #ifdef CC_NET
             if (g_netgame) netplay_nametags(vm, screen, &vb);
