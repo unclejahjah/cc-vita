@@ -463,6 +463,7 @@ static Movie *prepare_movie(const char *path, int is_level, char *err, size_t n)
     cc_repair_level(m);
     cc_buttons_playstation(m, CC_BTN_STYLE_GREY);   // the game's button art as PlayStation buttons
     cc_menu_vita_badge(m);                              // "Vita Edition" on the title
+    if (CC_BETA_STICKER) cc_menu_beta_sticker_build(m);  // and "BETA" on Multiplayer
     render_tessellate_all(m);
     return m;
 }
@@ -1459,6 +1460,13 @@ static int title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, siz
                 as_render_mc(hl, pm, CX_IDENTITY, &hvb);
                 hl->visible = 0;
                 draw_list(&hvb);
+            }
+            Mat bm;   // the BETA sticker on Multiplayer, over everything
+            if (cc_menu_beta_sticker() && cc_menu_beta_place(panel, (Mat){k / 20, 0, 0, k / 20, 0, 0}, &bm)) {
+                static DrawList svb;
+                render_begin(&svb);
+                render_shape(cc_menu_beta_sticker(), bm, CX_IDENTITY, &svb);
+                draw_list(&svb);
             }
         }
         frame++;

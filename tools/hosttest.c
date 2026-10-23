@@ -269,6 +269,7 @@ static Movie *host_loader(AsVm *vm, const char *url) {
         cc_dump_shape(m, atoi(getenv("CC_DUMP_SHAPE")));
     }
     if (m && getenv("CC_PS_BUTTONS")) cc_menu_vita_badge(m);
+    if (m && CC_BETA_STICKER) cc_menu_beta_sticker_build(m);
     if (m && getenv("CC_PS_BUTTONS"))   // as the Vita does for every file it loads
         cc_buttons_playstation(m, btn_style());
                 printf("  [load] %s%s", base, m ? "" : " FAILED");
@@ -763,6 +764,13 @@ static int as_mode(int argc, char **argv) {
                     as_render_mc(hl, mat_mul(screen, mat_mul(vm->root->m, mat_mul(panel->m, hm))), CX_IDENTITY, &hvb);
                     hl->visible = 0;
                     rasterise(&hvb);
+                }
+                Mat bm;   // the BETA sticker on Multiplayer, over everything
+                if (cc_menu_beta_sticker() && cc_menu_beta_place(panel, screen, &bm)) {
+                    DrawList svb = {0};
+                    render_begin(&svb);
+                    render_shape(cc_menu_beta_sticker(), bm, CX_IDENTITY, &svb);
+                    rasterise(&svb);
                 }
             }
             write_frame(argv[4], shot++);

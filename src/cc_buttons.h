@@ -14,6 +14,10 @@ int cc_buttons_playstation(Movie *m, int style);
 // MENU.swf's title: the painted "Steam Edition" badge covered and "Vita Edition" drawn in
 // its place (fills added to the logo). 1 if this was that file. Call before tessellating.
 int cc_menu_vita_badge(Movie *m);
+// The "BETA" sticker for the Multiplayer button (CC_BETA_STICKER in cc_host.h), built once from
+// MENU.swf's font (1 if m was that file); then cc_menu_beta_sticker gives it (NULL before).
+int cc_menu_beta_sticker_build(const Movie *m);
+Shape *cc_menu_beta_sticker(void);
 
 // A PS Vita in the game's drawing style for the controls page (body 300 pixels wide, centred
 // on 0,0, in twips). spots: where each control is, in the same space; the face and shoulder
