@@ -78,4 +78,7 @@ extern void (*cc_music_stop)(void);
 
 // the game's loading screen (LOADING.swf) over everything, played around level changes
 void cc_loading_attach(AsVm *vm);
+int cc_loading_cover(AsVm *vm);     // Exit to Main Menu: 1 once the loading screen covers the game
+void cc_loading_reveal(AsVm *vm);   // the title starts under it, and it plays its exit
+int cc_loading_busy(AsVm *vm);      // the loading screen is showing
 #endif

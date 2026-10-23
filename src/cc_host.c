@@ -671,6 +671,97 @@ void cc_loading_attach(AsVm *vm) {
     exit_wait = -1;
 }
 
+static void loading_begin(AsVm *vm, AsMc *ls) {
+    loading_shown = 1;
+    load_wait = 0;
+    exit_wait = -1;
+    ls->visible = 1;
+    cc_set_flash_global(vm, "g_bLoading", as_num(1));
+    cc_set_flash_global(vm, "g_bReadyToLoad", as_num(0));
+    // its hint text asks _root for f_GetHint, which its own first frame defines
+    as_set(vm, as_objv(&vm->root->obj), as_atom(vm, "f_GetHint"),
+           as_get(vm, as_objv(&ls->obj), as_atom(vm, "f_GetHint")));
+    loading_play(vm, ls, NULL);
+}
+
+// The loading screen as the game left it (which knight, his gems, the hint), for the title's
+// copy to carry on with: each clip's frame and colour, in the order of a walk of the tree
+typedef struct { int nframes, frame; uint8_t playing, visible; CXform cx; char text[160]; } LoadingClip;
+static LoadingClip held[256];
+static int nheld;
+
+static void hold_clip(AsVm *vm, AsMc *mc) {
+    if (nheld >= 256) return;
+    LoadingClip *c = &held[nheld++];
+    c->nframes = mc->def ? mc->def->nframes : 0;
+    c->frame = mc->frame;
+    c->playing = mc->playing;
+    c->visible = mc->visible;
+    c->cx = mc->cx;
+    c->text[0] = 0;
+    if (mc->text) {
+        AsVal t = as_get(vm, as_objv(&mc->obj), as_atom(vm, "text"));
+        if (t.t != V_UNDEF) snprintf(c->text, sizeof c->text, "%s", as_tostr(vm, t)->s);
+    }
+    for (int i = 0; i < mc->ndisp; i++)
+        if (mc->disp[i].mc) hold_clip(vm, mc->disp[i].mc);
+}
+
+static int put_clip(AsVm *vm, AsMc *mc, int *at) {
+    if (*at >= nheld) return 0;
+    LoadingClip *c = &held[(*at)++];
+    if (c->nframes != (mc->def ? mc->def->nframes : 0)) return 0;   // not the same tree: leave it
+    if (c->frame != mc->frame && c->frame >= 0) as_mc_goto(vm, mc, c->frame, c->playing);
+    mc->playing = c->playing;
+    mc->visible = c->visible;
+    mc->cx = c->cx;
+    if (mc->text && c->text[0]) as_set(vm, as_objv(&mc->obj), as_atom(vm, "text"), as_strv(as_str(vm, c->text)));
+    for (int i = 0; i < mc->ndisp; i++)
+        if (mc->disp[i].mc && !put_clip(vm, mc->disp[i].mc, at)) return 0;
+    return 1;
+}
+
+// Exit to Main Menu: the loading screen comes in over the game, which stands still under it
+// (only the screen's own clip runs). 1 once it covers the screen and the game can go.
+int cc_loading_cover(AsVm *vm) {
+    AsMc *ls = loading_screen(vm);
+    if (!ls) return 1;
+    if (!loading_shown) loading_begin(vm, ls);
+    as_tick_clip(vm, ls);
+    if (as_tonum(vm, cc_flash_global(vm, "g_bReadyToLoad")) != 1 && ++load_wait < 90) return 0;
+    nheld = 0;
+    hold_clip(vm, ls);
+    return 1;
+}
+
+// ...and goes out over the title: the title's own copy starts where the game's left off
+// (covering the screen), then plays its exit once nothing is loading
+void cc_loading_reveal(AsVm *vm) {
+    cc_loading_attach(vm);
+    AsMc *ls = loading_screen(vm);
+    AsMc *scr = NULL;
+    for (int i = 0; ls && !scr && i < 10; i++) {   // the screen is placed on the file's second frame
+        as_tick_clip(vm, ls);
+        scr = as_mc_child(ls, as_atom(vm, "loadingScreen"));
+    }
+    if (!scr) { nheld = 0; return; }
+    ls->visible = 1;
+    loading_shown = 1;
+    as_set(vm, as_objv(&vm->root->obj), as_atom(vm, "f_GetHint"),
+           as_get(vm, as_objv(&ls->obj), as_atom(vm, "f_GetHint")));
+    loading_play(vm, ls, "loading");
+    // its clips pick a knight in their first frames' scripts: those run first, then the
+    // game's picture goes over them (twice, for the clips the first pass made)
+    for (int pass = 0; pass < 2 && nheld; pass++) {
+        as_drain(vm);
+        int at = 0;
+        put_clip(vm, ls, &at);
+    }
+    as_drain(vm);
+    nheld = 0;
+    exit_wait = 0;
+}
+
 static int is_level_slot(AsVm *vm, AsMc *target) {
     return target->parent == vm->root && target->name && !strcmp(target->name->s, "loader");
 }
@@ -678,18 +769,7 @@ static int is_level_slot(AsVm *vm, AsMc *target) {
 static int hold_load(AsVm *vm, AsMc *target, const char *url) {
     AsMc *ls = loading_screen(vm);
     if (ls && is_level_slot(vm, target) && !as_tobool(vm, cc_flash_global(vm, "g_bNoLoadingScreen"))) {
-        if (!loading_shown) {
-            loading_shown = 1;
-            load_wait = 0;
-            exit_wait = -1;
-            ls->visible = 1;
-            cc_set_flash_global(vm, "g_bLoading", as_num(1));
-            cc_set_flash_global(vm, "g_bReadyToLoad", as_num(0));
-            // its hint text asks _root for f_GetHint, which its own first frame defines
-            as_set(vm, as_objv(&vm->root->obj), as_atom(vm, "f_GetHint"),
-                   as_get(vm, as_objv(&ls->obj), as_atom(vm, "f_GetHint")));
-            loading_play(vm, ls, NULL);
-        }
+        if (!loading_shown) loading_begin(vm, ls);
         // the intro takes 20 frames; don't wait forever if it never says so
         if (as_tonum(vm, cc_flash_global(vm, "g_bReadyToLoad")) != 1 && ++load_wait < 90) return 1;
     }
@@ -710,6 +790,11 @@ static void loading_exit_check(AsVm *vm) {
     cc_set_flash_global(vm, "g_bLoading", as_num(0));
     AsMc *ls = loading_screen(vm);
     if (ls) loading_play(vm, ls, "exit");
+}
+
+int cc_loading_busy(AsVm *vm) {
+    AsMc *ls = loading_screen(vm);
+    return ls && ls->visible;
 }
 
 // HideLoadingScreen(): the exit is over; the clip stops being drawn until the next load

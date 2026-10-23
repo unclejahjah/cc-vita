@@ -1309,7 +1309,8 @@ static const int g_menu_order[] = {CC_MENU_PLAY, CC_MENU_OPTIONS, CC_MENU_QUIT};
 #define MENU_N ((int)(sizeof g_menu_order / sizeof *g_menu_order))
 
 // 1: a Wi-Fi game was started (net.state NET_PLAYING), 0: Local Game
-static int title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, size_t cache_bytes) {
+// from_game: back from Exit to Main Menu, under the loading screen, which then goes out over it
+static int title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, size_t cache_bytes, int from_game) {
     Movie *m = vita_loader(NULL, "MENU.swf");
     if (!m) return 0;
     int wifi_game = 0;
@@ -1325,6 +1326,7 @@ static int title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, siz
     as_render_init(t);
     t->root = as_mc_new(t, m, &m->root, NULL, 0);
     cc_native_root_functions(t, &t->root->obj);
+    if (from_game) cc_loading_reveal(t);
     const char *prompt = strtab_number(1);   // the game's "Press START"
     if (!prompt) prompt = "Press START";
     const char *unavailable = strtab_get("vita.online.unavailable");
@@ -1334,8 +1336,8 @@ static int title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, siz
     static Pause controls;   // Help & Options: the pause menu's Help & Options list and its books
     SceCtrlData pad, old = {0};
     sceCtrlPeekBufferPositive(0, &old, 1);
-    SceUInt64 prev = sceKernelGetProcessTimeWide(), acc = 0;
     const SceUInt64 tick_us = 1000000 / 30;
+    SceUInt64 prev = sceKernelGetProcessTimeWide(), acc = from_game ? tick_us : 0;   // (no black first frame)
     unsigned frame = 0;
     for (;;) {
         preload_step(PRELOAD_TITLE);
@@ -1421,7 +1423,7 @@ static int title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, siz
             render_begin(vb);
             hide_sprite(t->root, 626);   // the news bar (no news on the Vita)
             as_render_mc(t->root, screen, CX_IDENTITY, vb);
-            if (!panel && (frame / 30) % 2 == 0 && as_render_host_line_height() > 0) {   // blinking, in the game's font, where the news bar was
+            if (!panel && !cc_loading_busy(t) && (frame / 30) % 2 == 0 && as_render_host_line_height() > 0) {   // blinking, in the game's font, where the news bar was
                 Mat id = {1, 0, 0, 1, 0, 0};
                 CXform black = {{0, 0, 0, 1}, {0, 0, 0, 0}};
                 for (int dx = -2; dx <= 2; dx += 2)
@@ -1458,7 +1460,7 @@ static int title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, siz
             }
         }
         frame++;
-        if (!panel && (frame / 30) % 2 == 0 && as_render_host_line_height() <= 0) {   // no game font
+        if (!panel && !cc_loading_busy(t) && (frame / 30) % 2 == 0 && as_render_host_line_height() <= 0) {   // no game font
             int w = vita2d_pgf_text_width(g_font, 1.2f, prompt);
             outlined_text(172 - w / 2, 455, 1.2f, prompt);
         }
@@ -1582,9 +1584,10 @@ int main(void) {
 
     intro_screen(&vb);
 
+    int from_game = 0;
 new_game:   // the title again after Exit to Main Menu
     g_npreloaded = 0;
-    g_netgame = title_screen(&vb, &cache, cache_mem, cache_bytes);
+    g_netgame = title_screen(&vb, &cache, cache_mem, cache_bytes, from_game);
 
     AsVm *vm = as_new(vita_loader);
     vm->rand_state = (uint32_t)sceKernelGetProcessTimeWide() ^ 0x9E3779B9u;   // Flash's random() differs each session
@@ -1621,6 +1624,7 @@ new_game:   // the title again after Exit to Main Menu
     int last_free_count = -1;   // the files kept after the last pass
     const SceUInt64 tick_us = 1000000 / 30;   // the game's frame rate
     int exit_to_title = 0;
+    int leaving = 0;   // Exit to Main Menu: the loading screen is coming in over the game
     pause.open = 0;
     pause.select = 0;
     unsigned select_eat = 0;   // buttons held from closing the menu at character select
@@ -1647,13 +1651,14 @@ new_game:   // the title again after Exit to Main Menu
         // character select: the Cross or Start that closed the menu isn't a pick until let go
         if (select_eat && !(pad.buttons & select_eat)) select_eat = 0;
         if (select_eat) buttons = 0;
+        if (leaving) pressed = buttons = 0;
         memset(cc_keys, 0, sizeof cc_keys);
         cc_port_keys(1, (level || on_map || select) ? buttons & ~(1u << CCB_START) : buttons);
         if (pause.open) {
             float dt = (sceKernelGetProcessTimeWide() - prev) / 1000000.0f;
             int was_select = pause.select;
             int r = pause_input(&pause, vm, nav, dt > 0.1f ? 0.1f : dt);
-            if (r == 2) exit_to_title = 1;
+            if (r == 2) leaving = 1;
             if (r == 0 && was_select) select_eat = pad.buttons & (SCE_CTRL_CROSS | SCE_CTRL_START | SCE_CTRL_CIRCLE);
             memset(cc_keys, 0, sizeof cc_keys);
             buttons = 0;   // (Wi-Fi play: the game runs on under the menu, without this player)
@@ -1679,11 +1684,10 @@ new_game:   // the title again after Exit to Main Menu
 #ifdef CC_NET
         if (g_netgame) {
             net_poll();
-            if (net.state == NET_LOST) {   // back to the title, saying why
+            if (net.state == NET_LOST && !leaving) {   // back to the title, saying why
                 wifi_note(net.error);
                 log_line("Wi-Fi game ended: %s", net.error);
-                exit_to_title = 1;
-                acc = 0;
+                leaving = 1;
             }
             const char *want = netplay_file_wanted();   // a level file every Vita must have first
             if (want && !vita_prefetch(vm, want)) netplay_file_ready();
@@ -1692,7 +1696,13 @@ new_game:   // the title again after Exit to Main Menu
         int ticked = 0, stalled = 0;
         float hitch_script = 0, hitch_gc = 0, hitch_build = 0;   // this pass, for the slow-frame log
         const char *hitch_what = "";
-        while (acc >= tick_us) {
+        // leaving: only the loading screen moves; once it covers the screen the game goes
+        while (leaving && acc >= tick_us) {
+            if (cc_loading_cover(vm)) exit_to_title = 1;
+            acc -= tick_us;
+            ticked = 1;
+        }
+        while (!leaving && acc >= tick_us) {
 #ifdef CC_NET
             if (g_netgame) {   // this frame from everyone's buttons, once they're all here
                 mine.buttons = buttons;
@@ -1863,6 +1873,7 @@ new_game:   // the title again after Exit to Main Menu
         free_unused_movies(NULL, &cache, cache_mem, cache_bytes);
         memset(cc_keys, 0, sizeof cc_keys);
         render_begin(&vb);   // its meshes were in the files just freed
+        from_game = 1;
         goto new_game;
     }
 
