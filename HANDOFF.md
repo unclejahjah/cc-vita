@@ -302,9 +302,8 @@ Both are the same developer-settings path as the magic bug, already fixed by pin
   rack (f_InitWeapons) shows the DLC weapons unlocked, 2x4/Wooden Sword/store items still locked.
 
 ## Wi-Fi co-op (2026-10-22, branch claude/project-thread-pi6xr1)
-A separate app: `cmake -DCC_NET=ON` builds "Castle Crashers Co-op" (title ID CCRV00003) next to the
-main one. Same ux0:data/CastleCrashers files; its own save, save_coop.dat (copied from save.dat on
-its first start). Main menu: the original's MULTIPLAYER button (panel depth 11) between Local Game
+Since 2026-10-23 co-op is part of the one app (CCRV00001, save.dat; `-DCC_NET=OFF` leaves it out).
+It was a separate app before ("Castle Crashers Co-op", CCRV00003, save_coop.dat). Main menu: the original's MULTIPLAYER button (panel depth 11) between Local Game
 and Help & Options; Host a game / Join a game (hosts found by UDP broadcast on the same Wi-Fi).
 - Lockstep (`src/net.c`, `src/netplay.c`): every Vita runs the whole game; each frame's buttons of
   every port go host -> everyone over UDP (TCP 47710 lobby, UDP 47711 frames, 47712 beacons).

@@ -11,15 +11,10 @@ endif()
 project(cc_vita C)
 include("$ENV{VITASDK}/share/vita.cmake" REQUIRED)
 
-# CC_NET: the co-op app (Wi-Fi play), installed next to the main one with its own title ID
-option(CC_NET "Wi-Fi co-op build (its own app, CCRV00003)" OFF)
-if(CC_NET)
-set(VITA_APP_NAME "Castle Crashers Co-op")
-set(VITA_TITLEID  "CCRV00003")
-else()
+# CC_NET: Wi-Fi and internet co-op, on by default (one app since 2026-10-23); OFF builds without it
+option(CC_NET "Wi-Fi co-op" ON)
 set(VITA_APP_NAME "Castle Crashers")
 set(VITA_TITLEID  "CCRV00001")
-endif()
 set(VITA_VERSION  "00.02")
 
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O2 -Wall -std=gnu11")

@@ -45,13 +45,7 @@
 int _newlib_heap_size_user = 160 * 1024 * 1024;
 
 #define DATA_DIR "ux0:data/CastleCrashers/"
-#ifdef CC_NET
-// the co-op app keeps a save of its own (a copy of save.dat the first time), so it can't harm
-// the main app's while Wi-Fi play is new
-#define SAVE_PATH DATA_DIR "save_coop.dat"
-#else
 #define SAVE_PATH DATA_DIR "save.dat"   // the game's storage (profiles, levels, unlocks)
-#endif
 #define ACH_PATH DATA_DIR "achievements.dat"
 #define SETTINGS_PATH DATA_DIR "settings.txt"   // Help & Options' Settings: music and sound effects volume
 #define MAX_BATCH 65535   // u16 indices; a multiple of 3
@@ -1519,18 +1513,6 @@ int main(void) {
         return 0;
     }
 
-#ifdef CC_NET
-    FILE *have = fopen(SAVE_PATH, "rb");   // the first start: the main app's save to begin with
-    if (have) fclose(have);
-    else {
-        FILE *in = fopen(DATA_DIR "save.dat", "rb"), *out = in ? fopen(SAVE_PATH, "wb") : NULL;
-        char buf[4096];
-        size_t n;
-        while (out && (n = fread(buf, 1, sizeof buf, in)) > 0) fwrite(buf, 1, n, out);
-        if (in) fclose(in);
-        if (out) fclose(out);
-    }
-#endif
     cc_storage_load(SAVE_PATH);
     cc_achievements_load(ACH_PATH);
 #ifdef CC_TROPHIES
