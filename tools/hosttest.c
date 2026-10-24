@@ -725,7 +725,10 @@ static int as_mode(int argc, char **argv) {
                 char buf[256];
                 snprintf(buf, sizeof buf, "%s", getenv("CC_NAMETAGS"));
                 int p = 0;
-                for (char *t = strtok(buf, ","); t && p < NET_PLAYERS; t = strtok(NULL, ",")) snprintf(net.names[p++], NET_NAME, "%s", t);
+                for (char *t = strtok(buf, ","); t && p < NET_PLAYERS; t = strtok(NULL, ",")) {
+                    snprintf(cc_net_names[p], sizeof cc_net_names[p], "%s", t);
+                    snprintf(net.names[p++], NET_NAME, "%s", t);
+                }
                 netplay_hud_names(vm);
                 render_begin(&vb);   // again, with the HUD's names in
                 as_render_mc(vm->root, screen, CX_IDENTITY, &vb);

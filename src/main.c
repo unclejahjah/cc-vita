@@ -1669,6 +1669,9 @@ new_game:   // the title again after Exit to Main Menu
         vm->prefetch = netplay_prefetch;
         g_net_state = 0;
         log_line("Wi-Fi game: port %d, seed %u", net.port, net.seed);
+    } else {   // on your own: player 1 is this Vita's user, as the others' names in a Wi-Fi game
+        memset(cc_net_names, 0, sizeof cc_net_names);
+        snprintf(cc_net_names[0], sizeof cc_net_names[0], "%s", net_local_name());
     }
 #endif
     vm->root = as_mc_new(vm, start, &start->root, NULL, 0);
@@ -1836,7 +1839,7 @@ new_game:   // the title again after Exit to Main Menu
             Mat screen = {k / 20, 0, 0, k / 20, 0, 0};
             render_begin(&vb);
 #ifdef CC_NET
-            if (g_netgame) netplay_hud_names(vm);
+            netplay_hud_names(vm);
 #endif
             as_render_mc(vm->root, screen, CX_IDENTITY, &vb);
 #ifdef CC_NET

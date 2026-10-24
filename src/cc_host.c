@@ -334,12 +334,13 @@ static AsVal set_text_numeric(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
 }
 
 // GetLocalGamerTag(port): the player's name, shown on unlock banners ("... found a new weapon")
-// and the stat screen. The Vita has one local profile per port, so "Player N".
+// and the stat screen: the names cc_net_names has (a Wi-Fi game's players, or this Vita's user
+// as player 1), else "Player N".
 static AsVal gamer_tag(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
     (void)this_;
     char s[40];
     int p = (int)as_tonum(vm, ARG(0));
-    if (cc_net_port && p >= 0 && p < 4 && cc_net_names[p][0]) return as_strv(as_str(vm, cc_net_names[p]));
+    if (p >= 0 && p < 4 && cc_net_names[p][0]) return as_strv(as_str(vm, cc_net_names[p]));
     snprintf(s, sizeof s, "Player %d", p + 1);
     return as_strv(as_str(vm, s));
 }
