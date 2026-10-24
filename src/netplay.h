@@ -27,7 +27,7 @@ void netplay_file_ready(void);
 // knight appears, in the game font, through screen (the game's root -> screen pixels).
 #include "render.h"
 void netplay_nametags(AsVm *vm, Mat screen, DrawList *out);
-// The same names in the HUD, over each player's portrait (before drawing)
+// The players' names (cc_net_names) in the HUD over their portraits, before drawing
 void netplay_hud_names(AsVm *vm);
 
 uint16_t netplay_check(AsVm *vm);   // a summary of the game's state, to compare between Vitas

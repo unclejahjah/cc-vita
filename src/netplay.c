@@ -161,15 +161,15 @@ void netplay_hud_names(AsVm *vm) {
         AsMc *hud = as_mc_child(vm->root, as_atom(vm, name));
         if (!hud) continue;
         int port = as_toint32(vm, as_get(vm, as_objv(&hud->obj), as_atom(vm, "port")));
-        if (port < 1 || port > NET_PLAYERS || !net.names[port - 1][0]) continue;
+        if (port < 1 || port > NET_PLAYERS || !cc_net_names[port - 1][0]) continue;
         AsMc *stats = as_mc_child(hud, as_atom(vm, "stats"));
         AsMc *box = stats ? as_mc_child(stats, as_atom(vm, "textstuff")) : NULL;
         for (int f = 0; box && f < 2; f++) {
             AsMc *tf = as_mc_child(box, as_atom(vm, fields[f]));
             if (!tf) continue;
             AsVal tv = as_objv(&tf->obj), now = as_get(vm, tv, text);
-            if (now.t == V_STR && !strcmp(now.s->s, net.names[port - 1])) continue;
-            as_set(vm, tv, text, as_strv(as_str(vm, net.names[port - 1])));
+            if (now.t == V_STR && !strcmp(now.s->s, cc_net_names[port - 1])) continue;
+            as_set(vm, tv, text, as_strv(as_str(vm, cc_net_names[port - 1])));
         }
     }
 }
