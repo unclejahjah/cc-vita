@@ -1842,9 +1842,6 @@ new_game:   // the title again after Exit to Main Menu
             netplay_hud_names(vm);
 #endif
             as_render_mc(vm->root, screen, CX_IDENTITY, &vb);
-#ifdef CC_NET
-            if (g_netgame) netplay_nametags(vm, screen, &vb);
-#endif
             if (saving_timer > 0) {
                 saving_timer--;
                 pause_menu_saving(k, saving_timer < 10 ? saving_timer / 10.0f : 1, &vb);

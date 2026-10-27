@@ -855,6 +855,8 @@ void cc_host_init(AsVm *vm) {
         "f_GuyInit",
         "f_InitStatScreen",      // stat screen: gold, exp and unspent points, Cross accepts
         "f_StatScreen",
+        "f_SetupNameOverlay",    // the name over each knight's head (PLAYER.swf): the player's
+                                 //   name and number, not the placeholder "Gamertag"
     };
     if (!getenv("CC_DEV_PATHS")) {
         for (size_t i = 0; i < sizeof console_fns / sizeof *console_fns; i++)

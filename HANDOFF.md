@@ -328,9 +328,10 @@ and Help & Options; Host a game / Join a game (hosts found by UDP broadcast on t
   UDP 47711, lease 0, deleted again on leaving) and GetExternalIPAddress. The host's lobby shows
   "Game code XXXX-XXX" (net_code: the internet address + 3 check bits in 7 base-32 letters);
   "Join by game code" takes it in with the Vita's own keyboard (sceImeDialog; the title loop calls
-  vita2d_common_dialog_update before each swap). In a Wi-Fi game each player's name is shown for 3 s (then fades) over
-  their knight (netplay_nametags, 1750 twips over p<n>'s feet; hosttest CC_NAMETAGS="a,b") and in
-  the HUD over their portrait (netplay_hud_names: hud<n>.stats.textstuff.gamertag/bg), and
+  vita2d_common_dialog_update before each swap). Each player's name is shown over their knight at the start
+  of a level by the game itself (PLAYER.swf's f_SetupNameOverlay, "Name (1)", with console_version
+  pinned on; it showed the placeholder "Gamertag" before) and in
+  the HUD over their portrait (hosttest CC_NAMETAGS="a,b" sets the names) (netplay_hud_names: hud<n>.stats.textstuff.gamertag/bg), and
   the Vita's own notes (waiting, out of step, why a game ended) use the game font (game_text). A shared provider address (CGNAT, 100.64/10 or
   private) says "Wi-Fi only" with the reason. Joining connects on a thread (NET_CONNECTING).
   The delay is per game and per side (sent in START): the host's buttons NET_SPARE (3) frames,

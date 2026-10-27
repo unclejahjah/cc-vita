@@ -341,6 +341,13 @@ static int as_mode(int argc, char **argv) {
     if (getenv("CC_PREFETCH")) vm->prefetch = fake_prefetch;
     extern void cc_host_init(AsVm *vm);
     cc_host_init(vm);
+    if (getenv("CC_NAMETAGS")) {   // CC_NAMETAGS="Jah,Friend": the players' names (a Wi-Fi game's, or the Vita user's)
+        char buf[256];
+        snprintf(buf, sizeof buf, "%s", getenv("CC_NAMETAGS"));
+        int p = 0;
+        for (char *t = strtok(buf, ","); t && p < NET_PLAYERS; t = strtok(NULL, ","))
+            snprintf(cc_net_names[p++], sizeof cc_net_names[0], "%s", t);
+    }
     // CC_SAVE=path: start from a save file (cc_host.c's "CCS2" format), like the Vita's save.dat
     if (getenv("CC_SAVE") && !cc_storage_load(getenv("CC_SAVE")))
         printf("  couldn't read save %s\n", getenv("CC_SAVE"));
@@ -721,25 +728,10 @@ static int as_mode(int argc, char **argv) {
             render_begin(&vb);
             as_render_mc(vm->root, screen, CX_IDENTITY, &vb);
             if (getenv("CC_SAVING")) pause_menu_saving(W / 848.0f, 1, &vb);   // the Vita's "Saving..." note
-            if (getenv("CC_NAMETAGS")) {   // CC_NAMETAGS="Jah,Friend": the Wi-Fi game's name tags, as these players
-                char buf[256];
-                snprintf(buf, sizeof buf, "%s", getenv("CC_NAMETAGS"));
-                int p = 0;
-                for (char *t = strtok(buf, ","); t && p < NET_PLAYERS; t = strtok(NULL, ",")) {
-                    snprintf(cc_net_names[p], sizeof cc_net_names[p], "%s", t);
-                    snprintf(net.names[p++], NET_NAME, "%s", t);
-                }
+            if (getenv("CC_NAMETAGS")) {   // the HUD's names, as the Vita fills them in
                 netplay_hud_names(vm);
-                render_begin(&vb);   // again, with the HUD's names in
+                render_begin(&vb);
                 as_render_mc(vm->root, screen, CX_IDENTITY, &vb);
-                netplay_nametags(vm, screen, &vb);
-                int found;
-                AsVal v = as_resolve_path(vm, vm->root, "loader.game.game.p1", &found);
-                if (v.t == V_OBJ && v.o->type == OBJ_MC) {   // how tall the knight is, in its own twips
-                    float b[4];
-                    render_mc_bounds((AsMc *)v.o, MAT_IDENTITY, b);
-                    printf("  [p1] bounds %.0f,%.0f - %.0f,%.0f twips\n", b[0], b[1], b[2], b[3]);
-                }
             }
             if (getenv("CC_TITLE_PROMPT")) {   // CC_TITLE_PROMPT=text: the title's Press START, as the Vita draws it
                 float u = W / 960.0f;
