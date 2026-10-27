@@ -3,6 +3,7 @@
 // worked out from how the scripts use it.
 #include "cc_host.h"
 #include "custom_char.h"
+#include "custom_animal.h"
 #include "strtab.h"
 
 #include <stdio.h>
@@ -377,6 +378,10 @@ void cc_own_dlc_items(void) {
         for (size_t i = 0; i < sizeof dlc_animals / sizeof *dlc_animals; i++) {
             double *b = &storage[p][8 + dlc_animals[i] / 8];
             *b = (int)*b | 1 << (dlc_animals[i] % 8);
+        }
+        if (cc_animal_type()) {   // and a custom animal orb (custom_animal.h), if there is one
+            double *b = &storage[p][8 + CC_CUSTOM_ANIMAL / 8];
+            *b = (int)*b | 1 << (CC_CUSTOM_ANIMAL % 8);
         }
     }
 }
@@ -1040,8 +1045,8 @@ static const char *volley_text(int n) {
 }
 
 static const char *text_for_number(AsVm *vm, int n) {
-    (void)vm;
     const char *s = cc_game_mode == CC_MODE_VOLLEYBALL ? volley_text(n) : NULL;
+    if (!s) s = cc_animal_text(vm, n);   // the Vet's words for a custom animal orb
     return s ? s : strtab_number(n);
 }
 
@@ -1068,6 +1073,7 @@ void cc_host_init(AsVm *vm) {
     vm->text_for_number = text_for_number;
     vm->after_frame_scripts = after_frame_scripts;
     cc_native_init(vm);
+    cc_animal_init(vm);   // a custom animal orb, if there is one
     // console_version: the shipping executable's value is true. All the way, that hands the
     // front end (menus, profiles, QuitTo between files) to the executable, which isn't
     // reproduced yet; so the scripts' own front end runs, and the shipping behaviour is

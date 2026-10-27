@@ -31,6 +31,7 @@
 #include "audio.h"
 #include "cc_buttons.h"
 #include "cc_host.h"
+#include "custom_animal.h"
 #include "help_book.h"
 #include "custom_char.h"
 #include "hostfont.h"
@@ -1845,6 +1846,8 @@ int main(void) {
     log_line("cc_vita started");
     if (cc_custom_load(DATA_DIR "custom/"))   // optional: a painted character (custom_char.h)
         log_line("custom character \"%s\" (fights like character %d)", cc_custom_name(), cc_custom_base());
+    if (cc_animal_load(DATA_DIR "custom/animal/"))   // optional: a custom animal orb (custom_animal.h)
+        log_line("custom animal orb \"%s\"", cc_animal_name());
     bg_init();
 
     Movie *start = host_movie("MAIN.swf");
@@ -1932,6 +1935,7 @@ new_game:   // the title again after Exit to Main Menu
 #ifdef CC_NET
     cc_custom_set_active(!g_netgame);
 #endif
+    cc_animal_set_active(!g_netgame);   // not in Wi-Fi games: the other machine may not have it
     cc_host_init(vm);
     as_render_init(vm);
     cc_set_auto_potion(vm, g_auto_potion);
