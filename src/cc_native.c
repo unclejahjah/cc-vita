@@ -169,15 +169,16 @@ static AsVal native_get_default_weapon(AsVm *vm, AsVal this_, int argc, AsVal *a
 // executable answers every code the files use. 1-6 are the game's buttons in that order;
 // the others are actions: 16 accept/continue (A), 17 back (B), 18 invite (Y), 19 select (X),
 // 22 the map's "Return Home" (light attack, X) and 23 its "Stats" (heavy attack, Y).
+// The game's buttons are actions, so they show the button the player has put them on (cc_bind).
 static int button_frame(int code) {
     switch (code) {
-    case 1: case 2: case 3: case 4: case 5: case 6: return code;
+    case 1: case 2: case 3: case 4: case 5: case 6: return cc_bind[code - 1] + 1;
     case 16: return 3;
     case 17: return 4;
     case 18: return 2;
     case 19: return 1;
-    case 22: return 1;
-    case 23: return 2;
+    case 22: return cc_bind[CC_ACT_LIGHT] + 1;
+    case 23: return cc_bind[CC_ACT_HEAVY] + 1;
     default: return 8;
     }
 }
