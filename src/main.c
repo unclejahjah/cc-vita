@@ -760,9 +760,16 @@ static void pads_read(SceCtrlData *p1, int extra) {
     static int frames;
     static SceCtrlPortInfo info;
     if (frames++ % 30 == 0 && sceCtrlGetControllerPortInfo(&info) < 0) memset(&info, 0, sizeof info);
-    if (!pad_read_ext(0, p1)) sceCtrlPeekBufferPositive(0, p1, 1);
+    // the sticks from the plain read, as before more pads (with the Ext2 one's the sticks did
+    // nothing in a level on Jah's handheld Vita); Ext2 only gives the buttons (L1/R1, L2/R2)
+    sceCtrlPeekBufferPositive(0, p1, 1);
     SceCtrlData q;
-    if (info.port[1] != SCE_CTRL_TYPE_UNPAIRED && pad_read_ext(1, &q)) {
+    if (pad_read_ext(0, &q)) {
+        p1->buttons = q.buttons;
+        if (q.rx == 0 || q.rx == 255) p1->rx = q.rx;   // L2/R2
+    }
+    // port 1 only when it's a paired pad (on a handheld it's the Vita's own buttons again)
+    if ((info.port[1] == SCE_CTRL_TYPE_DS3 || info.port[1] == SCE_CTRL_TYPE_DS4) && pad_read_ext(1, &q)) {
         p1->buttons |= q.buttons;
         p1->lx = stick_far(p1->lx, q.lx);
         p1->ly = stick_far(p1->ly, q.ly);
