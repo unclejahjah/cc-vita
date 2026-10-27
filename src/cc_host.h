@@ -20,6 +20,10 @@ void cc_port_keys(int port, uint32_t buttons);
 
 // Wi-Fi play: which port this Vita's player is (1..4; 0 when not in a Wi-Fi game) and every
 // port's player name ("" for nobody). Achievements count for this Vita's player only.
+// Local Game's modes, as GetGameMode() reports them
+enum { CC_MODE_STORY = 0, CC_MODE_QUAFF = 1, CC_MODE_ARENA = 3 };
+extern int cc_game_mode;
+extern int cc_quit_requested;   // a mini game called QuitTo/ChangeMovie: back to the title
 extern int cc_net_port;
 extern char cc_net_names[4][32];
 
@@ -36,6 +40,12 @@ void cc_native_root_functions(AsVm *vm, AsObj *root);
 enum { CC_MENU_PLAY, CC_MENU_OPTIONS, CC_MENU_QUIT, CC_MENU_WIFI, CC_MENU_ITEMS };
 extern int cc_menu_wifi;
 AsMc *cc_menu_attach(AsVm *vm, float x, float y);
+// Local Game's mode menu (MENU.swf "modemenu") on _root at (x, y), its hand on Castle
+// Crashers; cc_modemenu_point moves the hand from one item to another (0 Castle Crashers,
+// 1 Arena, 2 All You Can Quaff)
+#define CC_MODE_ITEMS 3
+AsMc *cc_modemenu_attach(AsVm *vm, float x, float y);
+void cc_modemenu_point(AsVm *vm, AsMc *menu, int from, int to);
 void cc_menu_highlight(AsVm *vm, AsMc *panel, int item);
 // The power button that stands for Quit, as triangles in screen pixels through screen (stage
 // twips -> screen); lit when chosen. Returns the vertices written (up to max; it needs about 1200).
