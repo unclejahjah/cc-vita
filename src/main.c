@@ -712,13 +712,15 @@ static uint32_t pad_buttons(const SceCtrlData *pad, int in_game) {
     int rx = pad->rx - 128;
     if (rx <= -STICK_RUN + 20) k |= 1u << CCB_L2;
     if (rx >= STICK_RUN - 20) k |= 1u << CCB_R2;
-    if (b & SCE_CTRL_CROSS) k |= 1u << CCB_ACCEPT | 1u << CCB_JUMP;
-    if (b & SCE_CTRL_CIRCLE) k |= 1u << CCB_BACK | 1u << CCB_PROJECTILE;
-    if (b & SCE_CTRL_SQUARE) k |= 1u << CCB_PUNCH1;
-    if (b & SCE_CTRL_TRIANGLE) k |= 1u << CCB_PUNCH2;
-    // the PlayStation layout's sides: block on the left (L2), magic on the right (R2)
-    if (b & SCE_CTRL_LTRIGGER) k |= 1u << CCB_SHIELD;
-    if (b & SCE_CTRL_RTRIGGER) k |= 1u << CCB_MAGIC;
+    // menus always accept on Cross and go back on Circle; the actions are on whichever button
+    // the player put them (cc_bind; by default the PlayStation layout: block on L, magic on R)
+    static const unsigned PAD[CC_ACTIONS] = {SCE_CTRL_SQUARE, SCE_CTRL_TRIANGLE, SCE_CTRL_CROSS,
+                                             SCE_CTRL_CIRCLE, SCE_CTRL_LTRIGGER, SCE_CTRL_RTRIGGER};
+    static const int ACTION[CC_ACTIONS] = {CCB_PUNCH1, CCB_PUNCH2, CCB_JUMP, CCB_PROJECTILE, CCB_SHIELD, CCB_MAGIC};
+    if (b & SCE_CTRL_CROSS) k |= 1u << CCB_ACCEPT;
+    if (b & SCE_CTRL_CIRCLE) k |= 1u << CCB_BACK;
+    for (int a = 0; a < CC_ACTIONS; a++)
+        if (b & PAD[cc_bind[a]]) k |= 1u << ACTION[a];
     if (b & SCE_CTRL_START) k |= 1u << CCB_START;
     return k;
 }
@@ -740,7 +742,8 @@ typedef struct {
 } Pause;
 
 // Settings' volumes, 0..HB_VOLUME_STEPS, and Auto Potion: kept in settings.txt as "music = N",
-// "sfx = N" and "autopotion = 0/1"
+// "sfx = N" and "autopotion = 0/1"; the Controls page's buttons as "buttons = " and cc_bind's
+// six numbers
 static int g_volume[2] = {HB_VOLUME_STEPS, HB_VOLUME_STEPS};
 static int g_auto_potion;
 
@@ -757,6 +760,13 @@ static void settings_load(void) {
             if (sscanf(line, " music = %d", &v) == 1 && v >= 0 && v <= HB_VOLUME_STEPS) g_volume[0] = v;
             if (sscanf(line, " sfx = %d", &v) == 1 && v >= 0 && v <= HB_VOLUME_STEPS) g_volume[1] = v;
             if (sscanf(line, " autopotion = %d", &v) == 1) g_auto_potion = v != 0;
+            int nb[CC_ACTIONS], used = 0;
+            if (sscanf(line, " buttons = %d %d %d %d %d %d", &nb[0], &nb[1], &nb[2], &nb[3], &nb[4], &nb[5]) ==
+                CC_ACTIONS) {
+                for (int a = 0; a < CC_ACTIONS; a++)
+                    if (nb[a] >= 0 && nb[a] < CC_ACTIONS) used |= 1 << nb[a];
+                if (used == (1 << CC_ACTIONS) - 1) memcpy(cc_bind, nb, sizeof nb);   // each button once
+            }
         }
         fclose(f);
     }
@@ -767,6 +777,8 @@ static void settings_save(void) {
     FILE *f = fopen(SETTINGS_PATH, "w");
     if (!f) return;
     fprintf(f, "music = %d\nsfx = %d\nautopotion = %d\n", g_volume[0], g_volume[1], g_auto_potion);
+    fprintf(f, "buttons = %d %d %d %d %d %d\n", cc_bind[0], cc_bind[1], cc_bind[2], cc_bind[3], cc_bind[4],
+            cc_bind[5]);
     fclose(f);
 }
 
@@ -888,7 +900,8 @@ static void pause_draw(Pause *ps) {
 }
 
 // Help & Options' book: L/R (or left/right) turn How to Play's pages, up/down and left/right
-// set the volumes, Circle closes it (the volumes are saved then if they moved)
+// set the volumes and move the Controls page's actions (Triangle puts them back), Circle
+// closes it (the settings are saved then if they moved)
 static void help_input(Pause *ps, unsigned pressed, float dt) {
     if (ps->m.book_new) {
         help_book_open(&ps->hb, ps->m.book, g_volume[0], g_volume[1], g_auto_potion);
@@ -898,7 +911,7 @@ static void help_input(Pause *ps, unsigned pressed, float dt) {
     unsigned b = (pressed & SCE_CTRL_UP ? HB_UP : 0) | (pressed & SCE_CTRL_DOWN ? HB_DOWN : 0) |
                  (pressed & SCE_CTRL_LEFT ? HB_LEFT : 0) | (pressed & SCE_CTRL_RIGHT ? HB_RIGHT : 0) |
                  (pressed & SCE_CTRL_LTRIGGER ? HB_PREV : 0) | (pressed & SCE_CTRL_RTRIGGER ? HB_NEXT : 0) |
-                 (pressed & SCE_CTRL_CIRCLE ? HB_BACK : 0);
+                 (pressed & SCE_CTRL_CIRCLE ? HB_BACK : 0) | (pressed & SCE_CTRL_TRIANGLE ? HB_RESET : 0);
     int sound;
     int open = help_book_update(&ps->hb, b, dt, &sound);
     if (ps->hb.volume[0] != g_volume[0] || ps->hb.volume[1] != g_volume[1]) {   // heard straight away

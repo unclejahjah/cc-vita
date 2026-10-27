@@ -10,16 +10,16 @@
 
 enum { HB_HOWTO, HB_CONTROLS, HB_SETTINGS, HB_ACHIEVEMENTS };   // ACHIEVEMENTS: from Information
 // buttons for help_book_update
-enum { HB_UP = 1, HB_DOWN = 2, HB_LEFT = 4, HB_RIGHT = 8, HB_PREV = 16, HB_NEXT = 32, HB_BACK = 64 };
+enum { HB_UP = 1, HB_DOWN = 2, HB_LEFT = 4, HB_RIGHT = 8, HB_PREV = 16, HB_NEXT = 32, HB_BACK = 64, HB_RESET = 128 };
 #define HB_HOWTO_PAGES 7
 #define HB_VOLUME_STEPS 10
 
 typedef struct {
     int book, page;            // page: How to Play's page, 0..6
-    int row;                   // Settings: 0 music, 1 sound effects, 2 auto potion
+    int row;                   // Settings: 0 music, 1 sound effects, 2 auto potion; Controls: the chosen button
     int volume[2];             // 0..HB_VOLUME_STEPS
     int auto_potion;           // 1: a hit that would end you drinks a health potion instead
-    int changed;               // the settings changed since the book opened
+    int changed;               // the settings or buttons (cc_bind) changed since the book opened
     float time;                // seconds open (the chosen row pulses)
     float turn;                // seconds left of a page turn
     int turn_dir;              // 1 forward, -1 back
@@ -28,6 +28,8 @@ typedef struct {
 } HelpBook;
 
 void help_book_open(HelpBook *hb, int book, int music, int sfx, int auto_potion);
+// Controls: up/down choose a button, left/right change the action on it (the button that had
+// that action takes this one's), HB_RESET puts the original layout back. It sets cc_bind.
 // One frame (dt seconds) with the buttons pressed this frame. Returns 0 once Back closes
 // it. *sound: -1 none, 0 the move sound, 1 the select one, 2 a page turn.
 int help_book_update(HelpBook *hb, unsigned pressed, float dt, int *sound);
