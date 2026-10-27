@@ -391,6 +391,8 @@ static void shape_box(const Shape *sh, Mat m, float box[4]) {
     }
 }
 
+static void modemenu_volleyball(AsVm *vm, AsMc *menu);
+
 AsMc *cc_modemenu_attach(AsVm *vm, float x, float y) {
     AsVal args[3] = {as_strv(as_str(vm, "modemenu")), as_strv(as_str(vm, "modepanel")), as_num(5001)};
     AsVal p = as_call_method(vm, as_objv(&vm->root->obj), "attachMovie", 3, args);
@@ -420,19 +422,42 @@ AsMc *cc_modemenu_attach(AsVm *vm, float x, float y) {
     set_num(vm, menu, "_yscale", 100 * k);
     set_num(vm, menu, "_x", x - (bb[0] + bb[2]) / 40 * k);
     set_num(vm, menu, "_y", y - (bb[1] + bb[3]) / 40 * k);
-    // Volleyball (the PS3's mini game) under Castle Crashers: its name where the right page's
-    // scribbles were, in a copy of Castle Crashers' heading
-    // (two lines of them: depths 18 and 19)
+    modemenu_volleyball(vm, menu);
+    // the dark veil behind it was made for a 4:3 screen: over all of this one
+    for (int i = 0; i < menu->ndisp; i++) {
+        AsDisp *e = &menu->disp[i];
+        if (e->depth != 1 - 16384 || e->kind != DISP_SHAPE) continue;
+        e->m.a *= 4; e->m.b *= 4; e->m.c *= 4; e->m.d *= 4; e->m.tx *= 4; e->m.ty *= 4;
+    }
+    return menu;
+}
+
+// Volleyball (the PS3's mini game) under Castle Crashers: its name where the right page's
+// scribbles were, in a copy of Castle Crashers' heading (two lines of them: depths 18 and 19).
+// Run on attaching and every tick after: on Jah's Vita the scribbles were still there and the
+// name never came, so the book's timeline can put them back or place them later.
+static void modemenu_volleyball(AsVm *vm, AsMc *menu) {
     float sb[4] = {1e9f, 1e9f, -1e9f, -1e9f}, hb[4];
+    int scribbles = 0;
     for (int i = 0; i < menu->ndisp; i++) {
         AsDisp *e = &menu->disp[i];
         const Character *c = &menu->movie->chars[e->cid];
         if ((e->depth != 18 - 16384 && e->depth != 19 - 16384) || e->kind != DISP_SHAPE || c->type != CHAR_SHAPE) continue;
+        if (e->m.a == 0 && e->m.b == 0 && e->m.c == 0 && e->m.d == 0) continue;   // hidden already
         shape_box(c->ptr, e->m, sb);
         e->m.a = e->m.b = e->m.c = e->m.d = 0;
+        scribbles++;
     }
+    if (panel_path(vm, menu, "txt4")) return;   // its name is there already
     AsMc *head = panel_path(vm, menu, "txt3");
-    if (sb[2] > sb[0] && head) {
+    if (!(sb[2] > sb[0] && head)) {
+        static int warned;
+        if (!warned++)
+            as_warn(vm, "mode book: no place for Volleyball yet (%d scribbles, heading %s, %d placed)", scribbles,
+                    head ? "found" : "missing", menu->ndisp);
+        return;
+    }
+    {
         // (a text field: its box, through where it stands)
         if (head->text) {
             const int32_t *b = head->text->bounds;
@@ -463,13 +488,6 @@ AsMc *cc_modemenu_attach(AsVm *vm, float x, float y) {
             set_num(vm, menu, "cc_hand_dy", ((sb[1] + sb[3]) - (hb[1] + hb[3])) / 40 * VOLLEY_HAND);
         }
     }
-    // the dark veil behind it was made for a 4:3 screen: over all of this one
-    for (int i = 0; i < menu->ndisp; i++) {
-        AsDisp *e = &menu->disp[i];
-        if (e->depth != 1 - 16384 || e->kind != DISP_SHAPE) continue;
-        e->m.a *= 4; e->m.b *= 4; e->m.c *= 4; e->m.d *= 4; e->m.tx *= 4; e->m.ty *= 4;
-    }
-    return menu;
 }
 
 // Volleyball has no place of its own on the hand's timeline: the hand points at Castle
@@ -488,6 +506,7 @@ void cc_modemenu_point(AsVm *vm, AsMc *menu, int from, int to) {
 }
 
 void cc_modemenu_tick(AsVm *vm, AsMc *menu) {
+    modemenu_volleyball(vm, menu);
     AsVal o = as_objv(&menu->obj);
     AsVal y = as_get(vm, o, as_atom(vm, "cc_hand_y"));
     AsMc *hand = panel_path(vm, menu, "hand");
