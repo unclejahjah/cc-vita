@@ -1,6 +1,7 @@
 // Drawing and measuring the ActionScript runtime's live clip tree.
 #include "as_render.h"
 #include "hostfont.h"
+#include "custom_animal.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -250,6 +251,12 @@ void as_render_mc(AsMc *mc, Mat parent, CXform pcx, DrawList *out) {
     Mat m = mat_mul(parent, mc->m);
     CXform cx = cx_mul(pcx, cx_with_alpha(mc->cx, mc->alpha));
     if (cx.mul[3] <= 0 && cx.add[3] <= 0 && !out->masking) return;
+    Mat box;
+    const BitmapFill *pet = cc_animal_art(mc, &box);   // a custom animal orb's picture
+    if (pet) {
+        render_bitmap_fill(pet, mat_mul(m, box), cx, out);
+        return;
+    }
     AsMc *mask = mc->mask;
     if (mask && (mask->removed || out->masking)) mask = NULL;
     if (mask) {

@@ -198,6 +198,8 @@ struct AsVm {
     void *host;                 // for the host's own use
     int depth;                  // call depth (runaway recursion guard)
     AsObj *cur_fn;              // function running now (for messages), NULL on a timeline
+    AsObj *native_fn;           // the native running now (as_call_script finds its script version)
+    AsMc *text_field;           // the text field text_for_number is asked about
     long long ops;              // actions executed (profiling)
     uint32_t tick;              // frames run so far
     uint32_t rand_state;
@@ -272,6 +274,8 @@ void as_def(AsVm *vm, AsObj *o, const char *name, AsVal v);   // define with DON
 void as_def_fn(AsVm *vm, AsObj *o, const char *name, AsNative fn);
 AsVal as_call(AsVm *vm, AsVal fn, AsVal this_, int argc, AsVal *argv);
 AsVal as_call_method(AsVm *vm, AsVal obj, const char *name, int argc, AsVal *argv);
+// From inside an as_override native: runs the script's own version of the function it stands in for.
+AsVal as_call_script(AsVm *vm, AsVal this_, int argc, AsVal *argv);
 
 // running scripts
 void as_run_block(AsVm *vm, const Movie *m, uint32_t off, uint32_t len, AsMc *target);

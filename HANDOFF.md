@@ -339,3 +339,15 @@ and Help & Options; Host a game / Join a game (hosts found by UDP broadcast on t
   The state checks in the inputs are all of frame k - slowest - 1 (the host keeps a few old
   ones). NET_VERSION 3. tools: a lag proxy (Python, delays TCP+UDP both ways) checked 200 ms. hosttest: NET_CODE, NET_DELAY,
   UPNP_ROUTER (and a pretend router was used to test it: SSDP + SOAP in Python).
+
+## Custom animal orb (2026-10-27, branch claude/project-thread-x1zvep)
+- Optional add-on (src/custom_animal.c/.h): ux0:data/CastleCrashers/custom/animal/pet.png (+ pet.xml)
+  becomes animal 30, after the game's 29. Owned in every profile, waits in the Animal Ark at
+  barn30 (2626,-125, right of the Golden Whale), trash can sends it back there, Vet chalkboard
+  shows its description (ntext 270-272 only on fields under "chalkboard": LEVEL2 uses 270-273).
+- Art: ANIMALS.swf's body sprite has 29 frames (gotoAndStop(_parent._parent.animal_type)); type 30
+  clamps to the whale frame and the picture is drawn in its bounds instead (as_render.c).
+- Ability: f_SetAnimalTimer override. like=N copies pet N's timer and stats; own stats on top;
+  every/heal/gold run from a native fp_timer (f_CustomAnimalTimer). Off in Wi-Fi games (owner has none).
+- Engine: as_call_script() runs the script version of an as_override native; vm->text_field
+  is the field text_for_number is asked about. hosttest: CC_CUSTOM_ANIMAL=dir/.

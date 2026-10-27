@@ -15,6 +15,7 @@
 #include "../src/hostfont.h"
 #include "../src/cc_buttons.h"
 #include "../src/cc_host.h"
+#include "../src/custom_animal.h"
 #include "../src/pause_menu.h"
 #include "../src/help_book.h"
 #include "../src/strtab.h"
@@ -339,6 +340,8 @@ static int as_mode(int argc, char **argv) {
     vm->warn = host_warn;
     vm->trace = host_trace;
     if (getenv("CC_PREFETCH")) vm->prefetch = fake_prefetch;
+    if (getenv("CC_CUSTOM_ANIMAL"))   // CC_CUSTOM_ANIMAL=dir/ (with pet.png, pet.xml): a custom animal orb
+        cc_animal_load(getenv("CC_CUSTOM_ANIMAL"));
     extern void cc_host_init(AsVm *vm);
     cc_host_init(vm);
     // CC_SAVE=path: start from a save file (cc_host.c's "CCS2" format), like the Vita's save.dat

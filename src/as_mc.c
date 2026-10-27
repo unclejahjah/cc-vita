@@ -672,7 +672,9 @@ int as_mc_get_member(AsVm *vm, AsMc *mc, AsStr *atom, AsVal *out) {
 int as_mc_set_member(AsVm *vm, AsMc *mc, AsStr *atom, AsVal v) {
     // text fields: "ntext = N" asks the executable for its string N (the field's words)
     if (mc->text && vm->text_for_number && !strcasecmp(atom->s, "ntext")) {
+        vm->text_field = mc;
         const char *s = vm->text_for_number(vm, as_toint32(vm, v));
+        vm->text_field = NULL;
         if (s) as_set(vm, as_objv(&mc->obj), as_atom(vm, "text"), as_strv(as_str(vm, s)));
         return 0;   // and the variable is set as usual
     }
