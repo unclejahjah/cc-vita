@@ -979,9 +979,13 @@ static int help_mode(int argc, char **argv) {
         HelpBook hb;
         help_book_open(&hb, book, 7, 10);
         hb.achieved = 1 << 2 | 1 << 4 | 1 << 7 | 1 << 11;
-        int pages = book == HB_HOWTO ? HB_HOWTO_PAGES : 1;
+        int pages = book == HB_HOWTO ? HB_HOWTO_PAGES : book == HB_CONTROLS ? 2 : 1;
         for (int pg = 0; pg < pages; pg++) {
             int sound;
+            if (book == HB_CONTROLS && pg == 1) {   // Square chosen, and Jump moved onto it
+                unsigned keys[] = {HB_DOWN, HB_DOWN, HB_DOWN, HB_RIGHT, HB_RIGHT};
+                for (int i = 0; i < 5; i++) help_book_update(&hb, keys[i], 1 / 60.0f, &sound);
+            }
             for (int t = 0; t < 40; t++) help_book_update(&hb, 0, 1 / 60.0f, &sound);
             if (have_back) memcpy(px, back, sizeof back), memset(stencil, 0, (size_t)W * H);
             else clear((const uint8_t[3]){40, 44, 52});
@@ -990,7 +994,7 @@ static int help_mode(int argc, char **argv) {
             vb.view[3] = H;
             help_book_build(&hb, m, W / 848.0f, &vb);
             rasterise(&vb);
-            printf("%d: book %d page %d\n", shot, book, hb.page);
+            printf("%d: book %d page %d%s\n", shot, book, hb.page, cc_bind_is_default() ? "" : " (buttons moved)");
             write_frame(argv[3], shot++);
             if (book == HB_HOWTO && pg + 1 < pages) {   // a picture mid-turn on the first turn
                 help_book_update(&hb, HB_NEXT, 1 / 60.0f, &sound);

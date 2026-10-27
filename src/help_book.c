@@ -21,6 +21,10 @@
 #define STAGE_H 480.0f
 #define TURN_SECONDS HB_TURN_SECONDS
 
+// the Controls page's buttons top to bottom (cc_bind's numbers): L on the left, then down the
+// right R, Triangle, Square, Circle, Cross
+static const int CONTROL_ROWS[CC_ACTIONS] = {4, 5, 1, 0, 3, 2};
+
 void help_book_open(HelpBook *hb, int book, int music, int sfx) {
     memset(hb, 0, sizeof *hb);
     hb->book = book;
@@ -48,6 +52,27 @@ int help_book_update(HelpBook *hb, unsigned pressed, float dt, int *sound) {
             hb->turn = TURN_SECONDS;
             hb->turn_dir = step;
             *sound = 2;
+        }
+    } else if (hb->book == HB_CONTROLS) {
+        if (pressed & (HB_UP | HB_DOWN)) {
+            hb->row = (hb->row + (pressed & HB_UP ? CC_ACTIONS - 1 : 1)) % CC_ACTIONS;
+            *sound = 0;
+        }
+        int step = pressed & HB_RIGHT ? 1 : pressed & HB_LEFT ? -1 : 0;
+        if (step) {   // swap this button's action with the next one's button
+            int btn = CONTROL_ROWS[hb->row], cur = 0;
+            for (int a = 0; a < CC_ACTIONS; a++)
+                if (cc_bind[a] == btn) cur = a;
+            int next = (cur + step + CC_ACTIONS) % CC_ACTIONS;
+            cc_bind[cur] = cc_bind[next];
+            cc_bind[next] = btn;
+            hb->changed = 1;
+            *sound = 0;
+        }
+        if ((pressed & HB_RESET) && !cc_bind_is_default()) {
+            cc_bind_reset();
+            hb->changed = 1;
+            *sound = 1;
         }
     } else if (hb->book == HB_SETTINGS) {
         if (pressed & (HB_UP | HB_DOWN)) {
@@ -264,14 +289,14 @@ static void howto_page(DrawList *out, Art *a, float k, int page, float alpha) {
     const Frame *f = &sp->frames[page];
     // the button icons show whichever button the executable sends them to (their clip's
     // frames: X, Y, A, B, LT, RT), which cc_buttons has made Square, Triangle, Cross,
-    // Circle, L and R
+    // Circle, L and R; the actions' icons follow where the player put them (cc_bind)
     static const struct { int page, depth, frame; } icons[] = {
         {0, 61, 0}, {0, 63, 1},                 // Uppercut: light, heavy
         {0, 99, 0}, {0, 101, 0}, {0, 118, 0},   // Fast Attack: light, light, light
         {1, 61, 5}, {1, 63, 2},                 // Magic Jump: R + jump
         {1, 99, 5}, {1, 101, 3},                // Magic Projectile: R + use item
         {1, 118, 5},                            // hold R
-        {3, 21, 0},                             // the store's Purchase Item: Square on the Vita
+        {3, 21, -1},                            // the store's Purchase Item: Square on the Vita
     };
     int masked = 0;
     for (int i = 0; i < f->count; i++) masked |= f->places[i].clip != 0;
@@ -289,7 +314,8 @@ static void howto_page(DrawList *out, Art *a, float k, int page, float alpha) {
             }
             int fr = 0;
             for (size_t j = 0; j < sizeof icons / sizeof *icons; j++)
-                if (icons[j].page == page && icons[j].depth == p->depth) fr = icons[j].frame;
+                if (icons[j].page == page && icons[j].depth == p->depth)   // the action's button now
+                    fr = icons[j].frame < 0 ? 0 : cc_bind[icons[j].frame];
             sprite_frame(mv, a->icon_inner, fr, mat_mul(pm, a->icon_m), cx_mul(pc, a->icon_cx), out);
         }
     }
@@ -353,7 +379,7 @@ static void page_title(DrawList *out, const Art *a, float k, const char *s, floa
 // each label beside it in the game font (left ones ending near the pad, right ones starting
 // near it, rows 26 apart) with a thin black line to its control. Here the pad is a Vita, so
 // the labels follow the Vita's controls.
-static void controls_page(DrawList *out, Art *a, float k, float alpha) {
+static void controls_page(DrawList *out, Art *a, float k, const HelpBook *hb, float alpha) {
     static const uint8_t LINE[4] = {0, 0, 0, 255};
     book_art(out, a, k, alpha);
     page_title(out, a, k, words("help.title.controls", "Controls"), alpha);
@@ -379,32 +405,53 @@ static void controls_page(DrawList *out, Art *a, float k, float alpha) {
     for (int i = 0; i < 2; i++)   // the shoulders sit a little lower, so they stay small on the body
         button(out, a->mv, a->trig[i], a->trig_b[i], k, px[i ? CC_VITA_R : CC_VITA_L],
                py[i ? CC_VITA_R : CC_VITA_L] + 3 * vs, 34 * vs, alpha);
-    // the original's order: its left labels, then Y, X, B, A down the right
-    static const struct { int spot; const char *key, *fallback; float row; } left[] = {
-        {CC_VITA_L, "help.controls.block", "Block", -3.6f},
-        {CC_VITA_DPAD, "help.controls.run", "Run", -1.6f},
-        {CC_VITA_LSTICK, "help.controls.move", "Move", 0.4f},
+    // the original's order: its left labels, then Y, X, B, A down the right. The six buttons
+    // (btn: cc_bind's number) say the action the player has put on them; the chosen one pulses.
+    typedef struct { int spot, btn; const char *key, *fallback; float row; } Row;
+    static const Row left[] = {
+        {CC_VITA_L, 4, NULL, NULL, -3.6f},
+        {CC_VITA_DPAD, -1, "help.controls.run", "Run", -1.6f},
+        {CC_VITA_LSTICK, -1, "help.controls.move", "Move", 0.4f},
     }, right[] = {
-        {CC_VITA_R, "help.controls.magic", "Magic", -3.6f},
-        {CC_VITA_TRIANGLE, "help.controls.heavy", "Heavy Attack", -2.6f},
-        {CC_VITA_SQUARE, "help.controls.light", "Light Attack", -1.6f},
-        {CC_VITA_CIRCLE, "help.controls.item", "Use Item", -0.6f},
-        {CC_VITA_CROSS, "help.controls.jump", "Jump", 0.4f},
-        {CC_VITA_RSTICK, "help.controls.select", "Item Select", 1.4f},
-        {CC_VITA_START, "help.controls.pause", "Pause", 2.4f},
+        {CC_VITA_R, 5, NULL, NULL, -3.6f},
+        {CC_VITA_TRIANGLE, 1, NULL, NULL, -2.6f},
+        {CC_VITA_SQUARE, 0, NULL, NULL, -1.6f},
+        {CC_VITA_CIRCLE, 3, NULL, NULL, -0.6f},
+        {CC_VITA_CROSS, 2, NULL, NULL, 0.4f},
+        {CC_VITA_RSTICK, -1, "help.controls.select", "Item Select", 1.4f},
+        {CC_VITA_START, -1, "help.controls.pause", "Pause", 2.4f},
     };
+    static const char *act_key[CC_ACTIONS] = {"help.controls.light", "help.controls.heavy", "help.controls.jump",
+                                              "help.controls.item", "help.controls.block", "help.controls.magic"};
+    static const char *act_fb[CC_ACTIONS] = {"Light Attack", "Heavy Attack", "Jump", "Use Item", "Block", "Magic"};
     float size = 19 * S, gap = 26 * S;
     float lx = vx - 150 * vs - 16 * S, rx = vx + 150 * vs + 16 * S;
     int nl = sizeof left / sizeof *left, nr = sizeof right / sizeof *right;
     for (int side = 0; side < 2; side++) {
         int n = side ? nr : nl;
+        const Row *rows = side ? right : left;
         for (int i = 0; i < n; i++) {
-            int spot = side ? right[i].spot : left[i].spot;
-            const char *s = side ? words(right[i].key, right[i].fallback) : words(left[i].key, left[i].fallback);
-            float ty = vy + (side ? right[i].row : left[i].row) * gap;
+            int spot = rows[i].spot, btn = rows[i].btn;
+            const char *s = words(rows[i].key, rows[i].fallback);
+            uint32_t c = INK;
+            if (btn >= 0) {
+                for (int act = 0; act < CC_ACTIONS; act++)
+                    if (cc_bind[act] == btn) s = words(act_key[act], act_fb[act]);
+                if (btn == CONTROL_ROWS[hb->row]) {   // as Settings' chosen row
+                    int v = (int)(sinf(hb->time * 10) * 34 + 221) & 255;
+                    c = (uint32_t)v << 16 | (uint32_t)v << 8;
+                }
+            }
+            float ty = vy + rows[i].row * gap;
             float tx = side ? rx : lx;
-            text(out, k, s, tx, ty, size, side ? 1 : 0, INK, alpha);
+            text(out, k, s, tx, ty, size, side ? 1 : 0, c, alpha);
+            if (btn == CONTROL_ROWS[hb->row]) {   // arrows either side: left/right change it
+                float w = as_render_host_text_width(s) * size / 20, x0 = side ? tx : tx - w;
+                text(out, k, "<", x0 - 9 * S, ty, size, 2, c, alpha);
+                text(out, k, ">", x0 + w + 9 * S, ty, size, 2, c, alpha);
+            }
             float ex = tx + (side ? -5 : 5) * S, sx = px[spot], sy = py[spot];
+            if (btn == CONTROL_ROWS[hb->row]) ex += (side ? -10 : 10) * S;   // past the arrow
             // the line stops at the edge of the control
             float r = (spot == CC_VITA_L || spot == CC_VITA_R ? 12 : spot == CC_VITA_DPAD ? 18
                        : spot == CC_VITA_LSTICK || spot == CC_VITA_RSTICK ? 15 : 8.5f) * vs;
@@ -568,7 +615,10 @@ void help_book_build(const HelpBook *hb, Movie *mv, float k, DrawList *out) {
         if (hb->page > 0) dpad_prompt(out, a, k, 0, STAGE_W * 0.16f, words("help.prev", "prev"), alpha);
         if (hb->page < HB_HOWTO_PAGES - 1) dpad_prompt(out, a, k, 1, STAGE_W * 0.66f, words("help.next", "next"), alpha);
     } else if (hb->book == HB_CONTROLS) {
-        controls_page(out, a, k, alpha);
+        controls_page(out, a, k, hb, alpha);
+        dpad_prompt(out, a, k, 1, STAGE_W * 0.14f, words("help.change", "change"), alpha);
+        if (!cc_bind_is_default())
+            prompt(out, a, k, a->buttons[3], a->button_b[3], STAGE_W * 0.46f, words("help.defaults", "Defaults"), alpha);
     } else if (hb->book == HB_ACHIEVEMENTS) {
         achievements_page(out, a, k, hb, alpha);
     } else {
