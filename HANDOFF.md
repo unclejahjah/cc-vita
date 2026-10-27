@@ -359,3 +359,12 @@ another player is up. Done by `as_pin_fn`: inside f_CheckHealthPots, active_play
 such a player (`auto_potion_players` in cc_host.c; the engine keeps the running function's
 arguments in vm->cur_argv). Wi-Fi games use the host's setting (net.rules in START, NET_VERSION 4).
 hosttest: CC_AUTO_POTION=1; HB_ROW=2 with --help shows the row chosen.
+## More controllers (2026-10-27, branch claude/project-thread-qbbjaw)
+- Local co-op on one Vita/PS TV: `pads_read` in main.c reads the ports as SDL does. Player 1 =
+  port 0 (Vita's own; on a PS TV also the first pad) OR'd with port 1; players 2-4 = ports 2-4
+  while `sceCtrlGetControllerPortInfo` says paired (checked every 30 frames). Works with a PS TV's
+  DS3/DS4 and with ds34vita-style plugins that put pads on ports 1-4. ds3vita/ds4vita only feed
+  port 0, so there a pad just drives player 1.
+- Ext2 reads: L1/R1 = the Vita's L/R (block, magic); L2/R2 = item switch (as the right-stick flick).
+- Any local pad's Start opens the pause menu (all pads steer it); `g_pause_port` gets the state.
+- Extra pads are off in a Wi-Fi game (each Vita is one player). Untested on hardware.
