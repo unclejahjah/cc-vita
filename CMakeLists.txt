@@ -21,7 +21,7 @@ set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O2 -Wall -std=gnu11")
 
 include_directories(third_party/libtess2/Include)
 
-set(APP_SOURCES src/main.c src/as_core.c src/as_mc.c src/as_lib.c src/as_render.c src/cc_host.c src/cc_native.c src/hostfont.c src/audio.c src/strtab.c src/cc_buttons.c src/pause_menu.c src/help_book.c)
+set(APP_SOURCES src/main.c src/as_core.c src/as_mc.c src/as_lib.c src/as_render.c src/cc_host.c src/cc_native.c src/hostfont.c src/audio.c src/strtab.c src/cc_buttons.c src/pause_menu.c src/help_book.c src/custom_animal.c)
 
 add_executable(${PROJECT_NAME}
   ${APP_SOURCES}

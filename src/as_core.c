@@ -542,7 +542,13 @@ AsVal as_call(AsVm *vm, AsVal fv, AsVal this_, int argc, AsVal *argv) {
 
 static AsVal as_call_body(AsVm *vm, AsVal fv, AsVal this_, int argc, AsVal *argv) {
     AsObj *f = fv.o;
-    if (f->native) return f->native(vm, this_, argc, argv);
+    if (f->native) {
+        AsObj *prev = vm->native_fn;
+        vm->native_fn = f;
+        AsVal r = f->native(vm, this_, argc, argv);
+        vm->native_fn = prev;
+        return r;
+    }
     if (vm->depth > 200) { as_warn(vm, "call depth limit"); return as_undef(); }
     if (AS_ENV("AS_ARGS") && f->fname && strstr(AS_ENV("AS_ARGS"), f->fname->s)) {   // AS_ARGS="f_Damage,f_Exp"
         char buf[400];
@@ -625,6 +631,16 @@ static AsVal as_call_body(AsVm *vm, AsVal fv, AsVal this_, int argc, AsVal *argv
 AsVal as_call_method(AsVm *vm, AsVal obj, const char *name, int argc, AsVal *argv) {
     AsVal f = as_get(vm, obj, as_atom(vm, name));
     return as_call(vm, f, obj, argc, argv);
+}
+
+AsVal as_call_script(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
+    AsObj *f = vm->native_fn;
+    if (!f || !f->code_len) return as_undef();   // a built-in native has no script version
+    AsNative self = f->native;
+    f->native = NULL;
+    AsVal r = as_call(vm, as_objv(f), this_, argc, argv);
+    f->native = self;
+    return r;
 }
 
 // ---- variables --------------------------------------------------------------------

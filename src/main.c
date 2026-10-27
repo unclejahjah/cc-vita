@@ -31,6 +31,7 @@
 #include "audio.h"
 #include "cc_buttons.h"
 #include "cc_host.h"
+#include "custom_animal.h"
 #include "help_book.h"
 #include "hostfont.h"
 #include "pause_menu.h"
@@ -1577,6 +1578,8 @@ int main(void) {
     sceCtrlSetSamplingMode(SCE_CTRL_MODE_ANALOG);
     log_open();
     log_line("cc_vita started");
+    if (cc_animal_load(DATA_DIR "custom/animal/"))   // optional: a custom animal orb (custom_animal.h)
+        log_line("custom animal orb \"%s\"", cc_animal_name());
     bg_init();
 
     Movie *start = host_movie("MAIN.swf");
@@ -1658,6 +1661,7 @@ new_game:   // the title again after Exit to Main Menu
     vm->sound_stop = vita_sound_stop;
     vm->warn = vita_warn;
     vm->prefetch = vita_prefetch;   // files load on a second thread while the game runs
+    cc_animal_set_active(!g_netgame);   // not in Wi-Fi games: the other machine may not have it
     cc_host_init(vm);
     as_render_init(vm);
     int net_wait = 0;        // Wi-Fi play: passes spent waiting for the others
