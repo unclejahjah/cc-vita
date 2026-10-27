@@ -263,7 +263,7 @@ static Movie *host_loader(AsVm *vm, const char *url) {
                 snprintf(path, sizeof path, "%s/%s", dirpath, de->d_name);
                 closedir(d);
                 Movie *m = swf_load(path, err, sizeof err);
-                if (m) m->is_level = i == 1;
+                if (m) m->is_level = i == 1 || !strcasecmp(base, "QUOFF.swf");   // as the Vita
                 int fixed = m ? cc_repair_level(m) : 0;
     if (m && getenv("CC_DUMP_SHAPE") && !strcmp(base, "MENU.swf")) {
         extern void cc_dump_shape(Movie *m, int cid);
@@ -325,6 +325,8 @@ static int fake_prefetch(AsVm *vm, const char *url) {
     return 0;
 }
 
+static AsMc *g_modes;   // the title's book of modes (CC_MODE_ITEM)
+
 static int as_mode(int argc, char **argv) {
     if (argc < 5) { fprintf(stderr, "usage: %s --as GAME_DIR START.swf out_prefix [frames] [snap_every]\n", argv[0]); return 1; }
     snprintf(game_dir, sizeof game_dir, "%s", argv[2]);
@@ -341,6 +343,7 @@ static int as_mode(int argc, char **argv) {
     vm->trace = host_trace;
     if (getenv("CC_PREFETCH")) vm->prefetch = fake_prefetch;
     extern void cc_host_init(AsVm *vm);
+    if (getenv("CC_GAME_MODE")) cc_game_mode = atoi(getenv("CC_GAME_MODE"));   // 1 Quaff, 3 Arena
     cc_host_init(vm);
     if (getenv("CC_NAMETAGS")) {   // CC_NAMETAGS="Jah,Friend": the players' names (a Wi-Fi game's, or the Vita user's)
         char buf[256];
@@ -418,6 +421,7 @@ static int as_mode(int argc, char **argv) {
             const char *why;
             int open = net_internet(&ext, &why);
             if (open <= 0) printf("net: not on the internet (%s)\n", open ? why : "still asking the router");
+            net.mode = cc_game_mode;   // CC_GAME_MODE: everyone plays that
             net_start();
         } else {
             const char *addr = getenv("NET_ADDR") ? getenv("NET_ADDR") : "127.0.0.1";
@@ -440,6 +444,7 @@ static int as_mode(int argc, char **argv) {
             for (int i = 0; i < 30000 && net.state != NET_PLAYING && net.state != NET_LOST; i++) { net_poll(); usleep(1000); }
         }
         if (net.state != NET_PLAYING) { printf("net: no game (%s)\n", net.error); return 1; }
+        cc_game_mode = net.mode;
         printf("net: playing as port %d, seed %u, delay %d (host %d, joiners %d)\n", net.port, net.seed, net.delay, net.first, net.slowest);
         netplay_begin(vm);
         vm->prefetch = netplay_prefetch;
@@ -607,7 +612,8 @@ static int as_mode(int argc, char **argv) {
             int found;
             AsVal dmg = as_resolve_path(vm, vm->root, "f_Damage", &found);
             AsVal p1 = as_resolve_path(vm, vm->root, "loader.game.game.p1", &found);
-            if (f >= from && (f - from) % kev == 0 && dmg.t == V_OBJ && found) {
+            int to = getenv("CC_AUTOKILL_TO") ? atoi(getenv("CC_AUTOKILL_TO")) : 1 << 30;   // and stop there
+            if (f >= from && f < to && (f - from) % kev == 0 && dmg.t == V_OBJ && found) {
                 for (int i = 1; i <= 30; i++) {
                     char path[64];
                     snprintf(path, sizeof path, "loader.game.game.e_human%d", i);
@@ -654,6 +660,8 @@ static int as_mode(int argc, char **argv) {
         extern double as_time_ms(void);
         double t0 = as_time_ms();
         long long ops0 = vm->ops;
+        cc_volleyball_tick(vm);
+        if (g_modes) cc_modemenu_tick(vm, g_modes);
         if (covering != 1) as_tick(vm);
         double tg = as_time_ms();
         size_t heap0 = vm->heap_count;
@@ -703,6 +711,10 @@ static int as_mode(int argc, char **argv) {
                 printf("ticks %d..%d: average %.2f ms (worst %.2f), %lld actions a tick\n", prof_from, f,
                        prof_ms / (f - prof_from + 1), prof_max, prof_ops / (f - prof_from + 1));
         }
+        if (cc_quit_requested) {   // QuitTo/ChangeMovie: the Vita goes back to the title here
+            printf("  [quit to the menu at %d]\n", f);
+            cc_quit_requested = 0;
+        }
         // CC_SNAP_FROM=frame: no snapshots before that frame
         if ((f % every == 0 && (!getenv("CC_SNAP_FROM") || f >= atoi(getenv("CC_SNAP_FROM")))) || f == frames - 1) {
             static AsMc *panel;
@@ -712,6 +724,22 @@ static int as_mode(int argc, char **argv) {
                     cc_menu_wifi = getenv("CC_MENU_WIFI") != NULL;   // the co-op build's menu
                     panel = cc_menu_attach(vm, vm->root->movie->stage_w * 0.226f, vm->root->movie->stage_h * 0.635f);
                     if (panel) cc_menu_highlight(vm, panel, getenv("CC_MENU_ITEM") ? atoi(getenv("CC_MENU_ITEM")) : 0);
+                    if (panel && getenv("CC_MODE_ITEM")) {   // Local Game's mode menu, its hand on that item
+                        panel->visible = 0;
+                        AsMc *mm = g_modes = cc_modemenu_attach(vm, atof(getenv("CC_MODE_X")), atof(getenv("CC_MODE_Y")));
+                        if (mm && getenv("CC_MODE_SCALE")) {
+                            as_set(vm, as_objv(&mm->obj), as_atom(vm, "_xscale"), as_num(atof(getenv("CC_MODE_SCALE"))));
+                            as_set(vm, as_objv(&mm->obj), as_atom(vm, "_yscale"), as_num(atof(getenv("CC_MODE_SCALE"))));
+                            if (getenv("CC_MODE_DX")) {   // a closer look: moved by (dx, dy) stage px
+                                as_set(vm, as_objv(&mm->obj), as_atom(vm, "_x"), as_num(mm->m.tx / 20 + atof(getenv("CC_MODE_DX"))));
+                                as_set(vm, as_objv(&mm->obj), as_atom(vm, "_y"), as_num(mm->m.ty / 20 + atof(getenv("CC_MODE_DY"))));
+                            }
+                        }
+                        if (mm) cc_modemenu_point(vm, mm, 0, atoi(getenv("CC_MODE_ITEM")));
+                        for (const char *h = getenv("CC_MODE_HIDE"); mm && h && *h; h = strchr(h, ',') ? strchr(h, ',') + 1 : "")
+                            for (int i = 0; i < mm->ndisp; i++)   // CC_MODE_HIDE="depth,...": finding the book's art
+                                if (mm->disp[i].depth == atoi(h) - 16384) { mm->disp[i].m.a = mm->disp[i].m.d = mm->disp[i].m.b = mm->disp[i].m.c = 0; if (mm->disp[i].mc) mm->disp[i].mc->visible = 0; }
+                    }
                 }
             }
             if (getenv("AS_HIDE_SHAPES")) {   // AS_HIDE_SHAPES="cid,cid": hide shapes placed on timelines

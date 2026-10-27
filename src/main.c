@@ -451,7 +451,9 @@ static int find_file(const char *base, char *path, size_t n, int *is_level) {
         SceUID fd = sceIoOpen(path, SCE_O_RDONLY, 0);
         if (fd < 0) continue;
         sceIoClose(fd);
-        *is_level = i == 1;   // levels/: console_version reads true in its scripts (cc_host.c)
+        // levels/ (and All You Can Quaff, whose scripts run the developer's quick start where
+        // it's false): console_version reads true in its scripts (cc_host.c)
+        *is_level = i == 1 || !strcasecmp(base, "QUOFF.swf");
         return 1;
     }
     return 0;
@@ -1151,7 +1153,8 @@ static void game_text(int x, int y, float size, uint32_t rgb, const char *s) {
 // Host a game (this Vita is player 1) or join one heard on the same Wi-Fi, or one over the
 // internet by its game code or from the public games list (lobby.h); the host starts it once
 // someone has joined. Everyone then picks their knight at character select, with Cross.
-enum { W_CLOSED, W_MENU, W_HOST, W_SCAN, W_CODE, W_JOINED, W_PUBLIC };
+// W_MODE: the host picks the game (Local Game's book of modes) before it starts
+enum { W_CLOSED, W_MENU, W_HOST, W_SCAN, W_CODE, W_JOINED, W_PUBLIC, W_MODE };
 // the menu's choices (the public ones only with a list server)
 enum { WI_HOST, WI_HOST_PUBLIC, WI_SCAN, WI_CODE, WI_PUBLIC };
 static struct {
@@ -1263,7 +1266,16 @@ static int wifi_keyboard_done(void) {
     return 1;
 }
 
-// one frame of the lobby: 1 to start the game (everyone's in NET_PLAYING), else 0
+// host: everyone starts now, playing by the host's settings; off the public list once started
+static int wifi_start(void) {
+    net.rules = g_auto_potion ? NET_RULE_AUTO_POTION : 0;
+    if (!net_start()) return 0;
+    lobby_unpublish();
+    return 1;
+}
+
+// one frame of the lobby: 1 to start the game (everyone's in NET_PLAYING), 2 for the host to
+// pick the game first (W_MODE: then net_start), else 0
 static int wifi_update(unsigned pressed) {
     net_poll();
     if (net.state == NET_LOST) {
@@ -1273,6 +1285,7 @@ static int wifi_update(unsigned pressed) {
         g_wifi.page = W_MENU;
     }
     if (net.state == NET_PLAYING) { lobby_unpublish(); return 1; }
+    if (g_wifi.page == W_MODE) return 0;   // the title's book of modes has the buttons
     int sound = -1;
     switch (g_wifi.page) {
     case W_MENU: {
@@ -1301,10 +1314,7 @@ static int wifi_update(unsigned pressed) {
         if (pressed & (SCE_CTRL_START | SCE_CTRL_CROSS)) {
             sound = 1;
             if (n < 2) wifi_note("Waiting for someone to join first");
-            else {
-                net.rules = g_auto_potion ? NET_RULE_AUTO_POTION : 0;   // everyone plays by the host's
-                if (net_start()) { lobby_unpublish(); log_line("Wi-Fi game: delay %d frames", net.delay); return 1; }
-            }
+            else { g_wifi.page = W_MODE; audio_sfx_play("sound_player_select.wav", 1, 0, 0, NULL); return 2; }
         }
         if (pressed & SCE_CTRL_CIRCLE) {
             net_leave();
@@ -1588,7 +1598,10 @@ static int title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, siz
     const char *unavailable = strtab_get("vita.online.unavailable");
     if (!unavailable) unavailable = "Not available on PS Vita";
     AsMc *panel = NULL;
-    int item = 0, message = 0;
+    AsMc *modes = NULL;   // Local Game's book of modes (Castle Crashers, Arena, All You Can Quaff)
+    int item = 0, message = 0, mode = 0;
+    const char *message_text = unavailable;   // shown for a while when message is set
+    cc_game_mode = CC_MODE_STORY;
     static Pause controls;   // Help & Options: the pause menu's Help & Options list and its books
     SceCtrlData pad, old = {0};
     sceCtrlPeekBufferPositive(0, &old, 1);
@@ -1607,8 +1620,15 @@ static int title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, siz
         old = pad;
 #ifdef CC_NET
         if (g_wifi.page != W_CLOSED || net.state != NET_OFF) {
-            if (wifi_update(pressed)) { wifi_game = 1; break; }
-            pressed = 0;
+            int w = wifi_update(pressed);
+            if (w == 1) { wifi_game = 1; break; }
+            if (w == 2 && !modes) {   // the host picks the game: the book of modes over the title
+                modes = cc_modemenu_attach(t, m->stage_w / 2.0f, m->stage_h / 2.0f);
+                mode = 0;
+                if (panel) panel->visible = 0;
+                if (!modes && wifi_start()) { wifi_game = 1; break; }   // no book: the story
+            }
+            if (g_wifi.page != W_MODE) pressed = 0;
         }
 #endif
         if (controls.open) {
@@ -1624,6 +1644,56 @@ static int title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, siz
                 if (!panel) break;   // no panel in this copy of the file: straight into the game
                 cc_menu_highlight(t, panel, g_menu_order[item]);
             }
+        } else if (modes && pressed) {
+            // the hand goes where the pictures are: Castle Crashers on the right page and
+            // Volleyball under it, All You Can Quaff at the top of the left one and Arena under it
+            enum { M_STORY, M_ARENA, M_QUAFF, M_VOLLEY };
+            static const int left[] = {M_QUAFF, M_ARENA, M_QUAFF, M_ARENA}, right[] = {M_STORY, M_VOLLEY, M_STORY, M_VOLLEY},
+                             up[] = {M_STORY, M_QUAFF, M_QUAFF, M_STORY}, down[] = {M_VOLLEY, M_ARENA, M_ARENA, M_VOLLEY};
+            int to = mode;
+            if (pressed & SCE_CTRL_LEFT) to = left[mode];
+            if (pressed & SCE_CTRL_RIGHT) to = right[mode];
+            if (pressed & SCE_CTRL_UP) to = up[mode];
+            if (pressed & SCE_CTRL_DOWN) to = down[mode];
+            if (to != mode) {
+                cc_modemenu_point(t, modes, mode, to);
+                mode = to;
+                audio_sfx_play("sound_toggle_b.wav", 1, 0, 0, &controls);
+            }
+            char vmenu[256];
+            int is_level;
+            if ((pressed & SCE_CTRL_CROSS) && mode == M_VOLLEY && !find_file("VMENU.swf", vmenu, sizeof vmenu, &is_level)) {
+                // the court picker comes from the PS3 version's files, not the PC's
+                message_text = "Volleyball needs VMENU.swf (from the PS3 game) in " DATA_DIR "game";
+                message = 30 * 5;
+                pressed &= ~SCE_CTRL_CROSS;
+            }
+            if (pressed & SCE_CTRL_CROSS) {
+                audio_sfx_play("sound_player_select.wav", 1, 0, 0, &controls);
+                static const int game_mode[CC_MODE_ITEMS] = {CC_MODE_STORY, CC_MODE_ARENA, CC_MODE_QUAFF, CC_MODE_VOLLEYBALL};
+                cc_game_mode = game_mode[mode];
+#ifdef CC_NET
+                if (g_wifi.page == W_MODE) {   // the host's pick: everyone starts it now
+                    net.mode = cc_game_mode;
+                    if (wifi_start()) { log_line("Wi-Fi game: mode %d, delay %d frames", net.mode, net.delay); wifi_game = 1; break; }
+                    wifi_note(net.error);
+                    g_wifi.page = W_HOST;
+                    as_call_method(t, as_objv(&modes->obj), "removeMovieClip", 0, NULL);
+                    modes = NULL;
+                    panel->visible = 1;
+                    cc_game_mode = CC_MODE_STORY;
+                    continue;
+                }
+#endif
+                break;
+            } else if (pressed & SCE_CTRL_CIRCLE) {   // back to the menu (the host: to the lobby)
+                as_call_method(t, as_objv(&modes->obj), "removeMovieClip", 0, NULL);
+                modes = NULL;
+#ifdef CC_NET
+                if (g_wifi.page == W_MODE) g_wifi.page = W_HOST;
+#endif
+                panel->visible = 1;
+            }
         } else if (pressed) {
             int moved = 0;
             if (pressed & (SCE_CTRL_UP | SCE_CTRL_LEFT)) { item = (item + MENU_N - 1) % MENU_N; moved = 1; }
@@ -1635,7 +1705,12 @@ static int title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, siz
             if (pressed & SCE_CTRL_CROSS) {
                 audio_sfx_play("sound_player_select.wav", 1, 0, 0, &controls);
                 int chosen = g_menu_order[item];
-                if (chosen == CC_MENU_PLAY) break;
+                if (chosen == CC_MENU_PLAY) {   // which game: the book of modes, its hand on Castle Crashers
+                    modes = cc_modemenu_attach(t, m->stage_w / 2.0f, m->stage_h / 2.0f);
+                    if (!modes) break;   // no book in this copy of the file: straight into the game
+                    mode = 0;
+                    panel->visible = 0;
+                }
 #ifdef CC_NET
                 if (chosen == CC_MENU_WIFI) {
                     g_wifi.page = W_MENU;
@@ -1663,6 +1738,7 @@ static int title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, siz
         if (acc > 2 * tick_us) acc = 2 * tick_us;
         int ticked = 0;
         while (acc >= tick_us) {
+            if (modes) cc_modemenu_tick(t, modes);
             as_tick(t);
             as_gc(t);
             acc -= tick_us;
@@ -1692,7 +1768,7 @@ static int title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, siz
         vita2d_start_drawing();
         vita2d_clear_screen();
         draw_list(vb);
-        if (panel) {   // the power button that stands for Quit
+        if (panel && !modes) {   // the power button that stands for Quit
             static CcVert tris[4096];
             float k = SCREEN_W / m->stage_w;
             int n = cc_menu_power_button(panel, (Mat){k / 20, 0, 0, k / 20, 0, 0}, tris, 4096);
@@ -1729,12 +1805,12 @@ static int title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, siz
         }
         if (message > 0) {
             message--;
-            int w = vita2d_pgf_text_width(g_font, 1.0f, unavailable);
-            outlined_text((SCREEN_W - w) / 2, SCREEN_H - 24, 1.0f, unavailable);
+            int w = vita2d_pgf_text_width(g_font, 1.0f, message_text);
+            outlined_text((SCREEN_W - w) / 2, SCREEN_H - 24, 1.0f, message_text);
         }
         if (controls.open) pause_draw(&controls);
 #ifdef CC_NET
-        if (g_wifi.page != W_CLOSED) wifi_draw(frame);
+        if (g_wifi.page != W_CLOSED && g_wifi.page != W_MODE) wifi_draw(frame);
         else if (g_wifi.note_timer > 0) {   // why the last Wi-Fi game ended
             g_wifi.note_timer--;
             game_text(SCREEN_W / 2, SCREEN_H - 30, 1.1f, 0xffffff, g_wifi.note);
@@ -1840,6 +1916,9 @@ int main(void) {
 new_game:   // the title again after Exit to Main Menu
     g_npreloaded = 0;
     g_netgame = title_screen(&vb, &cache, cache_mem, cache_bytes, from_game);
+#ifdef CC_NET
+    if (g_netgame) cc_game_mode = net.mode;   // the host's pick, on every Vita
+#endif
 
     AsVm *vm = as_new(vita_loader);
     vm->rand_state = (uint32_t)sceKernelGetProcessTimeWide() ^ 0x9E3779B9u;   // Flash's random() differs each session
@@ -1865,7 +1944,15 @@ new_game:   // the title again after Exit to Main Menu
         snprintf(cc_net_names[0], sizeof cc_net_names[0], "%s", net_local_name());
     }
 #endif
-    vm->root = as_mc_new(vm, start, &start->root, NULL, 0);
+    // All You Can Quaff is a file of its own (its title, joining, the feast, the results); the
+    // story and Arena start in MAIN, which asks GetGameMode() which one it is
+    Movie *first = start;
+    if (cc_game_mode == CC_MODE_QUAFF) {
+        first = vita_loader(NULL, "QUOFF.swf");
+        if (!first) { first = start; cc_game_mode = CC_MODE_STORY; }
+    }
+    log_line("game mode %d (%s)", cc_game_mode, first == start ? "MAIN.swf" : "QUOFF.swf");
+    vm->root = as_mc_new(vm, first, &first->root, NULL, 0);
     cc_loading_attach(vm);   // the game's loading screen over level changes
 
     SceCtrlData pad, old = {0}, pads_old[LOCAL_PADS] = {{0}};
@@ -1993,6 +2080,7 @@ new_game:   // the title again after Exit to Main Menu
             }
 #endif
             SceUInt64 t0 = sceKernelGetProcessTimeWide();
+            cc_volleyball_tick(vm);
             as_tick(vm);
             SceUInt64 t1 = sceKernelGetProcessTimeWide();
             as_gc(vm);
@@ -2005,6 +2093,13 @@ new_game:   // the title again after Exit to Main Menu
             ticked = 1;
         }
         net_wait = stalled ? net_wait + 1 : 0;
+        if (cc_quit_requested && !leaving) {   // the scripts went back to the menus: as Exit to Main Menu
+            cc_quit_requested = 0;
+            leaving = 1;
+            pause.open = 0;
+            EXIT_TRACE("exit: the game quit to the menu");
+        }
+        if (cc_save_requested && cc_game_mode == CC_MODE_VOLLEYBALL) cc_save_requested = 0;   // a mini game
         if (cc_save_requested) {
             cc_save_requested = 0;
 #ifdef CC_NET
@@ -2048,7 +2143,7 @@ new_game:   // the title again after Exit to Main Menu
                 hitch_what = " (colour cache restarted)";
             }
             SceUInt64 t0 = sceKernelGetProcessTimeWide();
-            float k = SCREEN_W / start->stage_w;
+            float k = SCREEN_W / first->stage_w;
             Mat screen = {k / 20, 0, 0, k / 20, 0, 0};
             render_begin(&vb);
 #ifdef CC_NET
@@ -2071,7 +2166,7 @@ new_game:   // the title again after Exit to Main Menu
             sceDisplayWaitVblankStart();
             continue;
         }
-        vita2d_set_clear_color(RGBA8(start->bg[0], start->bg[1], start->bg[2], 255));
+        vita2d_set_clear_color(RGBA8(first->bg[0], first->bg[1], first->bg[2], 255));
         SceUInt64 draw_t0 = sceKernelGetProcessTimeWide();
         draw_frame(&vb, heat_clock);
         if (ticked) heat_clock += 2;   // the shimmer's speed, as when it was drawn 60 times a second
@@ -2147,8 +2242,12 @@ new_game:   // the title again after Exit to Main Menu
             cc_storage_clear();
             cc_storage_load(SAVE_PATH);
             g_netgame = 0;
-        }
+        } else
 #endif
+        if (cc_game_mode == CC_MODE_VOLLEYBALL) {   // the matches leave the story as it was saved
+            cc_storage_clear();
+            cc_storage_load(SAVE_PATH);
+        }
         // Nothing loads while the files go: a file still loading is taken in first. The title's
         // own files stay (as if just preloaded), so the title loads nothing in the background:
         // a background load there (lobby.swf) froze the Vita in the title's drawing, ~3 s in.

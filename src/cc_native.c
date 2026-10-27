@@ -3,10 +3,12 @@
 // the game's variables), only without the interpreter. They're attached by name when
 // MAIN.swf defines the function (as_override).
 #include <math.h>
+#include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
 
 #include "cc_host.h"
+#include "strtab.h"
 #include "as_render.h"
 
 // ---- collision: f_BSPHitTest(x1, y1, x2, y2) and its helpers ------------------------
@@ -358,6 +360,141 @@ AsMc *cc_menu_attach(AsVm *vm, float x, float y) {
         if (b) item_x[i] = b->m.tx / 20;
     }
     return panel;
+}
+
+// ---- Local Game's mode menu ------------------------------------------------------------
+// MENU.swf's "modemenu": a book of the three ways to play (Castle Crashers, Arena, All You
+// Can Quaff) held open, a gloved hand pointing at the chosen one. The executable shows it
+// after Local Game; the hand's timeline has a move from each mode to each other one
+// ("storyarena", "arenaquaff", ...), each ending on a stop.
+static const char *MODE_NAME[CC_MODE_ITEMS] = {"story", "arena", "quaff", "story"};
+#define VOLLEY_HAND 0.25f   // of the way from Castle Crashers' heading down to Volleyball's
+
+// a shape's outline points through m, added to box (min x, min y, max x, max y; twips)
+static void shape_box(const Shape *sh, Mat m, float box[4]) {
+    for (int f = 0; f < sh->nfills + sh->nlines; f++) {
+        const float *pts = f < sh->nfills ? sh->fills[f].pts : sh->lines[f - sh->nfills].pts;
+        int n = f < sh->nfills ? sh->fills[f].npoints : sh->lines[f - sh->nfills].npoints;
+        for (int i = 0; i < n; i++) {
+            float x = m.a * pts[2 * i] + m.c * pts[2 * i + 1] + m.tx, y = m.b * pts[2 * i] + m.d * pts[2 * i + 1] + m.ty;
+            if (x < box[0]) box[0] = x;
+            if (y < box[1]) box[1] = y;
+            if (x > box[2]) box[2] = x;
+            if (y > box[3]) box[3] = y;
+        }
+    }
+}
+
+AsMc *cc_modemenu_attach(AsVm *vm, float x, float y) {
+    AsVal args[3] = {as_strv(as_str(vm, "modemenu")), as_strv(as_str(vm, "modepanel")), as_num(5001)};
+    AsVal p = as_call_method(vm, as_objv(&vm->root->obj), "attachMovie", 3, args);
+    if (p.t != V_OBJ || p.o->type != OBJ_MC) return NULL;
+    AsMc *menu = (AsMc *)p.o;
+    // its first frame names the left page's pictures by string number (805, 390); the copies
+    // of the string table made so far don't agree on those, so the words are set here
+    as_drain(vm);
+    static const char *const words[][3] = {{"txt1", "vita.mode.quaff", "All You Can Quaff"},
+                                           {"txt2", "vita.mode.arena", "Arena"}};
+    for (int i = 0; i < 2; i++) {
+        AsMc *field = panel_path(vm, menu, words[i][0]);
+        const char *w = strtab_get(words[i][1]);
+        if (field) as_set(vm, as_objv(&field->obj), as_atom(vm, "text"), as_strv(as_str(vm, w ? w : words[i][2])));
+    }
+    // the book as tall as the screen allows (the hand below it may go off the bottom),
+    // its middle at (x, y)
+    AsMc *book = panel_child(menu, 2);
+    float bb[4], k = 1;
+    if (book && vm->root->movie) {
+        render_mc_bounds(book, book->m, bb);
+        if (bb[3] > bb[1]) k = vm->root->movie->stage_h * 0.86f * 20 / (bb[3] - bb[1]);
+    } else {
+        bb[0] = bb[1] = bb[2] = bb[3] = 0;
+    }
+    set_num(vm, menu, "_xscale", 100 * k);
+    set_num(vm, menu, "_yscale", 100 * k);
+    set_num(vm, menu, "_x", x - (bb[0] + bb[2]) / 40 * k);
+    set_num(vm, menu, "_y", y - (bb[1] + bb[3]) / 40 * k);
+    // Volleyball (the PS3's mini game) under Castle Crashers: its name where the right page's
+    // scribbles were, in a copy of Castle Crashers' heading
+    // (two lines of them: depths 18 and 19)
+    float sb[4] = {1e9f, 1e9f, -1e9f, -1e9f}, hb[4];
+    for (int i = 0; i < menu->ndisp; i++) {
+        AsDisp *e = &menu->disp[i];
+        const Character *c = &menu->movie->chars[e->cid];
+        if ((e->depth != 18 - 16384 && e->depth != 19 - 16384) || e->kind != DISP_SHAPE || c->type != CHAR_SHAPE) continue;
+        shape_box(c->ptr, e->m, sb);
+        e->m.a = e->m.b = e->m.c = e->m.d = 0;
+    }
+    AsMc *head = panel_path(vm, menu, "txt3");
+    if (sb[2] > sb[0] && head) {
+        // (a text field: its box, through where it stands)
+        if (head->text) {
+            const int32_t *b = head->text->bounds;
+            hb[0] = head->m.a * b[0] + head->m.tx; hb[2] = head->m.a * b[1] + head->m.tx;
+            hb[1] = head->m.d * b[2] + head->m.ty; hb[3] = head->m.d * b[3] + head->m.ty;
+        } else {
+            render_mc_bounds(head, head->m, hb);
+        }
+        AsMc *volley = NULL;
+        for (int i = 0; i < menu->ndisp; i++)
+            if (menu->disp[i].mc == head) volley = as_mc_place_char(vm, menu, menu->disp[i].cid, head->m, head->cx, "txt4", 30);
+        const char *w = strtab_get("vita.mode.volleyball");
+        if (volley) {
+            as_set(vm, as_objv(&volley->obj), as_atom(vm, "text"), as_strv(as_str(vm, w ? w : "Volleyball")));
+            // under it, both in the page's middle (the fields are left-aligned)
+            float dx = 0;
+            AsVal ht = as_get(vm, as_objv(&head->obj), as_atom(vm, "text"));
+            if (head->text && ht.t == V_STR)
+                dx = (as_render_host_text_width(ht.s->s) - as_render_host_text_width(w ? w : "Volleyball")) / 2 *
+                     head->text->height / 20 * head->m.a;
+            set_num(vm, volley, "_x", (head->m.tx + dx) / 20);
+            set_num(vm, volley, "_y", head->m.ty / 20 + ((sb[1] + sb[3]) - (hb[1] + hb[3])) / 40);
+        }
+        // how far the hand goes down from Castle Crashers to point at it
+        AsMc *hand = panel_path(vm, menu, "hand");
+        if (hand) {
+            set_num(vm, menu, "cc_hand_y", hand->m.ty / 20);
+            set_num(vm, menu, "cc_hand_dy", ((sb[1] + sb[3]) - (hb[1] + hb[3])) / 40 * VOLLEY_HAND);
+        }
+    }
+    // the dark veil behind it was made for a 4:3 screen: over all of this one
+    for (int i = 0; i < menu->ndisp; i++) {
+        AsDisp *e = &menu->disp[i];
+        if (e->depth != 1 - 16384 || e->kind != DISP_SHAPE) continue;
+        e->m.a *= 4; e->m.b *= 4; e->m.c *= 4; e->m.d *= 4; e->m.tx *= 4; e->m.ty *= 4;
+    }
+    return menu;
+}
+
+// Volleyball has no place of its own on the hand's timeline: the hand points at Castle
+// Crashers and slides down from there (cc_modemenu_tick)
+void cc_modemenu_point(AsVm *vm, AsMc *menu, int from, int to) {
+    AsMc *hand = panel_path(vm, menu, "hand");
+    if (!hand || from == to || from < 0 || to < 0 || from >= CC_MODE_ITEMS || to >= CC_MODE_ITEMS) return;
+    set_num(vm, menu, "cc_hand_to", to == 3);
+    if (from == 3) from = 0;
+    if (to == 3) to = 0;
+    if (from == to) return;
+    char label[16];
+    snprintf(label, sizeof label, "%s%s", MODE_NAME[from], MODE_NAME[to]);
+    AsVal arg = as_strv(as_str(vm, label));
+    as_call_method(vm, as_objv(&hand->obj), "gotoAndPlay", 1, &arg);
+}
+
+void cc_modemenu_tick(AsVm *vm, AsMc *menu) {
+    AsVal o = as_objv(&menu->obj);
+    AsVal y = as_get(vm, o, as_atom(vm, "cc_hand_y"));
+    AsMc *hand = panel_path(vm, menu, "hand");
+    if (!hand || y.t != V_NUM) return;
+    double at = as_tonum(vm, as_get(vm, o, as_atom(vm, "cc_hand_at")));
+    double to = as_tonum(vm, as_get(vm, o, as_atom(vm, "cc_hand_to")));
+    if (at != at) at = 0;   // (NaN: not set yet)
+    if (to != to) to = 0;
+    if (at == to) return;
+    at += (to - at) * 0.35;   // as quick as the hand's own moves
+    if (fabs(to - at) < 0.01) at = to;
+    set_num(vm, menu, "cc_hand_at", at);
+    set_num(vm, hand, "_y", y.n + at * as_tonum(vm, as_get(vm, o, as_atom(vm, "cc_hand_dy"))));
 }
 
 // the power button's square, in the panel's twips: on the (hidden) Quit button's bottom-left
