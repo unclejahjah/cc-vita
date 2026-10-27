@@ -22,3 +22,6 @@ Then put that address in `CC_LOBBY_URL` (`src/cc_host.h`) and build, or (no rebu
 as the first line of `ux0:data/CastleCrashers/lobby.txt` on the Vita.
 
 Check it: `curl https://cc-vita-lobby.<you>.workers.dev/list?v=3` (empty when nobody hosts).
+
+Live since 2026-10-27: https://cc-vita-lobby.castlecrashersvita.workers.dev (Jah's account; plain
+http:// works too, for a Vita that won't take the https certificate).
