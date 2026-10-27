@@ -48,7 +48,7 @@ int cc_menu_power_button(AsMc *panel, Mat screen, CcVert *out, int max);
 
 // The public games list's server (tools/lobby/, src/lobby.h): "" for none.
 // ux0:data/CastleCrashers/lobby.txt overrides it.
-#define CC_LOBBY_URL ""
+#define CC_LOBBY_URL "https://cc-vita-lobby.castlecrashersvita.workers.dev"
 int cc_menu_beta_place(AsMc *panel, Mat screen, Mat *out);
 // The chosen button's highlight frame: hidden in the panel, the app draws it last (over the
 // power button) by rendering it on its own.
