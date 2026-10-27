@@ -123,6 +123,37 @@ static AsVal native_check_line_hit(AsVm *vm, AsVal this_, int argc, AsVal *argv)
     return as_num(check_line_hit(&b, as_tonum(vm, ARG(0))));
 }
 
+// ---- f_SpawnBear(x, y, enemy_level): bears start inside the walls ----------------------
+// Tall Grass Field's bear boss sends helpers in from main.right + 150 at the boss's _y
+// (-346) + random(200). During the boss's entrance the camera stands so that this lands
+// where the top wall dips to -333 (x 1223..1567), so now and then a bear started above the
+// wall and walked along the top of the field, out of reach. Players get pulled back in by
+// f_CheckInsideBSP; enemies never do. Here a bear with no wall above it (nothing hit on
+// the way up) starts just under the first wall below it instead; the script does the rest.
+static AsVal native_spawn_bear(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
+    AsVal fv = as_get(vm, as_objv(&vm->root->obj), as_atom(vm, "f_SpawnBear"));
+    if (fv.t != V_OBJ || fv.o->native != native_spawn_bear) return as_undef();
+    AsVal a[3] = {ARG(0), ARG(1), ARG(2)};
+    Bsp b;
+    bsp_begin(vm, &b);
+    b.wl = as_undef();   // the scripts' bsp_working_line stays as it was
+    double x = as_tonum(vm, a[0]), y = as_tonum(vm, a[1]);
+    if (b.bsp && !isnan(x) && !isnan(y)) {
+        b.x1 = b.x2 = x, b.y1 = y, b.y2 = y - 1000;
+        if (!truthy(check_node(&b, 0, 0))) {
+            b.y2 = y + 1000;
+            double r = check_node(&b, 0, 0);
+            if (truthy(r)) a[1] = as_num(y + r * 1000 + 10);
+        }
+    }
+    // the script's own f_SpawnBear with the (maybe) moved y
+    AsObj *f = fv.o;
+    f->native = NULL;
+    AsVal r = as_call(vm, fv, this_, argc < 3 ? 3 : argc, a);
+    f->native = native_spawn_bear;
+    return r;
+}
+
 // ---- f_GetDefaultWeapon(hud): the weapon each character starts with --------------------
 // Same table as the script. One addition: f_LoadCharacterData calls it right after
 // reading the saved weapon and just before the four stats, and a character that was
@@ -537,6 +568,7 @@ void cc_native_root_functions(AsVm *vm, AsObj *root) {
 void cc_native_init(AsVm *vm) {
     as_override(vm, "f_GetDefaultWeapon", native_get_default_weapon);
     as_override(vm, "f_GetButtonArt", native_get_button_art);
+    as_override(vm, "f_SpawnBear", native_spawn_bear);
     A_aBSP = as_atom(vm, "a_BSP");
     A_wl = as_atom(vm, "bsp_working_line");
     A_x1 = as_atom(vm, "x1");

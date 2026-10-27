@@ -339,3 +339,14 @@ and Help & Options; Host a game / Join a game (hosts found by UDP broadcast on t
   The state checks in the inputs are all of frame k - slowest - 1 (the host keeps a few old
   ones). NET_VERSION 3. tools: a lag proxy (Python, delays TCP+UDP both ways) checked 200 ms. hosttest: NET_CODE, NET_DELAY,
   UPNP_ROUTER (and a pretend router was used to test it: SSDP + SOAP in Python).
+
+### Bears walking along the top of Tall Grass Field (2026-10-27, thread "Fix bears leaving grassy fields")
+- LEVEL20 = Tall Grass Field. The bear boss (`boss` clip, cid 368, at 769,-346) sends helpers
+  from `main.right + 150` at `_parent._y + random(200)` (-346..-147). During the boss entrance
+  main.right is 1196.7, so they start at x ~1347, where the top wall dips to -333
+  (1223..1567): about 1 in 15 started above the wall and walked along the top, out of reach.
+  Players are pulled back by f_CheckInsideBSP; enemies never were.
+- Fix: native f_SpawnBear wrapper (cc_native.c): a bear with no wall above its spawn point
+  starts 10 under the first wall below it, then the script's own f_SpawnBear runs. Check:
+  `CC_CALL "900:f_ChangeLevel:'../level20/level20.swf,1100:f_SpawnBear:#1346|#-345|#3"`
+  (before: stuck at y -355; after: starts at -323 and walks into the field).
