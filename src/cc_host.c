@@ -32,6 +32,18 @@ void cc_port_keys(int port, uint32_t buttons) {
         if (buttons >> b & 1) cc_keys[PORT_KEYS[port - 1][b]] = 1;
 }
 
+int cc_bind[CC_ACTIONS] = {0, 1, 2, 3, 4, 5};
+
+void cc_bind_reset(void) {
+    for (int a = 0; a < CC_ACTIONS; a++) cc_bind[a] = a;
+}
+
+int cc_bind_is_default(void) {
+    for (int a = 0; a < CC_ACTIONS; a++)
+        if (cc_bind[a] != a) return 0;
+    return 1;
+}
+
 int cc_net_port;
 char cc_net_names[4][32];
 

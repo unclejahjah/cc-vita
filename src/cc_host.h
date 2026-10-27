@@ -18,6 +18,15 @@ enum {
 };
 void cc_port_keys(int port, uint32_t buttons);
 
+// Help & Options' Controls page lets the player move the six game actions between the six
+// buttons. cc_bind[action] is the button it's on, numbered as the prompt icons' frames:
+// 0 Square, 1 Triangle, 2 Cross, 3 Circle, 4 L, 5 R. The default (the original PlayStation
+// layout) is the action's own number. Menus keep Cross to accept and Circle to go back.
+enum { CC_ACT_LIGHT, CC_ACT_HEAVY, CC_ACT_JUMP, CC_ACT_ITEM, CC_ACT_BLOCK, CC_ACT_MAGIC, CC_ACTIONS };
+extern int cc_bind[CC_ACTIONS];
+void cc_bind_reset(void);
+int cc_bind_is_default(void);
+
 // Wi-Fi play: which port this Vita's player is (1..4; 0 when not in a Wi-Fi game) and every
 // port's player name ("" for nobody). Achievements count for this Vita's player only.
 extern int cc_net_port;
