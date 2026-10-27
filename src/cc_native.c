@@ -3,10 +3,12 @@
 // the game's variables), only without the interpreter. They're attached by name when
 // MAIN.swf defines the function (as_override).
 #include <math.h>
+#include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
 
 #include "cc_host.h"
+#include "strtab.h"
 #include "as_render.h"
 
 // ---- collision: f_BSPHitTest(x1, y1, x2, y2) and its helpers ------------------------
@@ -326,6 +328,60 @@ AsMc *cc_menu_attach(AsVm *vm, float x, float y) {
         if (b) item_x[i] = b->m.tx / 20;
     }
     return panel;
+}
+
+// ---- Local Game's mode menu ------------------------------------------------------------
+// MENU.swf's "modemenu": a book of the three ways to play (Castle Crashers, Arena, All You
+// Can Quaff) held open, a gloved hand pointing at the chosen one. The executable shows it
+// after Local Game; the hand's timeline has a move from each mode to each other one
+// ("storyarena", "arenaquaff", ...), each ending on a stop.
+static const char *MODE_NAME[CC_MODE_ITEMS] = {"story", "arena", "quaff"};
+
+AsMc *cc_modemenu_attach(AsVm *vm, float x, float y) {
+    AsVal args[3] = {as_strv(as_str(vm, "modemenu")), as_strv(as_str(vm, "modepanel")), as_num(5001)};
+    AsVal p = as_call_method(vm, as_objv(&vm->root->obj), "attachMovie", 3, args);
+    if (p.t != V_OBJ || p.o->type != OBJ_MC) return NULL;
+    AsMc *menu = (AsMc *)p.o;
+    // its first frame names the left page's pictures by string number (805, 390); the copies
+    // of the string table made so far don't agree on those, so the words are set here
+    as_drain(vm);
+    static const char *const words[][3] = {{"txt1", "vita.mode.quaff", "All You Can Quaff"},
+                                           {"txt2", "vita.mode.arena", "Arena"}};
+    for (int i = 0; i < 2; i++) {
+        AsMc *field = panel_path(vm, menu, words[i][0]);
+        const char *w = strtab_get(words[i][1]);
+        if (field) as_set(vm, as_objv(&field->obj), as_atom(vm, "text"), as_strv(as_str(vm, w ? w : words[i][2])));
+    }
+    // the book as tall as the screen allows (the hand below it may go off the bottom),
+    // its middle at (x, y)
+    AsMc *book = panel_child(menu, 2);
+    float bb[4], k = 1;
+    if (book && vm->root->movie) {
+        render_mc_bounds(book, book->m, bb);
+        if (bb[3] > bb[1]) k = vm->root->movie->stage_h * 0.86f * 20 / (bb[3] - bb[1]);
+    } else {
+        bb[0] = bb[1] = bb[2] = bb[3] = 0;
+    }
+    set_num(vm, menu, "_xscale", 100 * k);
+    set_num(vm, menu, "_yscale", 100 * k);
+    set_num(vm, menu, "_x", x - (bb[0] + bb[2]) / 40 * k);
+    set_num(vm, menu, "_y", y - (bb[1] + bb[3]) / 40 * k);
+    // the dark veil behind it was made for a 4:3 screen: over all of this one
+    for (int i = 0; i < menu->ndisp; i++) {
+        AsDisp *e = &menu->disp[i];
+        if (e->depth != 1 - 16384 || e->kind != DISP_SHAPE) continue;
+        e->m.a *= 4; e->m.b *= 4; e->m.c *= 4; e->m.d *= 4; e->m.tx *= 4; e->m.ty *= 4;
+    }
+    return menu;
+}
+
+void cc_modemenu_point(AsVm *vm, AsMc *menu, int from, int to) {
+    AsMc *hand = panel_path(vm, menu, "hand");
+    if (!hand || from == to || from < 0 || to < 0 || from >= CC_MODE_ITEMS || to >= CC_MODE_ITEMS) return;
+    char label[16];
+    snprintf(label, sizeof label, "%s%s", MODE_NAME[from], MODE_NAME[to]);
+    AsVal arg = as_strv(as_str(vm, label));
+    as_call_method(vm, as_objv(&hand->obj), "gotoAndPlay", 1, &arg);
 }
 
 // the power button's square, in the panel's twips: on the (hidden) Quit button's bottom-left

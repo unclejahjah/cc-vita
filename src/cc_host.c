@@ -90,6 +90,23 @@ static AsVal ret_zero(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
     return as_num(0);
 }
 
+// GetGameMode(): what Local Game's mode menu picked (CC_MODE_*). The executable answers
+// 0 for the story, 1 for All You Can Quaff, 3 for Arena.
+int cc_game_mode;
+// QuitTo(where) / ChangeMovie(file): a mini game is over and wants the menus back
+int cc_quit_requested;
+
+static AsVal game_mode(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
+    (void)vm; (void)this_; (void)argc; (void)argv;
+    return as_num(cc_game_mode);
+}
+
+static AsVal quit_to(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
+    (void)vm; (void)this_; (void)argc; (void)argv;
+    cc_quit_requested = 1;
+    return as_undef();
+}
+
 // GetLocalSecond(): the clock's seconds (0-59); the loading screen picks its hint with it
 static AsVal local_second(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
     (void)this_; (void)argc; (void)argv;
@@ -887,7 +904,12 @@ void cc_host_init(AsVm *vm) {
     cc_set_flash_global(vm, "g_bAllowHiddenCharacters", as_bool(1));
     cc_own_dlc_characters();
     cc_own_dlc_items();
-    as_def_fn(vm, g, "GetGameMode", ret_zero);
+    as_def_fn(vm, g, "GetGameMode", game_mode);
+    // QuitTo("menu.cok6") / ChangeMovie(quitto): back to the executable's menus (backing out of
+    // character select, the end of a one-player Arena match, leaving All You Can Quaff)
+    cc_quit_requested = 0;
+    as_def_fn(vm, g, "QuitTo", quit_to);
+    as_def_fn(vm, g, "ChangeMovie", quit_to);
     as_def_fn(vm, g, "GetWidescreen", ret_true);   // the Vita screen is 16:9
     as_def_fn(vm, g, "IsPalMode", ret_false);
     as_def_fn(vm, g, "GetGore", ret_true);
