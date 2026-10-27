@@ -23,6 +23,12 @@ void cc_port_keys(int port, uint32_t buttons);
 extern int cc_net_port;
 extern char cc_net_names[4][32];
 
+// Help & Options' Auto Potion: a hit that would end a player whose selected item is the
+// health potion drinks one instead. The original does that (whatever's selected) only while
+// another player is still up (f_CheckHealthPots: active_players > 1); on, the last one up
+// drinks it too. In a Wi-Fi game it's the host's choice, the same on every Vita.
+void cc_set_auto_potion(AsVm *vm, int on);
+
 // The executable-side settings the scripts read with GetFlashGlobal.
 AsVal cc_flash_global(AsVm *vm, const char *name);
 void cc_set_flash_global(AsVm *vm, const char *name, AsVal v);

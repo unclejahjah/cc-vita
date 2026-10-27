@@ -831,6 +831,20 @@ static const char *text_for_number(AsVm *vm, int n) {
     return strtab_number(n);
 }
 
+// Auto Potion: inside f_CheckHealthPots(zone), active_players reads 2 when it's on and zone's
+// selected item is the potion (equippeditem 9), so the last player up drinks it too
+static int auto_potion;
+static AsVal auto_potion_players(AsVm *vm) {
+    if (!auto_potion || vm->cur_argc < 1) return as_undef();
+    AsVal item = as_get(vm, vm->cur_argv[0], as_atom(vm, "equippeditem"));
+    return as_tonum(vm, item) == 9 ? as_num(2) : as_undef();
+}
+
+void cc_set_auto_potion(AsVm *vm, int on) {
+    (void)vm;
+    auto_potion = on;
+}
+
 void cc_host_init(AsVm *vm) {
     bsp_pending = 0;   // a new game: nothing left over from the last one
     memset(cursor, 0, sizeof cursor);
@@ -867,6 +881,7 @@ void cc_host_init(AsVm *vm) {
         // f_BSPLoadLevel (bsp_load_level below).
         as_pin_in_levels(vm, "console_version", as_bool(1));
     }
+    as_pin_fn(vm, "active_players", "f_CheckHealthPots", auto_potion_players);   // Auto Potion
     as_def_fn(vm, vm->global, "f_BSPLoadLevel", bsp_load_level);
     AsObj *g = vm->global;
     AsObj *key = as_obj_new(vm, OBJ_PLAIN, vm->object_proto);
