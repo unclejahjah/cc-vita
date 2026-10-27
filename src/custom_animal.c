@@ -40,6 +40,7 @@ static struct {
     int every;               // its own ability: every this many frames (30 a second)...
     float heal;              // ...heals its owner this share of their health (0.05 = 5%)
     int gold;                // ...and drops this many coins
+    float xp;                // extra experience, as Giraffey's (0.1 = 10%)
     float size, mirror;
     Bitmap bm;
     BitmapFill fill;         // the picture on the unit square
@@ -227,6 +228,7 @@ int cc_animal_load(const char *dir) {
         if (xml_attr(xml, "every", v, sizeof v) && atof(v) >= 0.5 && atof(v) <= 600) g.every = (int)(atof(v) * 30);
         if (xml_attr(xml, "heal", v, sizeof v) && atof(v) > 0 && atof(v) <= 100) g.heal = (float)atof(v) / 100;
         if (xml_attr(xml, "gold", v, sizeof v) && atoi(v) > 0) g.gold = atoi(v) < 10 ? atoi(v) : 10;
+        if (xml_attr(xml, "xp", v, sizeof v) && atof(v) > 0 && atof(v) <= 100) g.xp = (float)atof(v) / 100;
         if (xml_attr(xml, "size", v, sizeof v) && atof(v) > 0.1 && atof(v) < 4) g.size = (float)atof(v);
         if (xml_attr(xml, "facing", v, sizeof v) && !strcmp(v, "left")) g.mirror = 1;
         if (xml_attr(xml, "outline", v, sizeof v) && atoi(v) > 0) outline = atoi(v) < 8 ? atoi(v) : 8;
@@ -340,6 +342,19 @@ static AsVal set_animal_timer(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
     return r;
 }
 
+// f_Exp(player, amount): Giraffey's owner gets 10% more (the script checks its number, 11); the
+// custom pet's owner gets its xp share more.
+static AsVal exp_gain(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
+    if (g.xp && argc > 1 && argv[0].t == V_OBJ) {
+        AsVal pet = get(vm, argv[0], "pet");
+        if (pet.t == V_OBJ && as_tonum(vm, get(vm, pet, "animal_type")) == CC_CUSTOM_ANIMAL) {
+            AsVal args[2] = {argv[0], as_num(as_tonum(vm, argv[1]) * (1 + g.xp))};
+            return as_call_script(vm, this_, 2, args);
+        }
+    }
+    return as_call_script(vm, this_, argc, argv);
+}
+
 // f_AssignAnimal(player, type): with the custom pet off (Wi-Fi games), its owner goes without.
 static AsVal assign_animal(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
     if (argc > 1 && as_tonum(vm, argv[1]) == CC_CUSTOM_ANIMAL && !cc_animal_type()) return as_num(0);
@@ -378,4 +393,5 @@ void cc_animal_init(AsVm *vm) {
     as_override(vm, "f_SetAnimalTimer", set_animal_timer);
     as_override(vm, "f_AssignAnimal", assign_animal);
     as_override(vm, "f_InitAnimals", init_animals);
+    if (g.xp) as_override(vm, "f_Exp", exp_gain);
 }

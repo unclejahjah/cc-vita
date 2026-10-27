@@ -18,6 +18,7 @@
 //   every        its own ability: every this many seconds it...
 //   heal         ...heals its owner this percent of their health (the Troll pet's is 1)
 //   gold         ...drops this many coins (1-10; the Golden Whale's drops 1)
+//   xp           percent more experience for its owner (Giraffey's is 10)
 //   size         how big it is drawn, 1 = a pet's usual size
 //   facing       "right" (default) or "left": the way the picture looks
 //   outline      a dark line this many texels wide drawn around it (1-8; the picture is boxed
