@@ -15,6 +15,7 @@
 #include "../src/hostfont.h"
 #include "../src/cc_buttons.h"
 #include "../src/cc_host.h"
+#include "../src/custom_char.h"
 #include "../src/pause_menu.h"
 #include "../src/help_book.h"
 #include "../src/strtab.h"
@@ -342,6 +343,10 @@ static int as_mode(int argc, char **argv) {
     vm->warn = host_warn;
     vm->trace = host_trace;
     if (getenv("CC_PREFETCH")) vm->prefetch = fake_prefetch;
+    // CC_CUSTOM_DIR=dir/: a painted character, as ux0:data/CastleCrashers/custom/ on the Vita
+    if (getenv("CC_CUSTOM_DIR") && cc_custom_load(getenv("CC_CUSTOM_DIR")))
+        printf("custom character \"%s\" (character %d, fights like %d)\n", cc_custom_name(), cc_custom_p_type(),
+               cc_custom_base());
     extern void cc_host_init(AsVm *vm);
     if (getenv("CC_GAME_MODE")) cc_game_mode = atoi(getenv("CC_GAME_MODE"));   // 1 Quaff, 3 Arena
     cc_host_init(vm);
