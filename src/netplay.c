@@ -48,13 +48,18 @@ int netplay_step(AsVm *vm, uint32_t t, NetInput *mine, int no_start) {
     const NetFrame *f = net_frame(t);
     if (!f) return 0;
     mine->loads = g_done;
-    // the state after frame t - 1, and the check that goes with these buttons: every Vita's for
-    // frame k is of the state after k - slowest - 1 (the host's buttons go out sooner than the
-    // others', so it sends an older one)
+    // the state after frame t - 1, and the checks that go with these buttons: every Vita's for
+    // frame k is of the state after k - NET_MAX_DELAY - 1, so it's there whatever the delay
     if (t > 0) g_checks[(t - 1) % CHECKS] = netplay_check(vm);
-    int k = (int)(t + net.delay) - net.slowest - 1;
-    mine->check = k >= 0 && (int)t - 1 - k < CHECKS ? g_checks[k % CHECKS] : 0;
-    net_submit(t + net.delay, mine);
+    net_adapt(t);
+    // up to frame t + delay: one frame, none when the delay has just come down by one, two
+    // when it went up (the same buttons twice)
+    for (uint32_t s = net_submitted(); s <= t + net.delay; s++) {
+        int k = (int)s - NET_MAX_DELAY - 1;
+        mine->check = k >= 0 && k <= (int)t - 1 && (int)t - 1 - k < CHECKS ? g_checks[k % CHECKS] : 0;
+        net_submit(s, mine);
+        if (net_submitted() <= s) break;   // (not taken)
+    }
     memset(cc_keys, 0, sizeof cc_keys);
     int first = 1;
     for (int p = 0; p < NET_PLAYERS; p++) {
