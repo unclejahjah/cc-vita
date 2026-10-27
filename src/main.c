@@ -725,6 +725,66 @@ static uint32_t pad_buttons(const SceCtrlData *pad, int in_game) {
     return k;
 }
 
+// ---- more controllers: a PS TV's paired pads, or a plugin's (ds34vita) ---------------
+// The ports as SDL reads them: port 0 is the Vita's own buttons (on a PS TV the first pad's
+// too), port 1 the first pad, ports 2-4 players 2-4. Player 1 is ports 0 and 1 together, in
+// case a plugin doesn't mirror its first pad on port 0. The Ext2 reads tell L1/R1 from L2/R2.
+
+#define LOCAL_PADS 4
+static SceCtrlData g_pads[LOCAL_PADS];   // this frame's, player 1 to 4
+static int g_pad_on[LOCAL_PADS];         // paired (player 1 always)
+
+// an Ext2 read as the Vita's own: L1/R1 are its L/R (block, magic); L2/R2 switch items as the
+// right stick's flick does, so they push it to the side
+static int pad_read_ext(int port, SceCtrlData *p) {
+    if (sceCtrlPeekBufferPositiveExt2(port, p, 1) < 0) return 0;
+    unsigned b = p->buttons, o = b & ~(SCE_CTRL_L1 | SCE_CTRL_R1 | SCE_CTRL_L2 | SCE_CTRL_R2 | SCE_CTRL_L3 | SCE_CTRL_R3);
+    if (b & SCE_CTRL_L1) o |= SCE_CTRL_LTRIGGER;
+    if (b & SCE_CTRL_R1) o |= SCE_CTRL_RTRIGGER;
+    if (b & SCE_CTRL_L2) p->rx = 0;
+    if (b & SCE_CTRL_R2) p->rx = 255;
+    p->buttons = o;
+    return 1;
+}
+
+static uint8_t stick_far(uint8_t a, uint8_t b) { return abs(a - 128) >= abs(b - 128) ? a : b; }
+
+// player 1 into *p1 and g_pads[0]; players 2-4 into g_pads[] while their pads are paired
+// (not in a Wi-Fi game, where each Vita is one player)
+static void pads_read(SceCtrlData *p1, int extra) {
+    static int frames;
+    static SceCtrlPortInfo info;
+    if (frames++ % 30 == 0 && sceCtrlGetControllerPortInfo(&info) < 0) memset(&info, 0, sizeof info);
+    if (!pad_read_ext(0, p1)) sceCtrlPeekBufferPositive(0, p1, 1);
+    SceCtrlData q;
+    if (info.port[1] != SCE_CTRL_TYPE_UNPAIRED && pad_read_ext(1, &q)) {
+        p1->buttons |= q.buttons;
+        p1->lx = stick_far(p1->lx, q.lx);
+        p1->ly = stick_far(p1->ly, q.ly);
+        p1->rx = stick_far(p1->rx, q.rx);
+        p1->ry = stick_far(p1->ry, q.ry);
+    }
+    g_pads[0] = *p1;
+    g_pad_on[0] = 1;
+    for (int i = 1; i < LOCAL_PADS; i++) {
+        g_pad_on[i] = extra && info.port[i + 1] != SCE_CTRL_TYPE_UNPAIRED && pad_read_ext(i + 1, &g_pads[i]);
+        if (!g_pad_on[i]) {
+            memset(&g_pads[i], 0, sizeof g_pads[i]);
+            g_pads[i].lx = g_pads[i].ly = g_pads[i].rx = g_pads[i].ry = 128;
+        }
+    }
+}
+
+// menus: the buttons pressed since last frame, with the stick moving once per push too
+static unsigned pad_nav(const SceCtrlData *pad, const SceCtrlData *old) {
+    unsigned nav = pad->buttons & ~old->buttons;
+    if (pad->ly < 48 && old->ly >= 48) nav |= SCE_CTRL_UP;
+    if (pad->ly > 208 && old->ly <= 208) nav |= SCE_CTRL_DOWN;
+    if (pad->lx < 48 && old->lx >= 48) nav |= SCE_CTRL_LEFT;
+    if (pad->lx > 208 && old->lx <= 208) nav |= SCE_CTRL_RIGHT;
+    return nav;
+}
+
 // ---- pause menu ----------------------------------------------------------------------
 // The original draws its pause menu in castle.exe (PAUSE.swf only holds the art) and
 // tells the scripts through g_nPort<n>State: 2 paused, 1 playing, 3 quit to the map.
@@ -850,9 +910,13 @@ static void pause_build_art(Pause *ps) {
 // the state + 1, 0 none waiting)
 static int g_netgame, g_net_state;
 
+static int g_pause_port = 1;   // the local player whose Start opened the menu
+
 static void pause_set_state(AsVm *vm, int state) {
-    if (g_netgame) g_net_state = state + 1;
-    else cc_set_flash_global(vm, "g_nPort1State", as_num(state));
+    if (g_netgame) { g_net_state = state + 1; return; }
+    char name[32];
+    snprintf(name, sizeof name, "g_nPort%dState", g_pause_port);
+    cc_set_flash_global(vm, name, as_num(state));
 }
 
 // the achievements page over the pause book
@@ -1595,6 +1659,7 @@ int main(void) {
     g_indices = gpu_alloc(sizeof(uint16_t) * MAX_BATCH, &g_index_block);
     for (int i = 0; g_indices && i < MAX_BATCH; i++) g_indices[i] = i;
     sceCtrlSetSamplingMode(SCE_CTRL_MODE_ANALOG);
+    sceCtrlSetSamplingModeExt(SCE_CTRL_MODE_ANALOG);   // the other pads (Ext2 reads)
     log_open();
     log_line("cc_vita started");
     bg_init();
@@ -1699,7 +1764,7 @@ new_game:   // the title again after Exit to Main Menu
     vm->root = as_mc_new(vm, start, &start->root, NULL, 0);
     cc_loading_attach(vm);   // the game's loading screen over level changes
 
-    SceCtrlData pad, old = {0};
+    SceCtrlData pad, old = {0}, pads_old[LOCAL_PADS] = {{0}};
     int overlay = 0;
     static Pause pause;
     SceUInt64 last = sceKernelGetProcessTimeWide(), acc = 0, prev = last;
@@ -1722,14 +1787,21 @@ new_game:   // the title again after Exit to Main Menu
 
     while (!exit_to_title) {
         if (!leaving) preload_step(PRELOAD_GAME);
-        sceCtrlPeekBufferPositive(0, &pad, 1);
+        pads_read(&pad, !g_netgame);
         unsigned pressed = pad.buttons & ~old.buttons;
-        unsigned nav = pressed;   // menus: the stick moves once per push too
-        if (pad.ly < 48 && old.ly >= 48) nav |= SCE_CTRL_UP;
-        if (pad.ly > 208 && old.ly <= 208) nav |= SCE_CTRL_DOWN;
-        if (pad.lx < 48 && old.lx >= 48) nav |= SCE_CTRL_LEFT;
-        if (pad.lx > 208 && old.lx <= 208) nav |= SCE_CTRL_RIGHT;
+        unsigned nav = pad_nav(&pad, &old);   // menus: the stick moves once per push too
         old = pad;
+        // players 2-4's pads: their Start opens the pause menu too, and they all steer it
+        unsigned others_start = 0, others_nav = 0, held = pad.buttons;
+        for (int i = 1; i < LOCAL_PADS; i++) {
+            if (g_pad_on[i]) {
+                unsigned n = pad_nav(&g_pads[i], &pads_old[i]);
+                others_nav |= n;
+                if ((n & SCE_CTRL_START) && !others_start) others_start = i + 1;
+                held |= g_pads[i].buttons;
+            }
+            pads_old[i] = g_pads[i];
+        }
         int debug = pad.buttons & SCE_CTRL_SELECT;
         if (debug && (pressed & SCE_CTRL_START)) break;
         if (debug && (pressed & SCE_CTRL_UP)) overlay = !overlay;
@@ -1737,27 +1809,31 @@ new_game:   // the title again after Exit to Main Menu
         int level = in_level(vm), on_map = !level && in_map(vm), select = !level && !on_map && in_select(vm);
         uint32_t buttons = debug ? 0 : pad_buttons(&pad, level);
         // character select: the Cross or Start that closed the menu isn't a pick until let go
-        if (select_eat && !(pad.buttons & select_eat)) select_eat = 0;
+        if (select_eat && !(held & select_eat)) select_eat = 0;
         if (select_eat) buttons = 0;
-        if (leaving) pressed = buttons = 0;
+        if (leaving) pressed = buttons = others_start = 0;
+        uint32_t no_start = (level || on_map || select) ? ~(1u << CCB_START) : ~0u;
         memset(cc_keys, 0, sizeof cc_keys);
-        cc_port_keys(1, (level || on_map || select) ? buttons & ~(1u << CCB_START) : buttons);
+        cc_port_keys(1, buttons & no_start);
+        for (int i = 1; i < LOCAL_PADS; i++)
+            if (g_pad_on[i] && !select_eat && !leaving) cc_port_keys(i + 1, pad_buttons(&g_pads[i], level) & no_start);
+        int start_port = (pressed & SCE_CTRL_START) && !debug ? 1 : others_start;
         if (pause.open) {
             float dt = (sceKernelGetProcessTimeWide() - prev) / 1000000.0f;
             int was_select = pause.select;
-            int r = pause_input(&pause, vm, nav, dt > 0.1f ? 0.1f : dt);
+            int r = pause_input(&pause, vm, nav | others_nav, dt > 0.1f ? 0.1f : dt);
             if (r == 2) { leaving = 1; EXIT_TRACE("exit: loading screen in"); }
             if (!g_netgame) cc_set_auto_potion(vm, g_auto_potion);   // Settings may have changed it
-            if (r == 0 && was_select) select_eat = pad.buttons & (SCE_CTRL_CROSS | SCE_CTRL_START | SCE_CTRL_CIRCLE);
+            if (r == 0 && was_select) select_eat = held & (SCE_CTRL_CROSS | SCE_CTRL_START | SCE_CTRL_CIRCLE);
             memset(cc_keys, 0, sizeof cc_keys);
             buttons = 0;   // (Wi-Fi play: the game runs on under the menu, without this player)
-        } else if ((level || on_map) && !debug && (pressed & SCE_CTRL_START) &&
-                   !as_tobool(vm, cc_flash_global(vm, "g_bNoPause"))) {
+        } else if ((level || on_map) && start_port && !as_tobool(vm, cc_flash_global(vm, "g_bNoPause"))) {
+            g_pause_port = start_port;
             pause_open(&pause, on_map);
             pause_set_state(vm, 2);
             log_flush();   // the log is complete while paused (to copy it off by FTP)
             if (!pause.have_art) pause_build_art(&pause);
-        } else if (select && !debug && (pressed & SCE_CTRL_START)) {
+        } else if (select && start_port) {
             // the same menu as the map's (no Exit To Map); the players' states stay as they are
             pause_open(&pause, 1);
             pause.select = 1;
