@@ -9,6 +9,7 @@
 
 #include "cc_host.h"
 #include "strtab.h"
+#include "custom_char.h"
 #include "as_render.h"
 
 // ---- collision: f_BSPHitTest(x1, y1, x2, y2) and its helpers ------------------------
@@ -182,11 +183,16 @@ static const uint8_t default_weapon[32] = {
     15, 6, 45, 26, 57, 43, 20, 2, 35, 31, 48, 50, 68, 63, 85, 84,
 };
 
+int cc_default_weapon(int p_type) {
+    if (p_type == CC_CUSTOM_P_TYPE && cc_custom_p_type()) p_type = cc_custom_base();   // its base's weapon
+    return p_type >= 1 && p_type <= 31 ? default_weapon[p_type] : 0;
+}
+
 static AsVal native_get_default_weapon(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
     (void)this_;
     AsVal zone = ARG(0);
     double t = as_tonum(vm, as_get(vm, zone, as_atom(vm, "p_type")));
-    int w = t >= 1 && t <= 31 && t == (int)t ? default_weapon[(int)t] : 0;
+    int w = t == (int)t ? cc_default_weapon((int)t) : 0;
     AsStr *A_weapon = as_atom(vm, "weapon");
     if (w && zone.t == V_OBJ && as_tonum(vm, as_get(vm, zone, A_weapon)) == 0) {
         as_set(vm, zone, A_weapon, as_num(w));
