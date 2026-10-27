@@ -198,6 +198,8 @@ struct AsVm {
     void *host;                 // for the host's own use
     int depth;                  // call depth (runaway recursion guard)
     AsObj *cur_fn;              // function running now (for messages), NULL on a timeline
+    int cur_argc;               // and the arguments it was called with
+    AsVal *cur_argv;
     long long ops;              // actions executed (profiling)
     uint32_t tick;              // frames run so far
     uint32_t rand_state;
@@ -226,7 +228,8 @@ struct AsVm {
     int noverrides;
     // variables whose value the host fixes (as_pin): scripts read it, their writes are ignored
     // (in_levels: in every script of a level file, Movie.is_level)
-    struct { AsStr *name, *only_in; AsVal v; int in_levels; } pinned[24];
+    // (get: the value comes from it each read; undefined from it reads the variable as usual)
+    struct { AsStr *name, *only_in; AsVal v; int in_levels; AsVal (*get)(AsVm *vm); } pinned[24];
     int npinned;
     // queued frame scripts for this tick: (clip, frame) in order
     AsMc **queue;
@@ -284,6 +287,9 @@ void as_pin(AsVm *vm, const char *name, AsVal v, const char *only_in);
 // The same for every script (functions and timelines) of a level file: reads give v and
 // the scripts' own writes are ignored there.
 void as_pin_in_levels(AsVm *vm, const char *name, AsVal v);
+// as_pin with the value from get at each read (it can look at vm->cur_argv); when get gives
+// undefined, the variable reads as usual.
+void as_pin_fn(AsVm *vm, const char *name, const char *only_in, AsVal (*get)(AsVm *vm));
 
 // profiling: time and actions per function, worst first (exclusive of callees)
 void as_prof_enable(int on);

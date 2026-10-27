@@ -1,8 +1,8 @@
 // Help & Options' books, as the original shows them over PAUSE.swf's (and MENU.swf's) book
 // art: How to Play (the "howtoplay" clip's seven pages), Controls (a PS Vita in the game's
 // style in place of the original's controller) and Settings (music and sound effects
-// volume on the "volume" bars). Platform-free like pause_menu.c: the app feeds it buttons
-// and draws what it builds; hosttest renders it.
+// volume on the "volume" bars, and Auto Potion On / Off). Platform-free like pause_menu.c:
+// the app feeds it buttons and draws what it builds; hosttest renders it.
 #ifndef CC_HELP_BOOK_H
 #define CC_HELP_BOOK_H
 
@@ -16,9 +16,10 @@ enum { HB_UP = 1, HB_DOWN = 2, HB_LEFT = 4, HB_RIGHT = 8, HB_PREV = 16, HB_NEXT 
 
 typedef struct {
     int book, page;            // page: How to Play's page, 0..6
-    int row;                   // Settings: 0 music, 1 sound effects
+    int row;                   // Settings: 0 music, 1 sound effects, 2 auto potion
     int volume[2];             // 0..HB_VOLUME_STEPS
-    int changed;               // the volumes moved since the book opened
+    int auto_potion;           // 1: a hit that would end you drinks a health potion instead
+    int changed;               // the settings changed since the book opened
     float time;                // seconds open (the chosen row pulses)
     float turn;                // seconds left of a page turn
     int turn_dir;              // 1 forward, -1 back
@@ -26,7 +27,7 @@ typedef struct {
     unsigned achieved;         // Achievements: bit id set when unlocked (cc_achievements)
 } HelpBook;
 
-void help_book_open(HelpBook *hb, int book, int music, int sfx);
+void help_book_open(HelpBook *hb, int book, int music, int sfx, int auto_potion);
 // One frame (dt seconds) with the buttons pressed this frame. Returns 0 once Back closes
 // it. *sound: -1 none, 0 the move sound, 1 the select one, 2 a page turn.
 int help_book_update(HelpBook *hb, unsigned pressed, float dt, int *sound);

@@ -21,11 +21,12 @@
 #define STAGE_H 480.0f
 #define TURN_SECONDS HB_TURN_SECONDS
 
-void help_book_open(HelpBook *hb, int book, int music, int sfx) {
+void help_book_open(HelpBook *hb, int book, int music, int sfx, int auto_potion) {
     memset(hb, 0, sizeof *hb);
     hb->book = book;
     hb->volume[0] = music;
     hb->volume[1] = sfx;
+    hb->auto_potion = auto_potion;
 }
 
 int help_book_update(HelpBook *hb, unsigned pressed, float dt, int *sound) {
@@ -51,10 +52,18 @@ int help_book_update(HelpBook *hb, unsigned pressed, float dt, int *sound) {
         }
     } else if (hb->book == HB_SETTINGS) {
         if (pressed & (HB_UP | HB_DOWN)) {
-            hb->row ^= 1;
+            hb->row = (hb->row + (pressed & HB_UP ? 2 : 1)) % 3;
             *sound = 0;
         }
         int step = pressed & HB_RIGHT ? 1 : pressed & HB_LEFT ? -1 : 0;
+        if (hb->row == 2) {   // On / Off: left or right flips it
+            if (step) {
+                hb->auto_potion ^= 1;
+                hb->changed = 1;
+                *sound = 0;
+            }
+            return 1;
+        }
         int v = hb->volume[hb->row] + step;
         if (step && v >= 0 && v <= HB_VOLUME_STEPS) {
             hb->volume[hb->row] = v;
@@ -445,18 +454,29 @@ static void settings_page(DrawList *out, Art *a, float k, const HelpBook *hb, fl
     page_title(out, a, k, words("help.title.settings", "Settings"), alpha);
     float mx, my, bw;
     book_middle(a, &mx, &my, &bw);
-    static const char *keys[2] = {"help.settings.music", "help.settings.sfx"};
-    static const char *fb[2] = {"Music Volume", "SFX Volume"};
+    static const char *keys[3] = {"help.settings.music", "help.settings.sfx", "help.settings.autopotion"};
+    static const char *fb[3] = {"Music Volume", "SFX Volume", "Auto Potion"};
     float sc = place_scale(a);
-    for (int r = 0; r < 2; r++) {
-        float y = my - 70 * sc + r * 130 * sc;
+    for (int r = 0; r < 3; r++) {
+        float y = my - 115 * sc + r * 125 * sc;   // (the bars sit under the first two)
         uint32_t c = INK;
         if (r == hb->row) {   // the chosen row pulses yellow like the pause menu's chosen line
             int v = (int)(sinf(hb->time * 10) * 34 + 221) & 255;
             c = (uint32_t)v << 16 | (uint32_t)v << 8;
         }
         text(out, k, words(keys[r], fb[r]), mx, y, 30 * sc, 2, c, alpha);
-        volume_bar(out, a, k, mx, y + 50 * sc, bw * 0.40f, hb->volume[r], r == hb->row, alpha);
+        if (r < 2) {
+            volume_bar(out, a, k, mx, y + 50 * sc, bw * 0.40f, hb->volume[r], r == hb->row, alpha);
+            continue;
+        }
+        // On and Off side by side under it, the one set in the row's colour, the other dimmed
+        static const char *vk[2] = {"help.settings.off", "help.settings.on"};
+        static const char *vf[2] = {"Off", "On"};
+        for (int o = 0; o < 2; o++) {
+            int set = o == hb->auto_potion;
+            text(out, k, words(vk[o], vf[o]), mx + (o ? 70 : -70) * sc, y + 42 * sc, 30 * sc, 2,
+                 set ? c : INK, set ? alpha : alpha * 0.45f);
+        }
     }
 }
 
