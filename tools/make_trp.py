@@ -27,8 +27,10 @@ GRADE_COLOUR = {"B": (196, 124, 64), "S": (200, 205, 215), "G": (240, 196, 60)}
 
 
 def sfm(with_text):
-    out = ['<?xml version="1.0" encoding="UTF-8"?>',
-           '<trophyconf version="1.1" platform="psp2">',
+    # laid out like the packs that work with NoTrpDrm (Rinnegatamante's World of Goo port): a
+    # dummy signature comment first, which the plugin's patched check never reads
+    out = ['<!--Sce-Np-Trophy-Signature: ' + 'x' * 320 + '-->',
+           '<trophyconf version="1.1" platform="psp2" policy="large">',
            f'<npcommid>{NPCOMMID}</npcommid>',
            '<trophyset-version>01.00</trophyset-version>',
            '<parental-level license-area="default">0</parental-level>',
@@ -108,7 +110,7 @@ def build(out_path, icon_dir=None):
         table += struct.pack(">32sQQI12x", name.encode(), pos, len(data), 0)
         blob += data
         pos += len(data)
-    head = struct.pack(">IIQIII20s16x", 0xDCA24D00, 2, pos, len(files), 0x40, 1, b"")
+    head = struct.pack(">IIQIII20s16x", 0xDCA24D00, 2, pos, len(files), 0x40, 0, b"")   # 0 = retail pack
     trp = bytearray(head + table + blob)
     trp[0x1C:0x30] = hashlib.sha1(trp).digest()   # over the whole file with this field zeroed
     with open(out_path, "wb") as f:
