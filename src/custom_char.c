@@ -112,7 +112,9 @@ static struct {
     BitmapFill fill[NPARTS];
 } g;
 
-int cc_custom_p_type(void) { return g.p_type; }
+static int g_off;   // a Wi-Fi game: off, so every Vita runs the same 31 characters
+void cc_custom_set_active(int on) { g_off = !on; }
+int cc_custom_p_type(void) { return g_off ? 0 : g.p_type; }
 int cc_custom_base(void) { return g.base; }
 const char *cc_custom_name(void) { return g.name; }
 
@@ -338,7 +340,7 @@ static AsVal set_player_magic(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
 }
 
 void cc_custom_init(AsVm *vm) {
-    if (!g.p_type) return;
+    if (!cc_custom_p_type()) return;
     as_override(vm, "f_InitSaveSystem", init_save_system);
     as_override(vm, "f_InitCharColors", init_char_colors);
     as_override(vm, "f_SetPlayerMagic", set_player_magic);
