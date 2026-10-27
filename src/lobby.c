@@ -47,6 +47,7 @@ static int g_listed = LOBBY_OFF, g_list_state = LOBBY_OFF;
 static LobbyGame g_games[LOBBY_MAX];
 static int g_ngames;
 static char g_why[96];
+static int g_err;                // the last request's error code (the Vita's, 0: none)
 
 static uint32_t now_ms(void) {
 #ifdef __vita__
@@ -103,9 +104,10 @@ static int g_http_ready;
 static int http_init(void) {
     if (g_http_ready) return g_http_ready > 0;
     g_http_ready = -1;
-    if (sceSysmoduleLoadModule(SCE_SYSMODULE_HTTPS) < 0) return 0;
+    if ((g_err = sceSysmoduleLoadModule(SCE_SYSMODULE_HTTPS)) < 0) return 0;
     sceSslInit(300 * 1024);   // (an error is usually "already done")
     sceHttpInit(80 * 1024);
+    g_err = 0;
     g_http_ready = 1;
     return 1;
 }
@@ -116,19 +118,22 @@ static int http(const char *method, const char *path, const char *body, char *ou
     char url[384];
     snprintf(url, sizeof url, "%s%s", server(), path);
     int tmpl = sceHttpCreateTemplate("CastleCrashersVita/1.0", SCE_HTTP_VERSION_1_1, 1);
-    if (tmpl < 0) return -1;
+    if (tmpl < 0) { g_err = tmpl; return -1; }
     sceHttpSetResolveTimeOut(tmpl, 5 * 1000 * 1000);
     sceHttpSetConnectTimeOut(tmpl, 8 * 1000 * 1000);
     sceHttpSetRecvTimeOut(tmpl, 8 * 1000 * 1000);
     int status = -1;
     int conn = sceHttpCreateConnectionWithURL(tmpl, url, 0);
+    g_err = conn < 0 ? conn : 0;
     if (conn >= 0) {
         int post = !strcmp(method, "POST");
         int req = sceHttpCreateRequestWithURL(conn, post ? SCE_HTTP_METHOD_POST : SCE_HTTP_METHOD_GET, url,
                                               body ? strlen(body) : 0);
+        if (req < 0) g_err = req;
         if (req >= 0) {
             if (post) sceHttpAddRequestHeader(req, "Content-Type", "application/x-www-form-urlencoded", SCE_HTTP_HEADER_OVERWRITE);
             int r = sceHttpSendRequest(req, body, body ? strlen(body) : 0);
+            if (r < 0) g_err = r;
             if (r >= 0 && sceHttpGetStatusCode(req, &status) >= 0) {
                 int n = 0;
                 while (n < outmax - 1) {
@@ -217,7 +222,8 @@ static int post(const char *what, const char *body) {
     int st = http("POST", path, body, reply, sizeof reply);
     if (st != 200) {
         char why[96];
-        if (st < 0) snprintf(why, sizeof why, "Couldn't reach the public games list");
+        if (st < 0 && g_err) snprintf(why, sizeof why, "Couldn't reach the public games list (%08X)", (unsigned)g_err);
+        else if (st < 0) snprintf(why, sizeof why, "Couldn't reach the public games list");
         else snprintf(why, sizeof why, "The public games list said no (%d)", st);
         set_why(why);
     }
@@ -255,7 +261,9 @@ static void get_list(void) {
         g_list_state = LOBBY_OK;
     } else {
         g_list_state = LOBBY_FAILED;
-        snprintf(g_why, sizeof g_why, st < 0 ? "Couldn't reach the public games list" : "The public games list isn't working (%d)", st);
+        if (st >= 0) snprintf(g_why, sizeof g_why, "The public games list isn't working (%d)", st);
+        else if (g_err) snprintf(g_why, sizeof g_why, "Couldn't reach the public games list (%08X)", (unsigned)g_err);
+        else snprintf(g_why, sizeof g_why, "Couldn't reach the public games list");
     }
     pthread_mutex_unlock(&g_lock);
 }
