@@ -351,3 +351,11 @@ and Help & Options; Host a game / Join a game (hosts found by UDP broadcast on t
   starts 10 under the first wall below it, then the script's own f_SpawnBear runs. Check:
   `CC_CALL "900:f_ChangeLevel:'../level20/level20.swf,1100:f_SpawnBear:#1346|#-345|#3"`
   (before: stuck at y -355; after: starts at -323 and walks into the field).
+## Auto Potion (2026-10-27, branch claude/project-thread-lpw691)
+Help & Options -> Settings has a third row, Auto Potion (Off / On, left/right), saved in
+settings.txt as `autopotion = 0/1`. On: a hit that would end a player whose selected item is the
+health potion (equippeditem 9) drinks one instead, as the original already does in co-op while
+another player is up. Done by `as_pin_fn`: inside f_CheckHealthPots, active_players reads 2 for
+such a player (`auto_potion_players` in cc_host.c; the engine keeps the running function's
+arguments in vm->cur_argv). Wi-Fi games use the host's setting (net.rules in START, NET_VERSION 4).
+hosttest: CC_AUTO_POTION=1; HB_ROW=2 with --help shows the row chosen.

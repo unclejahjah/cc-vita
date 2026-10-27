@@ -21,7 +21,7 @@
 #define NET_MAX_DELAY 15       // the most, however far away someone is (half a second)
 #define NET_CODE_LEN 7
 #define NET_NAME 32
-#define NET_VERSION 3          // both sides must have the same: the frame format and the game code
+#define NET_VERSION 4          // both sides must have the same: the frame format and the game code
 
 // One player's part of a frame.
 typedef struct {
@@ -43,6 +43,7 @@ typedef struct {
     int age;                   // polls since its last beacon
 } NetHost;
 
+enum { NET_RULE_AUTO_POTION = 1 };   // net.rules bits (the host sets them before net_start)
 enum { NET_OFF, NET_HOSTING, NET_SCANNING, NET_CONNECTING, NET_JOINING, NET_LOBBY, NET_PLAYING, NET_LOST };
 
 typedef struct {
@@ -50,6 +51,7 @@ typedef struct {
     int port;                  // this Vita's player: 1..4
     char names[NET_PLAYERS][NET_NAME];   // the lobby's players ("" for nobody)
     uint32_t seed;             // the game's random seed, from the host
+    int rules;                 // settings every Vita must play by, from the host: NET_RULE_*
     int delay;                 // frames between reading this Vita's buttons and using them (from the start)
     int first;                 // the host's delay: frames 0..first-1 have no buttons
     int slowest;               // the joiners' delay (the longest)

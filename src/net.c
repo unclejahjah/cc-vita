@@ -458,14 +458,15 @@ int net_start(void) {
     net.first = NET_SPARE;
     if (getenv("NET_DELAY")) net.first = net.slowest = atoi(getenv("NET_DELAY"));
     net.delay = net.first;
-    // the start: seed, delay, who's in, names, then each port's profile
-    int total = 4 + 2 + 1 + sizeof net.names;
+    // the start: seed, delay, who's in, rules, names, then each port's profile
+    int total = 4 + 2 + 1 + 1 + sizeof net.names;
     for (int p = 0; p < NET_PLAYERS; p++) total += 4 + (p == 0 ? g_my_nprofile : peers[p].used ? peers[p].nprofile : 0);
     uint8_t *b = malloc(total), *q = b;
     put32(q, net.seed); q += 4;
     *q++ = net.first;
     *q++ = net.slowest;
     *q++ = g_active;
+    *q++ = net.rules;
     memcpy(q, net.names, sizeof net.names); q += sizeof net.names;
     for (int p = 0; p < NET_PLAYERS; p++) {
         const uint8_t *pr = p == 0 ? g_my_profile : peers[p].profile;
@@ -761,13 +762,14 @@ static void client_lobby(void) {
             for (int p = 0; p < NET_PLAYERS; p++) net.names[p][NET_NAME - 1] = 0;
         } else if (type == MSG_PING && len >= 4) {
             conn_send(&g_host, MSG_PONG, m, 4, NULL, 0);
-        } else if (type == MSG_START && len >= 7 + (int)sizeof net.names) {
+        } else if (type == MSG_START && len >= 8 + (int)sizeof net.names) {
             const uint8_t *q = m, *end = m + len;
             net.seed = get32(q); q += 4;
             net.first = *q++;
             net.slowest = net.delay = *q++;
             if (net.first < 1 || net.slowest < net.first || net.slowest > 64) { lost("The game's start got lost"); return; }
             uint8_t active = *q++;
+            net.rules = *q++;
             memcpy(net.names, q, sizeof net.names); q += sizeof net.names;
             for (int p = 0; p < NET_PLAYERS; p++) {
                 if (q + 4 > end) { lost("The game's start got lost"); return; }

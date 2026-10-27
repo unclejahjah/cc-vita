@@ -443,6 +443,7 @@ void as_pin(AsVm *vm, const char *name, AsVal v, const char *only_in) {
         vm->pinned[vm->npinned].name = as_atom(vm, name);
         vm->pinned[vm->npinned].only_in = only_in ? as_atom(vm, only_in) : NULL;
         vm->pinned[vm->npinned].in_levels = 0;
+        vm->pinned[vm->npinned].get = NULL;
         vm->pinned[vm->npinned++].v = v;
     }
 }
@@ -452,8 +453,14 @@ void as_pin_in_levels(AsVm *vm, const char *name, AsVal v) {
         vm->pinned[vm->npinned].name = as_atom(vm, name);
         vm->pinned[vm->npinned].only_in = NULL;
         vm->pinned[vm->npinned].in_levels = 1;
+        vm->pinned[vm->npinned].get = NULL;
         vm->pinned[vm->npinned++].v = v;
     }
+}
+
+void as_pin_fn(AsVm *vm, const char *name, const char *only_in, AsVal (*get)(AsVm *vm)) {
+    as_pin(vm, name, as_undef(), only_in);
+    if (vm->npinned && vm->pinned[vm->npinned - 1].name == as_atom(vm, name)) vm->pinned[vm->npinned - 1].get = get;
 }
 
 void as_override(AsVm *vm, const char *name, AsNative fn) {
@@ -607,9 +614,15 @@ static AsVal as_call_body(AsVm *vm, AsVal fv, AsVal this_, int argc, AsVal *argv
     }
     int sp0 = vm->sp;
     AsObj *prev_fn = vm->cur_fn;
+    int prev_argc = vm->cur_argc;
+    AsVal *prev_argv = vm->cur_argv;
     vm->cur_fn = f;
+    vm->cur_argc = argc;
+    vm->cur_argv = argv;
     run(vm, &c);
     vm->cur_fn = prev_fn;
+    vm->cur_argc = prev_argc;
+    vm->cur_argv = prev_argv;
     vm->sp = sp0;
     vm->depth--;
     if (c.captured) {
@@ -648,6 +661,7 @@ static int lookup_in(AsVm *vm, AsObj *o, AsStr *atom, AsVal *out) {
 
 // Does pinned[i] answer for the script running in c?
 static int pin_applies(AsVm *vm, Ctx *c, int i) {
+    if (vm->pinned[i].get && vm->pinned[i].get(vm).t == V_UNDEF) return 0;
     if (vm->pinned[i].in_levels) return c->movie && c->movie->is_level;
     return !vm->pinned[i].only_in || (vm->cur_fn && vm->cur_fn->fname == vm->pinned[i].only_in);
 }
@@ -663,7 +677,7 @@ static AsVal get_variable(AsVm *vm, Ctx *c, AsStr *name) {
     if (atom == A_global) return as_objv(vm->global);
     for (int i = 0; i < vm->npinned; i++)
         if (vm->pinned[i].name == atom && pin_applies(vm, c, i))
-            return vm->pinned[i].v;
+            return vm->pinned[i].get ? vm->pinned[i].get(vm) : vm->pinned[i].v;
     if (atom == A_parent) {
         AsVal v;
         if (c->target && as_mc_get_member(vm, c->target, atom, &v)) return v;
