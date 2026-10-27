@@ -339,3 +339,12 @@ and Help & Options; Host a game / Join a game (hosts found by UDP broadcast on t
   The state checks in the inputs are all of frame k - slowest - 1 (the host keeps a few old
   ones). NET_VERSION 3. tools: a lag proxy (Python, delays TCP+UDP both ways) checked 200 ms. hosttest: NET_CODE, NET_DELAY,
   UPNP_ROUTER (and a pretend router was used to test it: SSDP + SOAP in Python).
+
+## Auto Potion (2026-10-27, branch claude/project-thread-lpw691)
+Help & Options -> Settings has a third row, Auto Potion (Off / On, left/right), saved in
+settings.txt as `autopotion = 0/1`. On: a hit that would end a player whose selected item is the
+health potion (equippeditem 9) drinks one instead, as the original already does in co-op while
+another player is up. Done by `as_pin_fn`: inside f_CheckHealthPots, active_players reads 2 for
+such a player (`auto_potion_players` in cc_host.c; the engine keeps the running function's
+arguments in vm->cur_argv). Wi-Fi games use the host's setting (net.rules in START, NET_VERSION 4).
+hosttest: CC_AUTO_POTION=1; HB_ROW=2 with --help shows the row chosen.

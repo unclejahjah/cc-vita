@@ -49,7 +49,7 @@ int _newlib_heap_size_user = 160 * 1024 * 1024;
 #define DATA_DIR "ux0:data/CastleCrashers/"
 #define SAVE_PATH DATA_DIR "save.dat"   // the game's storage (profiles, levels, unlocks)
 #define ACH_PATH DATA_DIR "achievements.dat"
-#define SETTINGS_PATH DATA_DIR "settings.txt"   // Help & Options' Settings: music and sound effects volume
+#define SETTINGS_PATH DATA_DIR "settings.txt"   // Help & Options' Settings: volumes, Auto Potion
 #define MAX_BATCH 65535   // u16 indices; a multiple of 3
 #define SCREEN_W 960.0f
 #define SCREEN_H 544.0f
@@ -739,8 +739,10 @@ typedef struct {
     DrawList hb_ui;
 } Pause;
 
-// Settings' volumes, 0..HB_VOLUME_STEPS: kept in settings.txt as "music = N" and "sfx = N"
+// Settings' volumes, 0..HB_VOLUME_STEPS, and Auto Potion: kept in settings.txt as "music = N",
+// "sfx = N" and "autopotion = 0/1"
 static int g_volume[2] = {HB_VOLUME_STEPS, HB_VOLUME_STEPS};
+static int g_auto_potion;
 
 static void settings_apply(void) {
     audio_set_volume(g_volume[0] / (float)HB_VOLUME_STEPS, g_volume[1] / (float)HB_VOLUME_STEPS);
@@ -754,6 +756,7 @@ static void settings_load(void) {
         while (fgets(line, sizeof line, f)) {
             if (sscanf(line, " music = %d", &v) == 1 && v >= 0 && v <= HB_VOLUME_STEPS) g_volume[0] = v;
             if (sscanf(line, " sfx = %d", &v) == 1 && v >= 0 && v <= HB_VOLUME_STEPS) g_volume[1] = v;
+            if (sscanf(line, " autopotion = %d", &v) == 1) g_auto_potion = v != 0;
         }
         fclose(f);
     }
@@ -763,7 +766,7 @@ static void settings_load(void) {
 static void settings_save(void) {
     FILE *f = fopen(SETTINGS_PATH, "w");
     if (!f) return;
-    fprintf(f, "music = %d\nsfx = %d\n", g_volume[0], g_volume[1]);
+    fprintf(f, "music = %d\nsfx = %d\nautopotion = %d\n", g_volume[0], g_volume[1], g_auto_potion);
     fclose(f);
 }
 
@@ -888,7 +891,7 @@ static void pause_draw(Pause *ps) {
 // set the volumes, Circle closes it (the volumes are saved then if they moved)
 static void help_input(Pause *ps, unsigned pressed, float dt) {
     if (ps->m.book_new) {
-        help_book_open(&ps->hb, ps->m.book, g_volume[0], g_volume[1]);
+        help_book_open(&ps->hb, ps->m.book, g_volume[0], g_volume[1], g_auto_potion);
         ps->hb.achieved = cc_achievements();
         ps->m.book_new = 0;
     }
@@ -903,6 +906,7 @@ static void help_input(Pause *ps, unsigned pressed, float dt) {
         g_volume[1] = ps->hb.volume[1];
         settings_apply();
     }
+    g_auto_potion = ps->hb.auto_potion;   // the game's VM picks it up (not mid Wi-Fi game)
     if (sound >= 0) audio_sfx_play(sound == 0 ? "sound_toggle_b.wav" : "sound_player_select.wav", 1, 0, 0, ps);
     if (open) return;
     if (ps->hb.changed) settings_save();
@@ -1177,7 +1181,10 @@ static int wifi_update(unsigned pressed) {
         if (pressed & (SCE_CTRL_START | SCE_CTRL_CROSS)) {
             sound = 1;
             if (n < 2) wifi_note("Waiting for someone to join first");
-            else if (net_start()) { log_line("Wi-Fi game: delay %d frames", net.delay); return 1; }
+            else {
+                net.rules = g_auto_potion ? NET_RULE_AUTO_POTION : 0;   // everyone plays by the host's
+                if (net_start()) { log_line("Wi-Fi game: delay %d frames", net.delay); return 1; }
+            }
         }
         if (pressed & SCE_CTRL_CIRCLE) { net_leave(); g_wifi.page = W_MENU; sound = 1; }
         break;
@@ -1660,6 +1667,7 @@ new_game:   // the title again after Exit to Main Menu
     vm->prefetch = vita_prefetch;   // files load on a second thread while the game runs
     cc_host_init(vm);
     as_render_init(vm);
+    cc_set_auto_potion(vm, g_auto_potion);
     int net_wait = 0;        // Wi-Fi play: passes spent waiting for the others
 #ifdef CC_NET
     uint32_t net_tick = 0;   // the next frame to run
@@ -1667,6 +1675,7 @@ new_game:   // the title again after Exit to Main Menu
     if (g_netgame) {   // the same game on every Vita: seed, clock, everyone's profiles
         netplay_begin(vm);
         vm->prefetch = netplay_prefetch;
+        cc_set_auto_potion(vm, net.rules & NET_RULE_AUTO_POTION);   // the host's, on every Vita
         g_net_state = 0;
         log_line("Wi-Fi game: port %d, seed %u", net.port, net.seed);
     } else {   // on your own: player 1 is this Vita's user, as the others' names in a Wi-Fi game
@@ -1725,6 +1734,7 @@ new_game:   // the title again after Exit to Main Menu
             int was_select = pause.select;
             int r = pause_input(&pause, vm, nav, dt > 0.1f ? 0.1f : dt);
             if (r == 2) { leaving = 1; EXIT_TRACE("exit: loading screen in"); }
+            if (!g_netgame) cc_set_auto_potion(vm, g_auto_potion);   // Settings may have changed it
             if (r == 0 && was_select) select_eat = pad.buttons & (SCE_CTRL_CROSS | SCE_CTRL_START | SCE_CTRL_CIRCLE);
             memset(cc_keys, 0, sizeof cc_keys);
             buttons = 0;   // (Wi-Fi play: the game runs on under the menu, without this player)

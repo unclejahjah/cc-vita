@@ -341,6 +341,7 @@ static int as_mode(int argc, char **argv) {
     if (getenv("CC_PREFETCH")) vm->prefetch = fake_prefetch;
     extern void cc_host_init(AsVm *vm);
     cc_host_init(vm);
+    if (getenv("CC_AUTO_POTION")) cc_set_auto_potion(vm, 1);   // Help & Options' Auto Potion on
     // CC_SAVE=path: start from a save file (cc_host.c's "CCS2" format), like the Vita's save.dat
     if (getenv("CC_SAVE") && !cc_storage_load(getenv("CC_SAVE")))
         printf("  couldn't read save %s\n", getenv("CC_SAVE"));
@@ -977,7 +978,8 @@ static int help_mode(int argc, char **argv) {
     }
     for (int book = 0; book < 4; book++) {
         HelpBook hb;
-        help_book_open(&hb, book, 7, 10);
+        help_book_open(&hb, book, 7, 10, 1);
+        if (book == HB_SETTINGS && getenv("HB_ROW")) hb.row = atoi(getenv("HB_ROW"));
         hb.achieved = 1 << 2 | 1 << 4 | 1 << 7 | 1 << 11;
         int pages = book == HB_HOWTO ? HB_HOWTO_PAGES : 1;
         for (int pg = 0; pg < pages; pg++) {
