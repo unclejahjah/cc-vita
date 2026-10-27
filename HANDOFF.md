@@ -397,3 +397,15 @@ hosttest: CC_AUTO_POTION=1; HB_ROW=2 with --help shows the row chosen.
 - Test: tools/custom/testpaint2.py makes a purple-knight painting; hosttest CC_CUSTOM_DIR=dir/ with
   dir/painting.png, CC_CALL="260:loader.f_ChangeSelectedChar:#1|#-1" (scrolls to slot 32) and
   CC_KEYS="150:83,330:2,450:49,600:2,750:83" shows the portrait, then a purple knight in LEVEL2.
+## Custom animal orb (2026-10-27, branch claude/project-thread-x1zvep)
+- Optional add-on (src/custom_animal.c/.h): ux0:data/CastleCrashers/custom/animal/painting.png on the
+  animal template (tools/custom_animal/make_template.py, + stencil.png), or pet.png, (+ pet.xml)
+  becomes animal 30, after the game's 29. Owned in every profile, waits in the Animal Ark at
+  barn30 (2626,-125, right of the Golden Whale), trash can sends it back there, Vet chalkboard
+  shows its description (ntext 270-272 only on fields under "chalkboard": LEVEL2 uses 270-273).
+- Art: ANIMALS.swf's body sprite has 29 frames (gotoAndStop(_parent._parent.animal_type)); type 30
+  clamps to the whale frame and the picture is drawn in its bounds instead (as_render.c).
+- Ability: f_SetAnimalTimer override. like=N copies pet N's timer and stats; own stats on top;
+  every/heal/gold run from a native fp_timer (f_CustomAnimalTimer). Off in Wi-Fi games (owner has none).
+- Engine: as_call_script() runs the script version of an as_override native; vm->text_field
+  is the field text_for_number is asked about. hosttest: CC_CUSTOM_ANIMAL=dir/.
