@@ -374,3 +374,8 @@ hosttest: CC_AUTO_POTION=1; HB_ROW=2 with --help shows the row chosen.
 - Ext2 reads: L1/R1 = the Vita's L/R (block, magic); L2/R2 = item switch (as the right-stick flick).
 - Any local pad's Start opens the pause menu (all pads steer it); `g_pause_port` gets the state.
 - Extra pads are off in a Wi-Fi game (each Vita is one player). Untested on hardware.
+- Public games list (2026-10-27): Multiplayer > Host a Public Game / Public Games (shown only when
+  a list server is set: CC_LOBBY_URL in cc_host.h or ux0:data/CastleCrashers/lobby.txt). `src/lobby.c`
+  talks to the server on its own thread (sceHttp on the Vita, sockets in hosttest); the server is
+  `tools/lobby/` (Cloudflare Worker + a Python copy for tests). A public host is listed only once
+  UPnP has opened its router, and taken off when the game starts or the page closes.
