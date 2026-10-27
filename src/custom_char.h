@@ -21,6 +21,8 @@
 // Looks in dir (ending in '/') for a painting; 1 if one was loaded. The painting becomes a
 // Bitmap that swf_bitmap_loaded (if set) turns into the platform's texture.
 int cc_custom_load(const char *dir);
+// Off in a Wi-Fi game (lockstep: the others may have no painting, or another one).
+void cc_custom_set_active(int on);
 int cc_custom_p_type(void);          // CC_CUSTOM_P_TYPE once loaded, else 0
 int cc_custom_base(void);            // the character it fights like
 const char *cc_custom_name(void);    // pbp.xml's displayname, or "CUSTOM"

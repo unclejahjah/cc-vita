@@ -1661,6 +1661,9 @@ new_game:   // the title again after Exit to Main Menu
     vm->sound_stop = vita_sound_stop;
     vm->warn = vita_warn;
     vm->prefetch = vita_prefetch;   // files load on a second thread while the game runs
+#ifdef CC_NET
+    cc_custom_set_active(!g_netgame);
+#endif
     cc_host_init(vm);
     as_render_init(vm);
     int net_wait = 0;        // Wi-Fi play: passes spent waiting for the others
