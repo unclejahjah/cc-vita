@@ -40,6 +40,7 @@
 #include "trophies.h"
 #endif
 #ifdef CC_NET
+#include "lobby.h"
 #include "netplay.h"
 #endif
 
@@ -1148,17 +1149,53 @@ static void game_text(int x, int y, float size, uint32_t rgb, const char *s) {
 
 // ---- Multiplayer: the Wi-Fi lobby, over the title ---------------------------------------
 // Host a game (this Vita is player 1) or join one heard on the same Wi-Fi, or one over the
-// internet by its game code; the host starts it once someone has joined. Everyone then picks
-// their knight at character select, with Cross.
-enum { W_CLOSED, W_MENU, W_HOST, W_SCAN, W_CODE, W_JOINED };
+// internet by its game code or from the public games list (lobby.h); the host starts it once
+// someone has joined. Everyone then picks their knight at character select, with Cross.
+enum { W_CLOSED, W_MENU, W_HOST, W_SCAN, W_CODE, W_JOINED, W_PUBLIC };
+// the menu's choices (the public ones only with a list server)
+enum { WI_HOST, WI_HOST_PUBLIC, WI_SCAN, WI_CODE, WI_PUBLIC };
 static struct {
     int page, item;
     int back;                  // W_JOINED: the menu item to go back to
+    int public;                // W_HOST: in the public games list (once open to the internet)
+    int refresh;               // W_PUBLIC: frames until the list is asked for again
     char code[NET_CODE_LEN + 1];   // W_CODE: the code typed in (letters only), kept for next time
     int typing;                // W_CODE: the system keyboard is up
     char note[96];
     int note_timer;
 } g_wifi;
+
+static int wifi_items(int *out) {   // the menu's choices, top to bottom
+    int n = 0;
+    out[n++] = WI_HOST;
+    if (lobby_available()) out[n++] = WI_HOST_PUBLIC;
+    out[n++] = WI_SCAN;
+    out[n++] = WI_CODE;
+    if (lobby_available()) out[n++] = WI_PUBLIC;
+    return n;
+}
+
+static int wifi_item_at(int which) {   // where that choice is in the menu
+    int items[5], n = wifi_items(items);
+    for (int i = 0; i < n; i++)
+        if (items[i] == which) return i;
+    return 0;
+}
+
+static int wifi_players(void) {
+    int n = 0;
+    for (int p = 0; p < NET_PLAYERS; p++) n += net.names[p][0] != 0;
+    return n;
+}
+
+// a public game is in the list while it's open to the internet and waiting for players
+static void wifi_listing(void) {
+    uint32_t ext;
+    if (g_wifi.page == W_HOST && g_wifi.public && net.state == NET_HOSTING && net_internet(&ext, NULL) > 0)
+        lobby_publish(net_local_name(), wifi_players());
+    else
+        lobby_unpublish();
+}
 
 static void wifi_note(const char *s) {
     log_line("Wi-Fi: %s", s);
@@ -1235,35 +1272,63 @@ static int wifi_update(unsigned pressed) {
         g_wifi.item = g_wifi.page == W_JOINED ? g_wifi.back : 0;
         g_wifi.page = W_MENU;
     }
-    if (net.state == NET_PLAYING) return 1;
+    if (net.state == NET_PLAYING) { lobby_unpublish(); return 1; }
     int sound = -1;
     switch (g_wifi.page) {
-    case W_MENU:
-        if (pressed & SCE_CTRL_UP) { g_wifi.item = (g_wifi.item + 2) % 3; sound = 0; }
-        if (pressed & SCE_CTRL_DOWN) { g_wifi.item = (g_wifi.item + 1) % 3; sound = 0; }
+    case W_MENU: {
+        int items[5], ni = wifi_items(items);
+        if (g_wifi.item >= ni) g_wifi.item = 0;
+        int which = items[g_wifi.item];
+        if (pressed & SCE_CTRL_UP) { g_wifi.item = (g_wifi.item + ni - 1) % ni; sound = 0; }
+        if (pressed & SCE_CTRL_DOWN) { g_wifi.item = (g_wifi.item + 1) % ni; sound = 0; }
         if (pressed & SCE_CTRL_CROSS) {
             sound = 1;
             uint8_t *pr;
             int n = my_profile(&pr);
-            if (g_wifi.item == 0 && net_host(pr, n)) g_wifi.page = W_HOST;
-            else if (g_wifi.item == 1 && net_scan()) { g_wifi.page = W_SCAN; g_wifi.item = 0; }
-            else if (g_wifi.item == 2) { g_wifi.page = W_CODE; wifi_keyboard_open(); }
+            if ((which == WI_HOST || which == WI_HOST_PUBLIC) && net_host(pr, n)) {
+                g_wifi.page = W_HOST;
+                g_wifi.public = which == WI_HOST_PUBLIC;
+            } else if (which == WI_SCAN && net_scan()) { g_wifi.page = W_SCAN; g_wifi.item = 0; }
+            else if (which == WI_CODE) { g_wifi.page = W_CODE; wifi_keyboard_open(); }
+            else if (which == WI_PUBLIC) { g_wifi.page = W_PUBLIC; g_wifi.item = 0; g_wifi.refresh = 0; }
             else wifi_note(net.error);
         }
         if (pressed & SCE_CTRL_CIRCLE) { g_wifi.page = W_CLOSED; sound = 1; }
         break;
+    }
     case W_HOST: {
-        int n = 0;
-        for (int p = 0; p < NET_PLAYERS; p++) n += net.names[p][0] != 0;
+        int n = wifi_players();
         if (pressed & (SCE_CTRL_START | SCE_CTRL_CROSS)) {
             sound = 1;
             if (n < 2) wifi_note("Waiting for someone to join first");
             else {
                 net.rules = g_auto_potion ? NET_RULE_AUTO_POTION : 0;   // everyone plays by the host's
-                if (net_start()) { log_line("Wi-Fi game: delay %d frames", net.delay); return 1; }
+                if (net_start()) { lobby_unpublish(); log_line("Wi-Fi game: delay %d frames", net.delay); return 1; }
             }
         }
-        if (pressed & SCE_CTRL_CIRCLE) { net_leave(); g_wifi.page = W_MENU; sound = 1; }
+        if (pressed & SCE_CTRL_CIRCLE) {
+            net_leave();
+            g_wifi.page = W_MENU;
+            g_wifi.item = wifi_item_at(g_wifi.public ? WI_HOST_PUBLIC : WI_HOST);
+            sound = 1;
+        }
+        break;
+    }
+    case W_PUBLIC: {   // the public games list, asked for again every 5 seconds
+        if (g_wifi.refresh-- <= 0) { lobby_refresh(); g_wifi.refresh = 60 * 5; }
+        LobbyGame games[LOBBY_MAX];
+        int n = lobby_games(games, 6);
+        if (g_wifi.item >= n) g_wifi.item = n ? n - 1 : 0;
+        if (n && (pressed & SCE_CTRL_UP)) { g_wifi.item = (g_wifi.item + n - 1) % n; sound = 0; }
+        if (n && (pressed & SCE_CTRL_DOWN)) { g_wifi.item = (g_wifi.item + 1) % n; sound = 0; }
+        if (n && (pressed & SCE_CTRL_CROSS)) {
+            sound = 1;
+            uint8_t *pr;
+            int len = my_profile(&pr);
+            if (net_join(games[g_wifi.item].addr, pr, len)) { g_wifi.page = W_JOINED; g_wifi.back = wifi_item_at(WI_PUBLIC); }
+            else { wifi_note(net.error); g_wifi.refresh = 0; }
+        }
+        if (pressed & SCE_CTRL_CIRCLE) { g_wifi.page = W_MENU; g_wifi.item = wifi_item_at(WI_PUBLIC); sound = 1; }
         break;
     }
     case W_SCAN: {
@@ -1276,17 +1341,17 @@ static int wifi_update(unsigned pressed) {
             sound = 1;
             uint8_t *pr;
             int len = my_profile(&pr);
-            if (net_join(hosts[g_wifi.item].addr, pr, len)) { g_wifi.page = W_JOINED; g_wifi.back = 1; }
+            if (net_join(hosts[g_wifi.item].addr, pr, len)) { g_wifi.page = W_JOINED; g_wifi.back = wifi_item_at(WI_SCAN); }
             else { wifi_note(net.error); net_scan(); }
         }
-        if (pressed & SCE_CTRL_CIRCLE) { net_leave(); g_wifi.page = W_MENU; g_wifi.item = 1; sound = 1; }
+        if (pressed & SCE_CTRL_CIRCLE) { net_leave(); g_wifi.page = W_MENU; g_wifi.item = wifi_item_at(WI_SCAN); sound = 1; }
         break;
     }
     case W_CODE:   // the system keyboard takes the code; Cross types it again, Circle goes back
         if (g_wifi.typing) {
             if (sceImeDialogGetStatus() != SCE_COMMON_DIALOG_STATUS_FINISHED) break;   // the dialog has the buttons
             if (!wifi_keyboard_done()) {   // cancelled: back to the menu (or to the code, if one was typed)
-                if (!g_wifi.code[0]) { g_wifi.page = W_MENU; g_wifi.item = 2; }
+                if (!g_wifi.code[0]) { g_wifi.page = W_MENU; g_wifi.item = wifi_item_at(WI_CODE); }
                 break;
             }
             sound = 1;
@@ -1294,17 +1359,18 @@ static int wifi_update(unsigned pressed) {
             uint8_t *pr;
             int len = my_profile(&pr);
             if (!addr) wifi_note("That isn't a game code: check it with the host");
-            else if (net_join(addr, pr, len)) { g_wifi.page = W_JOINED; g_wifi.back = 2; }
+            else if (net_join(addr, pr, len)) { g_wifi.page = W_JOINED; g_wifi.back = wifi_item_at(WI_CODE); }
             else wifi_note(net.error);
             break;
         }
         if (pressed & SCE_CTRL_CROSS) { sound = 1; wifi_keyboard_open(); }
-        if (pressed & SCE_CTRL_CIRCLE) { g_wifi.page = W_MENU; g_wifi.item = 2; sound = 1; }
+        if (pressed & SCE_CTRL_CIRCLE) { g_wifi.page = W_MENU; g_wifi.item = wifi_item_at(WI_CODE); sound = 1; }
         break;
     case W_JOINED:
         if (pressed & SCE_CTRL_CIRCLE) { net_leave(); g_wifi.page = W_MENU; g_wifi.item = g_wifi.back; sound = 1; }
         break;
     }
+    wifi_listing();
     if (sound >= 0) audio_sfx_play(sound ? "sound_player_select.wav" : "sound_toggle_b.wav", 1, 0, 0, &g_wifi);
     return 0;
 }
@@ -1355,18 +1421,32 @@ static void wifi_draw(unsigned frame) {
     const char *dots = (frame / 20) % 4 == 0 ? "" : (frame / 20) % 4 == 1 ? "." : (frame / 20) % 4 == 2 ? ".." : "...";
     if (page == W_CLOSED) pg.back = NULL;   // the empty page under the first turn
     switch (page) {
-    case W_MENU:
+    case W_MENU: {
         pg.title = WORDS("vita.wifi.title", "Multiplayer");
-        wifi_words("vita.wifi.host", "Host a Game", lines[0], 64);
-        wifi_words("vita.wifi.join_wifi", "Join on this Wi-Fi", lines[1], 64);
-        wifi_words("vita.wifi.join_code", "Join by Game Code", lines[2], 64);
-        pg.nlines = 3;
+        int items[5], ni = wifi_items(items);
+        for (int i = 0; i < ni; i++) {
+            switch (items[i]) {
+            case WI_HOST: wifi_words("vita.wifi.host", "Host a Game", lines[i], 64); break;
+            case WI_HOST_PUBLIC: wifi_words("vita.wifi.host_public", "Host a Public Game", lines[i], 64); break;
+            case WI_SCAN: wifi_words("vita.wifi.join_wifi", "Join on this Wi-Fi", lines[i], 64); break;
+            case WI_CODE: wifi_words("vita.wifi.join_code", "Join by Game Code", lines[i], 64); break;
+            case WI_PUBLIC: wifi_words("vita.wifi.public_games", "Public Games", lines[i], 64); break;
+            }
+        }
+        pg.nlines = ni;
         pg.chosen = g_wifi.item;
-        wifi_words("vita.wifi.about", "Play on the same Wi-Fi, or online with a game code.", note, sizeof note);
+        if (items[g_wifi.item < ni ? g_wifi.item : 0] == WI_HOST_PUBLIC)
+            wifi_words("vita.wifi.about_public", "Anyone online can see your game and join it.", note, sizeof note);
+        else if (items[g_wifi.item < ni ? g_wifi.item : 0] == WI_PUBLIC)
+            wifi_words("vita.wifi.about_list", "Games anyone can join, from all over.", note, sizeof note);
+        else
+            wifi_words("vita.wifi.about", "Play on the same Wi-Fi, or online with a game code.", note, sizeof note);
         pg.accept = WORDS("vita.wifi.select", "Select");
         break;
+    }
     case W_HOST: case W_JOINED: {
-        if (page == W_HOST) pg.title = WORDS("vita.wifi.your_game", "Your Game");
+        if (page == W_HOST) pg.title = g_wifi.public ? WORDS("vita.wifi.your_public_game", "Your Public Game")
+                                                     : WORDS("vita.wifi.your_game", "Your Game");
         else pg.title = net.state == NET_CONNECTING ? WORDS("vita.wifi.connecting", "Connecting...")
                         : net.state == NET_JOINING   ? WORDS("vita.wifi.joining", "Joining...")
                                                      : WORDS("vita.wifi.joined", "Joined");
@@ -1385,7 +1465,11 @@ static void wifi_draw(unsigned frame) {
                 snprintf(code, sizeof code, "%.4s-%s", c, c + 4);
                 pg.code = code;
                 pg.code_line = 4;
-                wifi_words("vita.wifi.code_note", "Game code: friends over the internet join with it", note, sizeof note);
+                int listed = g_wifi.public ? lobby_listed() : LOBBY_OFF;
+                if (listed == LOBBY_OK) wifi_words("vita.wifi.listed", "In the Public Games list: anyone can join", note, sizeof note);
+                else if (listed == LOBBY_FAILED) snprintf(note, sizeof note, "%s", lobby_why());
+                else if (listed == LOBBY_WORKING) snprintf(note, sizeof note, "%s%s", WORDS("vita.wifi.listing", "Adding your game to the Public Games list"), dots);
+                else wifi_words("vita.wifi.code_note", "Game code: friends over the internet join with it", note, sizeof note);
             } else if (open == 0) {
                 snprintf(note, sizeof note, "%s%s", WORDS("vita.wifi.opening", "Opening your router for internet play"), dots);
             } else {
@@ -1409,6 +1493,26 @@ static void wifi_draw(unsigned frame) {
         }
         for (int i = 0; i < n && i < 6; i++) snprintf(lines[i], 64, "%s   %d/4", hosts[i].name, hosts[i].players);
         if (n) { pg.nlines = n < 6 ? n : 6; pg.chosen = g_wifi.item; pg.accept = WORDS("vita.wifi.join", "Join"); }
+        break;
+    }
+    case W_PUBLIC: {
+        pg.title = WORDS("vita.wifi.public_games", "Public Games");
+        LobbyGame games[LOBBY_MAX];
+        int n = lobby_games(games, 6), st = lobby_list_state();
+        if (!n) {
+            if (st == LOBBY_FAILED) {
+                wifi_words("vita.wifi.list_failed", "Can't get the list right now", lines[0], 64);
+                snprintf(note, sizeof note, "%s", lobby_why());
+            } else if (st == LOBBY_OK) {
+                wifi_words("vita.wifi.no_public", "No public games right now", lines[0], 64);
+                wifi_words("vita.wifi.no_public_note", "Host a Public Game and others can find yours", note, sizeof note);
+            } else {
+                snprintf(lines[0], 64, "%s%s", WORDS("vita.wifi.looking", "Looking for games"), dots);
+            }
+            pg.nlines = 1;
+        }
+        for (int i = 0; i < n; i++) snprintf(lines[i], 64, "%s   %d/4", games[i].name, games[i].players);
+        if (n) { pg.nlines = n; pg.chosen = g_wifi.item; pg.accept = WORDS("vita.wifi.join", "Join"); }
         break;
     }
     case W_CODE: {
