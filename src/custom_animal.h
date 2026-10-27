@@ -3,11 +3,15 @@
 // in the Animal Ark next to the Golden Whale's spot; walk up to it to take it, the trash can sends
 // it back, as with the others.
 //
-// ux0:data/CastleCrashers/custom/animal/pet.png   the pet (any size; drawn the size of a pet)
-// and optionally custom/animal/pet.xml, one tag:
+// ux0:data/CastleCrashers/custom/animal/, as with a custom character:
+//   painting.png  the pet painted on the animal template (tools/custom_animal/make_template.py:
+//                 1024x1024, paint inside the box, background left transparent)
+//   stencil.png   the blank template: pixels still equal to it (its guide lines) are cleared
+// or instead pet.png, any picture with a transparent background. Either is trimmed to what's
+// painted and drawn the size of a pet. Optionally custom/animal/pet.xml, one tag:
 //   <animal displayname="Blobby" description="Blobby spits slime at enemies."
 //           strength="0" defense="0" agility="0" magic="0" like="0"
-//           every="10" heal="5" gold="1" size="1" facing="right"/>
+//           every="10" heal="5" gold="1" size="1" facing="right" outline="0"/>
 //   description  the Vet's chalkboard (three short lines, wrapped here)
 //   strength...  stat points it gives, as the stat pets do (-9..9)
 //   like         another pet (1-29, the game's animal numbers) whose ability it also has
@@ -16,6 +20,8 @@
 //   gold         ...drops this many coins (1-10; the Golden Whale's drops 1)
 //   size         how big it is drawn, 1 = a pet's usual size
 //   facing       "right" (default) or "left": the way the picture looks
+//   outline      a dark line this many texels wide drawn around it (1-8; the picture is boxed
+//                down to 128 texels, so a painting's own thin outline vanishes at a pet's size)
 #ifndef CC_CUSTOM_ANIMAL_H
 #define CC_CUSTOM_ANIMAL_H
 

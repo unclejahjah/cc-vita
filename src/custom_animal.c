@@ -17,7 +17,15 @@
 #include "../third_party/stb/stb_image.h"
 #pragma GCC diagnostic pop
 
-#define MAX_TEXTURE 256      // the picture is scaled down to this (a pet is about 60 pixels tall)
+#define MAX_TEXTURE 128      // the picture is boxed down to this: a pet is drawn about 50 pixels
+                             // tall, and sampling a much bigger picture loses its thin lines
+// the animal template (tools/custom_animal/make_template.py): the box the pet is painted in
+#define TEMPLATE_SIZE 1024
+#define BOX_X0 136
+#define BOX_Y0 136
+#define BOX_X1 888
+#define BOX_Y1 888
+static const uint8_t INK[3] = {24, 22, 26};   // outline colour, near the game's own line black
 #define FIRST_TEXT (180 + 3 * CC_CUSTOM_ANIMAL)   // the Vet's three lines (180 + 3 * animal_type)
 #define LINE_CHARS 19        // what fits on one chalkboard line (its fields are 22 wide)
 // its Animal Ark spot: right of the Golden Whale's (barn29, 2516,-125), on the same straw
@@ -89,40 +97,115 @@ static void unit_quad(BitmapFill *bf) {
     bf->smooth = 1;
 }
 
-int cc_animal_load(const char *dir) {
+// The picture: painting.png on the animal template (TEMPLATE_SIZE square, the pet inside the
+// box; pixels still equal to stencil.png, the blank template, are its guides and are cleared, as
+// the character template's are), or else pet.png as it is. Trimmed to what's painted.
+static uint8_t *load_picture(const char *dir, int *w, int *h) {
     char path[512];
-    snprintf(path, sizeof path, "%spet.png", dir);
-    int w, h, ch;
-    uint8_t *px = stbi_load(path, &w, &h, &ch, 4);
-    if (!px) return 0;
-    // down to MAX_TEXTURE by whole steps, colours weighted by alpha so clear pixels don't fringe
+    int ch;
+    snprintf(path, sizeof path, "%spainting.png", dir);
+    uint8_t *px = stbi_load(path, w, h, &ch, 4);
+    if (px && (*w != TEMPLATE_SIZE || *h != TEMPLATE_SIZE)) { stbi_image_free(px); px = NULL; }
+    if (px) {
+        snprintf(path, sizeof path, "%sstencil.png", dir);
+        int sw, sh;
+        uint8_t *st = stbi_load(path, &sw, &sh, &ch, 4);
+        for (int y = 0; y < *h; y++)
+            for (int x = 0; x < *w; x++) {
+                size_t i = ((size_t)y * *w + x) * 4;
+                int outside = x < BOX_X0 || x >= BOX_X1 || y < BOX_Y0 || y >= BOX_Y1;
+                if (outside || (st && sw == *w && sh == *h && !memcmp(px + i, st + i, 4))) px[i + 3] = 0;
+            }
+        if (st) stbi_image_free(st);
+    } else {
+        snprintf(path, sizeof path, "%spet.png", dir);
+        px = stbi_load(path, w, h, &ch, 4);
+        if (!px) return NULL;
+    }
+    // trim to the painted pixels
+    int x0 = *w, y0 = *h, x1 = -1, y1 = -1;
+    for (int y = 0; y < *h; y++)
+        for (int x = 0; x < *w; x++)
+            if (px[((size_t)y * *w + x) * 4 + 3] > 8) {
+                if (x < x0) x0 = x;
+                if (x > x1) x1 = x;
+                if (y < y0) y0 = y;
+                if (y > y1) y1 = y;
+            }
+    if (x1 < 0) { stbi_image_free(px); return NULL; }   // nothing painted
+    int tw = x1 - x0 + 1, th = y1 - y0 + 1;
+    uint8_t *t = malloc((size_t)tw * th * 4);
+    if (t)
+        for (int y = 0; y < th; y++) memcpy(t + (size_t)y * tw * 4, px + ((size_t)(y + y0) * *w + x0) * 4, (size_t)tw * 4);
+    stbi_image_free(px);
+    *w = tw;
+    *h = th;
+    return t;
+}
+
+// The picture boxed down to MAX_TEXTURE by whole steps (colours weighted by alpha so clear pixels
+// don't fringe), then, with outline > 0, a dark line that many texels wide around it, as the
+// game's own art has (a picture's own thin lines vanish at a pet's size).
+static uint8_t *make_texture(uint8_t *px, int w, int h, int outline, int *tw_out, int *th_out) {
     int step = 1;
     while (w / step > MAX_TEXTURE || h / step > MAX_TEXTURE) step++;
-    int tw = w / step, th = h / step;
-    uint8_t *t = malloc((size_t)tw * th * 4);
-    if (!t || !tw || !th) { free(t); stbi_image_free(px); return 0; }
-    for (int y = 0; y < th; y++)
-        for (int x = 0; x < tw; x++) {
-            unsigned sum[4] = {0, 0, 0, 0};
+    int sw = w / step > 0 ? w / step : 1, sh = h / step > 0 ? h / step : 1;
+    int tw = sw + 2 * outline, th = sh + 2 * outline;
+    uint8_t *t = calloc((size_t)tw * th, 4);
+    if (!t) return NULL;
+    for (int y = 0; y < sh; y++)
+        for (int x = 0; x < sw; x++) {
+            unsigned sum[4] = {0, 0, 0, 0}, n = 0;
             for (int j = 0; j < step; j++)
                 for (int i = 0; i < step; i++) {
-                    const uint8_t *s = px + ((size_t)(y * step + j) * w + x * step + i) * 4;
+                    int sx = x * step + i, sy = y * step + j;
+                    if (sx >= w || sy >= h) continue;
+                    const uint8_t *s = px + ((size_t)sy * w + sx) * 4;
                     for (int k = 0; k < 3; k++) sum[k] += s[k] * s[3];
                     sum[3] += s[3];
+                    n++;
                 }
-            uint8_t *d = t + ((size_t)y * tw + x) * 4;
+            uint8_t *d = t + ((size_t)(y + outline) * tw + x + outline) * 4;
             for (int k = 0; k < 3; k++) d[k] = sum[3] ? sum[k] / sum[3] : 0;
-            d[3] = sum[3] / (step * step);
+            d[3] = n ? sum[3] / n : 0;
         }
-    stbi_image_free(px);
-    g.bm.w = tw;
-    g.bm.h = th;
-    g.bm.rgba = t;
-    if (swf_bitmap_loaded) swf_bitmap_loaded(&g.bm);
-    unit_quad(&g.fill);
+    if (outline > 0) {
+        // each clear texel within outline texels of the picture takes the ink, as opaque as the
+        // most opaque picture texel in reach (so the line's outer edge stays soft)
+        uint8_t *a = malloc((size_t)tw * th);
+        if (a) {
+            for (int i = 0; i < tw * th; i++) a[i] = t[i * 4 + 3];
+            int r2 = outline * outline + outline;
+            for (int y = 0; y < th; y++)
+                for (int x = 0; x < tw; x++) {
+                    uint8_t *d = t + ((size_t)y * tw + x) * 4;
+                    if (d[3] == 255) continue;
+                    int best = 0;
+                    for (int j = -outline; j <= outline && best < 255; j++)
+                        for (int i = -outline; i <= outline; i++) {
+                            int xx = x + i, yy = y + j;
+                            if (i * i + j * j > r2 || xx < 0 || yy < 0 || xx >= tw || yy >= th) continue;
+                            if (a[yy * tw + xx] > best) best = a[yy * tw + xx];
+                        }
+                    if (best <= d[3]) continue;
+                    // ink under what's there: picture over a line of opacity best
+                    float pa = d[3] / 255.0f, la = best / 255.0f, oa = pa + la * (1 - pa);
+                    for (int k = 0; k < 3; k++) d[k] = (uint8_t)((d[k] * pa + INK[k] * la * (1 - pa)) / oa);
+                    d[3] = (uint8_t)(oa * 255);
+                }
+            free(a);
+        }
+    }
+    *tw_out = tw;
+    *th_out = th;
+    return t;
+}
 
+int cc_animal_load(const char *dir) {
+    char path[512];
     snprintf(g.name, sizeof g.name, "Custom Pet");
     char desc[256] = "";
+    int outline = 0;
     g.size = 1;
     g.mirror = 0;
     snprintf(path, sizeof path, "%spet.xml", dir);
@@ -146,7 +229,20 @@ int cc_animal_load(const char *dir) {
         if (xml_attr(xml, "gold", v, sizeof v) && atoi(v) > 0) g.gold = atoi(v) < 10 ? atoi(v) : 10;
         if (xml_attr(xml, "size", v, sizeof v) && atof(v) > 0.1 && atof(v) < 4) g.size = (float)atof(v);
         if (xml_attr(xml, "facing", v, sizeof v) && !strcmp(v, "left")) g.mirror = 1;
+        if (xml_attr(xml, "outline", v, sizeof v) && atoi(v) > 0) outline = atoi(v) < 8 ? atoi(v) : 8;
     }
+    int w, h;
+    uint8_t *px = load_picture(dir, &w, &h);
+    if (!px) return 0;
+    int tw, th;
+    uint8_t *t = make_texture(px, w, h, outline, &tw, &th);
+    free(px);
+    if (!t) return 0;
+    g.bm.w = tw;
+    g.bm.h = th;
+    g.bm.rgba = t;
+    if (swf_bitmap_loaded) swf_bitmap_loaded(&g.bm);
+    unit_quad(&g.fill);
     if (!desc[0]) snprintf(desc, sizeof desc, "%s is a pet of your very own.", g.name);
     wrap(desc);
     g.loaded = 1;
