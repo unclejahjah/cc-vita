@@ -59,9 +59,11 @@ static int unlocker(SceSize args, void *argp) {
 }
 
 int trophies_init(void) {
-    if (sceSysmoduleLoadModule(SCE_SYSMODULE_NP_TROPHY) < 0) return 0;
+    int r = sceSysmoduleLoadModule(SCE_SYSMODULE_NP_TROPHY);
+    if (r < 0) return r;
     sceNpTrophyInit(NULL);
-    if (sceNpTrophyCreateContext(&ctx, &COMM_ID, signature, 0) < 0) return 0;
+    r = sceNpTrophyCreateContext(&ctx, &COMM_ID, signature, 0);
+    if (r < 0) return r;   // no NoTrpDrm, or it refused the pack
 
     // installs the trophy pack on first run; the dialog draws over our frames
     NpTrophySetupDialogParam setup;
@@ -82,7 +84,8 @@ int trophies_init(void) {
 
     wake = sceKernelCreateSema("trophies", 0, 0, 1, NULL);
     SceUID th = sceKernelCreateThread("trophies", unlocker, 0x10000100, 0x10000, 0, 0, NULL);
-    if (wake < 0 || th < 0) return 0;
+    if (wake < 0) return wake;
+    if (th < 0) return th;
     sceKernelStartThread(th, 0, NULL);
     ready = 1;
     return 1;
