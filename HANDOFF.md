@@ -341,7 +341,8 @@ and Help & Options; Host a game / Join a game (hosts found by UDP broadcast on t
   UPNP_ROUTER (and a pretend router was used to test it: SSDP + SOAP in Python).
 
 ## Custom animal orb (2026-10-27, branch claude/project-thread-x1zvep)
-- Optional add-on (src/custom_animal.c/.h): ux0:data/CastleCrashers/custom/animal/pet.png (+ pet.xml)
+- Optional add-on (src/custom_animal.c/.h): ux0:data/CastleCrashers/custom/animal/painting.png on the
+  animal template (tools/custom_animal/make_template.py, + stencil.png), or pet.png, (+ pet.xml)
   becomes animal 30, after the game's 29. Owned in every profile, waits in the Animal Ark at
   barn30 (2626,-125, right of the Golden Whale), trash can sends it back there, Vet chalkboard
   shows its description (ntext 270-272 only on fields under "chalkboard": LEVEL2 uses 270-273).
