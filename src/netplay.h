@@ -23,10 +23,6 @@ int netplay_prefetch(AsVm *vm, const char *url);
 const char *netplay_file_wanted(void);   // the file asked for and not ready here yet, or NULL
 void netplay_file_ready(void);
 
-// Each player's name over their knight's head (the Wi-Fi game) for a few seconds after the
-// knight appears, in the game font, through screen (the game's root -> screen pixels).
-#include "render.h"
-void netplay_nametags(AsVm *vm, Mat screen, DrawList *out);
 // The players' names (cc_net_names) in the HUD over their portraits, before drawing
 void netplay_hud_names(AsVm *vm);
 
