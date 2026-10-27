@@ -21,6 +21,7 @@
 #include "../src/swf.h"
 #include "../src/net.h"
 #include "../src/netplay.h"
+#include "../src/lobby.h"
 #include <arpa/inet.h>
 #include <unistd.h>
 
@@ -370,7 +371,9 @@ static int as_mode(int argc, char **argv) {
     // buttons; NET_JITTER=ms: a random wait each frame, as a slow Vita; CC_PREFETCH=N: each
     // level file takes N frames to arrive. NET_LOG=1 prints each frame's check. NET_CODE: join by
     // game code; NET_DELAY: the host's delay instead of the one from the pings; UPNP_ROUTER: the
-    // router to ask (as well as everyone, by multicast).
+    // router to ask (as well as everyone, by multicast). LOBBY_URL (tools/lobby/lobby_server.py):
+    // the host goes in the public games list (open to the internet or not); NET_PUBLIC=1 joins
+    // the first game in it.
     const char *net_mode = getenv("NET_MODE");
     if (net_mode) {
         static uint8_t prof[3 * 65536];
@@ -391,9 +394,17 @@ static int as_mode(int argc, char **argv) {
                 }
                 int n = 0;
                 for (int p = 0; p < NET_PLAYERS; p++) n += net.names[p][0] != 0;
+                if (lobby_available()) {
+                    lobby_publish(net_local_name(), n);
+                    static int was;
+                    int l = lobby_listed();
+                    if (l != was && l != LOBBY_WORKING) { printf("net: public list: %s\n", l == LOBBY_OK ? "listed" : lobby_why()); fflush(stdout); }
+                    was = l;
+                }
                 if (n >= want) break;
                 usleep(1000);
             }
+            lobby_unpublish();
             for (int i = 0; i < 1000; i++) { net_poll(); usleep(1000); }   // a few pings: the delay
             uint32_t ext;
             const char *why;
@@ -404,6 +415,19 @@ static int as_mode(int argc, char **argv) {
             const char *addr = getenv("NET_ADDR") ? getenv("NET_ADDR") : "127.0.0.1";
             uint32_t ip = getenv("NET_CODE") ? net_code_addr(getenv("NET_CODE")) : inet_addr(addr);
             if (getenv("NET_CODE") && !ip) { printf("net: %s isn't a game code\n", getenv("NET_CODE")); return 1; }
+            if (getenv("NET_PUBLIC")) {   // the first game in the public list
+                LobbyGame g[LOBBY_MAX];
+                int n = 0;
+                for (int i = 0; i < 100 && !n; i++) {
+                    lobby_refresh();
+                    usleep(100000);
+                    while (lobby_list_state() == LOBBY_WORKING) usleep(10000);
+                    n = lobby_games(g, LOBBY_MAX);
+                }
+                for (int i = 0; i < n; i++) printf("net: public game %s %d/4 at %s\n", g[i].name, g[i].players, inet_ntoa(*(struct in_addr *)&g[i].addr));
+                if (!n) { printf("net: no public games (%s)\n", lobby_why()); return 1; }
+                ip = g[0].addr;
+            }
             if (!net_join(ip, prof, plen)) { printf("net: %s\n", net.error); return 1; }
             for (int i = 0; i < 30000 && net.state != NET_PLAYING && net.state != NET_LOST; i++) { net_poll(); usleep(1000); }
         }
@@ -1010,12 +1034,12 @@ static int help_mode(int argc, char **argv) {
         }
     }
     {   // the Wi-Fi lobby's pages (as main.c builds them)
-        static const char *menu[] = {"Host a Game", "Join on this Wi-Fi", "Join by Game Code"};
-        HbPage pages[4] = {{0}};
-        pages[0] = (HbPage){.title = "Multiplayer", .nlines = 3, .chosen = 0, .code_chosen = -1,
-                            .note = "Play on the same Wi-Fi, or online with a game code.",
+        static const char *menu[] = {"Host a Game", "Host a Public Game", "Join on this Wi-Fi", "Join by Game Code", "Public Games"};
+        HbPage pages[6] = {{0}};
+        pages[0] = (HbPage){.title = "Multiplayer", .nlines = 5, .chosen = 4, .code_chosen = -1,
+                            .note = "Games anyone can join, from all over.",
                             .accept = "Select", .back = "Back"};
-        for (int i = 0; i < 3; i++) pages[0].line[i] = menu[i];
+        for (int i = 0; i < 5; i++) pages[0].line[i] = menu[i];
         pages[1] = (HbPage){.title = "Your Game", .nlines = 4, .chosen = -1, .code = "A88M-AS9",
                             .code_chosen = -1, .code_line = 4, .note = "Game code: friends over the internet join with it",
                             .accept = "Play", .back = "Close"};
@@ -1030,7 +1054,19 @@ static int help_mode(int argc, char **argv) {
                             .back = "Back"};
         pages[3].line[0] = "Jah   1/4";
         pages[3].line[1] = "Alex   2/4";
-        for (int i = 0; i < 4; i++) {
+        pages[4] = (HbPage){.title = "Public Games", .nlines = 3, .chosen = 0, .code_chosen = -1, .accept = "Join",
+                            .back = "Back"};
+        pages[4].line[0] = "Jah   1/4";
+        pages[4].line[1] = "KnightFan99   3/4";
+        pages[4].line[2] = "PS Vita   2/4";
+        pages[5] = (HbPage){.title = "Your Public Game", .nlines = 4, .chosen = -1, .code = "A88M-AS9",
+                            .code_chosen = -1, .code_line = 4, .note = "In the Public Games list: anyone can join",
+                            .accept = "Play", .back = "Close"};
+        pages[5].line[0] = "1   Jah  (you)";
+        pages[5].line[1] = "2   waiting...";
+        pages[5].line[2] = "3   waiting...";
+        pages[5].line[3] = "4   waiting...";
+        for (int i = 0; i < 6; i++) {
             pages[i].alpha = 1;
             pages[i].time = 0.4f;
             if (i == 3) { pages[i].turn = HB_TURN_SECONDS * 0.4f; pages[i].turn_dir = 1; }   // mid-turn
