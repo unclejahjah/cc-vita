@@ -17,6 +17,7 @@
 #ifdef __vita__
 #include <psp2/apputil.h>
 #include <psp2/kernel/processmgr.h>
+#include <psp2/kernel/threadmgr.h>
 #include <psp2/net/net.h>
 #include <psp2/net/netctl.h>
 #include <psp2/sysmodule.h>
@@ -28,12 +29,17 @@
 #define TCP_PORT 47710         // the host's lobby
 #define UDP_PORT 47711         // the host's frames
 #define BEACON_PORT 47712      // "a game here", broadcast by the host
-#define RING 256               // frames kept (lockstep keeps everyone within net.slowest of each other)
+#define RING 256               // frames kept (lockstep keeps everyone within a delay of each other)
 #define MAX_SEND 32            // frames or inputs in one packet
 #define RESEND_MS 30           // nothing new: repeat the last packet this often (not every poll: a
                                // phone's connection queues them up for seconds)
 #define TIMEOUT_MS 45000       // nothing heard for this long: that Vita is gone (a file can take 15 s to load)
 #define MAX_PROFILE (3 * 65536)
+#define IO_US 1000             // the frames' thread looks for packets this often
+#define TUNE_MS 2000           // a joiner a frame early (or behind) all this time takes a frame off
+#define RAISE_MS 500           // after a frame more, this long before another (it takes a round trip to show)
+#define HOLD_MS 10000          // and this long before trying one less again
+#define HITCH_MS 120           // a gap between frames this long on this Vita: its own, not the network's
 
 enum { MSG_HELLO = 1, MSG_WELCOME, MSG_REFUSE, MSG_ROSTER, MSG_START, MSG_BYE, MSG_PING, MSG_PONG };
 
@@ -248,6 +254,34 @@ static NetInput mine[RING];         // this Vita's inputs
 static uint32_t mine_have;          // submitted 0..mine_have-1
 static uint32_t mine_acked;         // client: the host has 0..mine_acked-1
 static uint8_t g_active;            // host: ports in the game now
+static int g_start_delay;           // this Vita's delay at the start: its inputs 0..g_start_delay-1 are empty
+static uint32_t g_want;             // the frame the game here asked for last
+static int g_got;                   // and it was there
+static int g_fixed;                 // NET_DELAY: the delays stay as they are
+// joiner: how early its buttons get to the host (frames: 0 the host is waiting for them), and
+// how far behind the host it runs (frames here before they're needed), over the last TUNE_MS
+static int g_early_min, g_stalled, g_behind_min, g_catchup;
+static uint32_t g_tune_ms, g_raised_ms, g_hitch_ms, g_adapt_ms, g_asked;
+
+// The frames' packets are sent and read on a thread as they come (the game's loop only gets to
+// them once a picture, up to 33 ms later), under g_lock with everything the game calls.
+static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
+static void game_io(void);
+static void *io_thread(void *arg) {
+    (void)arg;
+    for (;;) {
+        pthread_mutex_lock(&g_lock);
+        int playing = net.state == NET_PLAYING;
+        if (playing) game_io();
+        pthread_mutex_unlock(&g_lock);
+#ifdef __vita__
+        sceKernelDelayThread(playing ? IO_US : 20000);
+#else
+        usleep(playing ? IO_US : 20000);
+#endif
+    }
+    return NULL;
+}
 
 int net_init(void) {
     if (g_ready) return 1;
@@ -261,6 +295,14 @@ int net_init(void) {
 #endif
     for (int i = 0; i < NET_PLAYERS; i++) peers[i].c.s = -1;
     g_host.s = -1;
+    pthread_t th;
+    pthread_attr_t at;
+    pthread_attr_init(&at);
+    pthread_attr_setstacksize(&at, 64 * 1024);
+    pthread_attr_setdetachstate(&at, PTHREAD_CREATE_DETACHED);
+    int bad = pthread_create(&th, &at, io_thread, NULL);   // (without it: once a picture, as net_poll)
+    pthread_attr_destroy(&at);
+    (void)bad;
     g_ready = 1;
     return 1;
 }
@@ -308,9 +350,17 @@ static void reset_game(void) {
     // the first frames have no buttons: nobody read any yet (net.first for the host's,
     // net.delay for this Vita's)
     frames_have = net.first;
-    mine_have = net.delay;
+    mine_have = g_start_delay = net.delay;
     mine_acked = 0;
     net_desync_tick = 0;
+    g_fixed = getenv("NET_DELAY") != NULL;
+    g_want = g_asked = 0;
+    g_got = 1;
+    g_early_min = g_behind_min = 1 << 30;
+    g_stalled = g_catchup = 0;
+    g_tune_ms = g_adapt_ms = now_ms();
+    g_raised_ms = g_tune_ms - HOLD_MS;   // (free to come down from the start)
+    g_hitch_ms = 0;
 }
 
 // ---- host ----
@@ -439,7 +489,15 @@ static uint32_t ping_ms(const Peer *pe) {
     return n ? v[n / 2] : 0;
 }
 
+static int start_game(void);
 int net_start(void) {
+    pthread_mutex_lock(&g_lock);
+    int r = start_game();
+    pthread_mutex_unlock(&g_lock);
+    return r;
+}
+
+static int start_game(void) {
     if (net.state != NET_HOSTING) return 0;
     net.seed = now_ms() * 2654435761u ^ 0x5bd1e995u;
     g_active = 1;
@@ -448,14 +506,15 @@ int net_start(void) {
         g_active |= peers[p].used << p;
         if (peers[p].used && ping_ms(&peers[p]) > rtt) rtt = ping_ms(&peers[p]);
     }
-    // A joiner's buttons go to the host and back (in a frame) before that frame runs: the
-    // furthest player's round trip in frames, and some to spare. The host's own only have to
-    // reach the others, and the joiners settle that far behind the host by themselves, so the
-    // host's need just the spare.
-    net.slowest = NET_SPARE + (rtt * 30 + 999) / 1000;
-    if (net.slowest < NET_DELAY) net.slowest = NET_DELAY;
+    // Between them the host's buttons and a joiner's cover the round trip: the host's go out
+    // to the joiners (who settle that far behind the host by themselves), a joiner's come back
+    // to the host by the time it runs that frame. The host's take half of it, at least a
+    // frame; the joiners start with the rest and some to spare, and then follow the network.
+    int trip = (rtt * 30 + 999) / 1000;
+    net.first = trip / 2 < NET_MIN_DELAY ? NET_MIN_DELAY : trip / 2;
+    net.slowest = trip - net.first + NET_SPARE;
+    if (net.slowest < NET_MIN_DELAY + 1) net.slowest = NET_MIN_DELAY + 1;
     if (net.slowest > NET_MAX_DELAY) net.slowest = NET_MAX_DELAY;
-    net.first = NET_SPARE;
     if (getenv("NET_DELAY")) net.first = net.slowest = atoi(getenv("NET_DELAY"));
     net.delay = net.first;
     // the start: seed, delay, who's in, names, then each port's profile
@@ -576,7 +635,11 @@ static void host_game(void) {
         int count = frames_have > first ? frames_have - first : 0;
         if (count > MAX_SEND) count = MAX_SEND;
         memcpy(buf, "CCF", 3);
-        buf[3] = 0;
+        // how many frames early its buttons are here, after the next frame the game here needs
+        // (0: they're due now), or -1: the game is waiting for them
+        uint32_t next = g_got ? g_want + 1 : g_want;
+        int early = !g_got && pe->in_have <= g_want ? -1 : (int)(pe->in_have - next);
+        buf[3] = (uint8_t)(int8_t)(early < -100 ? -100 : early > 100 ? 100 : early);
         put32(buf + 4, pe->in_have);
         put32(buf + 8, first);
         buf[12] = count;
@@ -805,6 +868,10 @@ static void client_game(void) {
         g_host_heard = t;
         uint32_t have = get32(buf + 4), first = get32(buf + 8);
         if (have > mine_acked && have <= mine_have) mine_acked = have;
+        int early = (int8_t)buf[3];
+        if (early < g_early_min) g_early_min = early;
+        // (not while this Vita's own hitch shows, nor what was on its way when it last sent sooner)
+        if (early < 0 && t - g_hitch_ms > 1000 && t - g_raised_ms > RAISE_MS) g_stalled = 1;
         int count = buf[12];
         for (int i = 0; i < count && 13 + (i + 1) * FRAME_BYTES <= n; i++) {
             uint32_t k = first + i;
@@ -828,7 +895,7 @@ static void client_game(void) {
     g_sent_ms = t;
     g_sent_mine = mine_have;
     g_sent_frames = frames_have;
-    uint32_t first = mine_acked < (uint32_t)net.delay ? (uint32_t)net.delay : mine_acked;
+    uint32_t first = mine_acked < (uint32_t)g_start_delay ? (uint32_t)g_start_delay : mine_acked;
     int count = mine_have > first ? mine_have - first : 0;
     if (count > MAX_SEND) count = MAX_SEND;
     memcpy(buf, "CCI", 3);
@@ -840,23 +907,28 @@ static void client_game(void) {
     sendto(s_udp, buf, 13 + count * INPUT_BYTES, 0, (struct sockaddr *)&g_host_udp, sizeof g_host_udp);
 }
 
+static void game_io(void) {
+    if (net.port == 1) host_game();
+    else client_game();
+}
+
 void net_poll(void) {
+    pthread_mutex_lock(&g_lock);
     switch (net.state) {
     case NET_HOSTING: host_lobby(); break;
     case NET_SCANNING: scan_poll(); break;
     case NET_CONNECTING: client_connecting(); break;
     case NET_JOINING: case NET_LOBBY: client_lobby(); break;
-    case NET_PLAYING:
-        if (net.port == 1) host_game();
-        else client_game();
-        break;
+    case NET_PLAYING: game_io(); break;
     }
     for (int p = 1; p < NET_PLAYERS; p++)
         if (peers[p].c.s >= 0) conn_flush(&peers[p].c);
     if (g_host.s >= 0) conn_flush(&g_host);
+    pthread_mutex_unlock(&g_lock);
 }
 
 void net_leave(void) {
+    pthread_mutex_lock(&g_lock);
     for (int p = 1; p < NET_PLAYERS; p++)
         if (peers[p].c.s >= 0) { conn_send(&peers[p].c, MSG_BYE, NULL, 0, NULL, 0); conn_flush(&peers[p].c); }
     if (g_host.s >= 0) { conn_send(&g_host, MSG_BYE, NULL, 0, NULL, 0); conn_flush(&g_host); }
@@ -865,6 +937,7 @@ void net_leave(void) {
     close_all();
     net.state = NET_OFF;
     net.port = 0;
+    pthread_mutex_unlock(&g_lock);
 }
 
 const uint8_t *net_profile(int port, int *len) {
@@ -873,13 +946,70 @@ const uint8_t *net_profile(int port, int *len) {
 }
 
 const NetFrame *net_frame(uint32_t t) {
-    return net.state == NET_PLAYING && t < frames_have && t + RING > frames_have ? &frames[t % RING] : NULL;
+    pthread_mutex_lock(&g_lock);
+    // (asked every picture, waiting or not: a gap is this Vita held up, and what the host saw
+    // meanwhile isn't the network)
+    uint32_t now = now_ms();
+    if (now - g_adapt_ms > HITCH_MS) { g_hitch_ms = now; g_stalled = 0; }
+    g_adapt_ms = now;
+    const NetFrame *f = net.state == NET_PLAYING && t < frames_have && t + RING > frames_have ? &frames[t % RING] : NULL;
+    if (t >= g_want) { g_want = t; g_got = f != NULL; }
+    if (f && net.port != 1 && t >= g_asked) {   // joiner: frames here before they're needed
+        g_asked = t + 1;
+        int behind = (int)(frames_have - t);
+        if (behind < g_behind_min) g_behind_min = behind;
+    }
+    pthread_mutex_unlock(&g_lock);
+    return f;
+}
+
+void net_adapt(uint32_t t) {
+    (void)t;
+    pthread_mutex_lock(&g_lock);
+    uint32_t now = now_ms();
+    if (net.port != 1 && !g_fixed && net.state == NET_PLAYING) {
+        int end = now - g_tune_ms >= TUNE_MS;
+        if (g_stalled && net.delay < NET_MAX_DELAY) {
+            net.delay++;   // the host waited for these buttons: send them a frame sooner
+            g_raised_ms = now;
+            end = 1;
+        } else if (end && now - g_hitch_ms > TUNE_MS && now - g_raised_ms > HOLD_MS && g_early_min >= 1 &&
+                   g_early_min < (1 << 30) && net.delay > NET_MIN_DELAY) {
+            net.delay--;   // a frame early all along: a frame less
+        }
+        // a frame to spare all along (so it doesn't wait at every one) and one more: a frame sooner
+        if (end && now - g_hitch_ms > TUNE_MS && g_behind_min >= 3 && g_behind_min < (1 << 30)) g_catchup = 1;
+        if (end) {
+            g_tune_ms = now;
+            g_early_min = g_behind_min = 1 << 30;
+            g_stalled = 0;
+        }
+    }
+    pthread_mutex_unlock(&g_lock);
+}
+
+uint32_t net_submitted(void) {
+    pthread_mutex_lock(&g_lock);
+    uint32_t n = mine_have;
+    pthread_mutex_unlock(&g_lock);
+    return n;
 }
 
 void net_submit(uint32_t t, const NetInput *in) {
-    if (t != mine_have || t >= frames_have + RING - net.delay - 1) return;
-    mine[t % RING] = *in;
-    mine_have++;
+    pthread_mutex_lock(&g_lock);
+    if (t == mine_have && t < frames_have + RING / 2) {
+        mine[t % RING] = *in;
+        mine_have++;
+    }
+    pthread_mutex_unlock(&g_lock);
+}
+
+int net_catch_up(void) {
+    pthread_mutex_lock(&g_lock);
+    int c = g_catchup;
+    g_catchup = 0;
+    pthread_mutex_unlock(&g_lock);
+    return c;
 }
 
 // ---- the game code: the host's internet address, in 7 letters and numbers ----

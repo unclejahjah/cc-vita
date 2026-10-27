@@ -1757,6 +1757,9 @@ new_game:   // the title again after Exit to Main Menu
             }
             const char *want = netplay_file_wanted();   // a level file every Vita must have first
             if (want && !vita_prefetch(vm, want)) netplay_file_ready();
+            if (net_catch_up()) acc += tick_us;   // further behind the host than need be: a frame more
+            static int logged_delay;
+            if (net.delay != logged_delay) { logged_delay = net.delay; log_line("Wi-Fi game: delay now %d frames", net.delay); }
         }
 #endif
         int ticked = 0, stalled = 0;
@@ -1774,7 +1777,14 @@ new_game:   // the title again after Exit to Main Menu
                 mine.buttons = buttons;
                 mine.state = g_net_state;
                 int lv = in_level(vm), om = !lv && in_map(vm);
-                if (!netplay_step(vm, net_tick, &mine, lv || om)) { acc = tick_us; stalled = 1; break; }
+                int ok = netplay_step(vm, net_tick, &mine, lv || om);
+                // not here yet: it's often on its way, a millisecond or two off; wait a little
+                // for it rather than a whole picture (the first frame of a pass only)
+                for (int w = 0; !ok && !ticked && w < 8; w++) {
+                    sceKernelDelayThread(500);
+                    ok = netplay_step(vm, net_tick, &mine, lv || om);
+                }
+                if (!ok) { acc = tick_us; stalled = 1; break; }
                 g_net_state = 0;
                 net_tick++;
             }
