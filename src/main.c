@@ -1407,6 +1407,7 @@ static int title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, siz
     AsMc *panel = NULL;
     AsMc *modes = NULL;   // Local Game's book of modes (Castle Crashers, Arena, All You Can Quaff)
     int item = 0, message = 0, mode = 0;
+    const char *message_text = unavailable;   // shown for a while when message is set
     cc_game_mode = CC_MODE_STORY;
     static Pause controls;   // Help & Options: the pause menu's Help & Options list and its books
     SceCtrlData pad, old = {0};
@@ -1451,22 +1452,32 @@ static int title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, siz
                 cc_menu_highlight(t, panel, g_menu_order[item]);
             }
         } else if (modes && pressed) {
-            // the hand goes where the pictures are: Castle Crashers on the right page, All You
-            // Can Quaff at the top of the left one, Arena under it
-            enum { M_STORY, M_ARENA, M_QUAFF };
+            // the hand goes where the pictures are: Castle Crashers on the right page and
+            // Volleyball under it, All You Can Quaff at the top of the left one and Arena under it
+            enum { M_STORY, M_ARENA, M_QUAFF, M_VOLLEY };
+            static const int left[] = {M_QUAFF, M_ARENA, M_QUAFF, M_ARENA}, right[] = {M_STORY, M_VOLLEY, M_STORY, M_VOLLEY},
+                             up[] = {M_STORY, M_QUAFF, M_QUAFF, M_STORY}, down[] = {M_VOLLEY, M_ARENA, M_ARENA, M_VOLLEY};
             int to = mode;
-            if (pressed & SCE_CTRL_LEFT) to = mode == M_STORY ? M_QUAFF : mode;
-            if (pressed & SCE_CTRL_RIGHT) to = M_STORY;
-            if (pressed & SCE_CTRL_UP) to = mode == M_QUAFF ? mode : M_QUAFF;
-            if (pressed & SCE_CTRL_DOWN) to = mode == M_ARENA ? mode : M_ARENA;
+            if (pressed & SCE_CTRL_LEFT) to = left[mode];
+            if (pressed & SCE_CTRL_RIGHT) to = right[mode];
+            if (pressed & SCE_CTRL_UP) to = up[mode];
+            if (pressed & SCE_CTRL_DOWN) to = down[mode];
             if (to != mode) {
                 cc_modemenu_point(t, modes, mode, to);
                 mode = to;
                 audio_sfx_play("sound_toggle_b.wav", 1, 0, 0, &controls);
             }
+            char vmenu[256];
+            int is_level;
+            if ((pressed & SCE_CTRL_CROSS) && mode == M_VOLLEY && !find_file("VMENU.swf", vmenu, sizeof vmenu, &is_level)) {
+                // the court picker comes from the PS3 version's files, not the PC's
+                message_text = "Volleyball needs VMENU.swf (from the PS3 game) in " DATA_DIR "game";
+                message = 30 * 5;
+                pressed &= ~SCE_CTRL_CROSS;
+            }
             if (pressed & SCE_CTRL_CROSS) {
                 audio_sfx_play("sound_player_select.wav", 1, 0, 0, &controls);
-                static const int game_mode[CC_MODE_ITEMS] = {CC_MODE_STORY, CC_MODE_ARENA, CC_MODE_QUAFF};
+                static const int game_mode[CC_MODE_ITEMS] = {CC_MODE_STORY, CC_MODE_ARENA, CC_MODE_QUAFF, CC_MODE_VOLLEYBALL};
                 cc_game_mode = game_mode[mode];
 #ifdef CC_NET
                 if (g_wifi.page == W_MODE) {   // the host's pick: everyone starts it now
@@ -1534,6 +1545,7 @@ static int title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, siz
         if (acc > 2 * tick_us) acc = 2 * tick_us;
         int ticked = 0;
         while (acc >= tick_us) {
+            if (modes) cc_modemenu_tick(t, modes);
             as_tick(t);
             as_gc(t);
             acc -= tick_us;
@@ -1600,8 +1612,8 @@ static int title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, siz
         }
         if (message > 0) {
             message--;
-            int w = vita2d_pgf_text_width(g_font, 1.0f, unavailable);
-            outlined_text((SCREEN_W - w) / 2, SCREEN_H - 24, 1.0f, unavailable);
+            int w = vita2d_pgf_text_width(g_font, 1.0f, message_text);
+            outlined_text((SCREEN_W - w) / 2, SCREEN_H - 24, 1.0f, message_text);
         }
         if (controls.open) pause_draw(&controls);
 #ifdef CC_NET
@@ -1850,6 +1862,7 @@ new_game:   // the title again after Exit to Main Menu
             }
 #endif
             SceUInt64 t0 = sceKernelGetProcessTimeWide();
+            cc_volleyball_tick(vm);
             as_tick(vm);
             SceUInt64 t1 = sceKernelGetProcessTimeWide();
             as_gc(vm);
@@ -1868,6 +1881,7 @@ new_game:   // the title again after Exit to Main Menu
             pause.open = 0;
             EXIT_TRACE("exit: the game quit to the menu");
         }
+        if (cc_save_requested && cc_game_mode == CC_MODE_VOLLEYBALL) cc_save_requested = 0;   // a mini game
         if (cc_save_requested) {
             cc_save_requested = 0;
 #ifdef CC_NET
@@ -2013,8 +2027,12 @@ new_game:   // the title again after Exit to Main Menu
             cc_storage_clear();
             cc_storage_load(SAVE_PATH);
             g_netgame = 0;
-        }
+        } else
 #endif
+        if (cc_game_mode == CC_MODE_VOLLEYBALL) {   // the matches leave the story as it was saved
+            cc_storage_clear();
+            cc_storage_load(SAVE_PATH);
+        }
         // Nothing loads while the files go: a file still loading is taken in first. The title's
         // own files stay (as if just preloaded), so the title loads nothing in the background:
         // a background load there (lobby.swf) froze the Vita in the title's drawing, ~3 s in.

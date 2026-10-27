@@ -21,8 +21,12 @@ void cc_port_keys(int port, uint32_t buttons);
 // Wi-Fi play: which port this Vita's player is (1..4; 0 when not in a Wi-Fi game) and every
 // port's player name ("" for nobody). Achievements count for this Vita's player only.
 // Local Game's modes, as GetGameMode() reports them
-enum { CC_MODE_STORY = 0, CC_MODE_QUAFF = 1, CC_MODE_ARENA = 3 };
+// (CC_MODE_VOLLEYBALL is the PS3's volleyball mini game, its mode 1: cc_volleyball_tick sends
+// character select on to the PS3's court picker (VMENU.swf) and makes MAIN.swf play as the PS3's
+// does in that mode; nothing of it is saved)
+enum { CC_MODE_STORY = 0, CC_MODE_QUAFF = 1, CC_MODE_ARENA = 3, CC_MODE_VOLLEYBALL = 10 };
 extern int cc_game_mode;
+void cc_volleyball_tick(AsVm *vm);   // before every game tick
 extern int cc_quit_requested;   // a mini game called QuitTo/ChangeMovie: back to the title
 extern int cc_net_port;
 extern char cc_net_names[4][32];
@@ -42,8 +46,10 @@ extern int cc_menu_wifi;
 AsMc *cc_menu_attach(AsVm *vm, float x, float y);
 // Local Game's mode menu (MENU.swf "modemenu") on _root at (x, y), its hand on Castle
 // Crashers; cc_modemenu_point moves the hand from one item to another (0 Castle Crashers,
-// 1 Arena, 2 All You Can Quaff)
-#define CC_MODE_ITEMS 3
+// 1 Arena, 2 All You Can Quaff, 3 Volleyball: under Castle Crashers, where the right page's
+// scribbles were); cc_modemenu_tick eases the hand down to Volleyball and back
+#define CC_MODE_ITEMS 4
+void cc_modemenu_tick(AsVm *vm, AsMc *menu);
 AsMc *cc_modemenu_attach(AsVm *vm, float x, float y);
 void cc_modemenu_point(AsVm *vm, AsMc *menu, int from, int to);
 void cc_menu_highlight(AsVm *vm, AsMc *panel, int item);

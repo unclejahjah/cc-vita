@@ -324,6 +324,8 @@ static int fake_prefetch(AsVm *vm, const char *url) {
     return 0;
 }
 
+static AsMc *g_modes;   // the title's book of modes (CC_MODE_ITEM)
+
 static int as_mode(int argc, char **argv) {
     if (argc < 5) { fprintf(stderr, "usage: %s --as GAME_DIR START.swf out_prefix [frames] [snap_every]\n", argv[0]); return 1; }
     snprintf(game_dir, sizeof game_dir, "%s", argv[2]);
@@ -611,6 +613,8 @@ static int as_mode(int argc, char **argv) {
         extern double as_time_ms(void);
         double t0 = as_time_ms();
         long long ops0 = vm->ops;
+        cc_volleyball_tick(vm);
+        if (g_modes) cc_modemenu_tick(vm, g_modes);
         if (covering != 1) as_tick(vm);
         double tg = as_time_ms();
         size_t heap0 = vm->heap_count;
@@ -675,7 +679,7 @@ static int as_mode(int argc, char **argv) {
                     if (panel) cc_menu_highlight(vm, panel, getenv("CC_MENU_ITEM") ? atoi(getenv("CC_MENU_ITEM")) : 0);
                     if (panel && getenv("CC_MODE_ITEM")) {   // Local Game's mode menu, its hand on that item
                         panel->visible = 0;
-                        AsMc *mm = cc_modemenu_attach(vm, atof(getenv("CC_MODE_X")), atof(getenv("CC_MODE_Y")));
+                        AsMc *mm = g_modes = cc_modemenu_attach(vm, atof(getenv("CC_MODE_X")), atof(getenv("CC_MODE_Y")));
                         if (mm && getenv("CC_MODE_SCALE")) {
                             as_set(vm, as_objv(&mm->obj), as_atom(vm, "_xscale"), as_num(atof(getenv("CC_MODE_SCALE"))));
                             as_set(vm, as_objv(&mm->obj), as_atom(vm, "_yscale"), as_num(atof(getenv("CC_MODE_SCALE"))));
@@ -685,6 +689,9 @@ static int as_mode(int argc, char **argv) {
                             }
                         }
                         if (mm) cc_modemenu_point(vm, mm, 0, atoi(getenv("CC_MODE_ITEM")));
+                        for (const char *h = getenv("CC_MODE_HIDE"); mm && h && *h; h = strchr(h, ',') ? strchr(h, ',') + 1 : "")
+                            for (int i = 0; i < mm->ndisp; i++)   // CC_MODE_HIDE="depth,...": finding the book's art
+                                if (mm->disp[i].depth == atoi(h) - 16384) { mm->disp[i].m.a = mm->disp[i].m.d = mm->disp[i].m.b = mm->disp[i].m.c = 0; if (mm->disp[i].mc) mm->disp[i].mc->visible = 0; }
                     }
                 }
             }
