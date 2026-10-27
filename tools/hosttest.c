@@ -485,8 +485,23 @@ static int as_mode(int argc, char **argv) {
                 file_wait = 0;
             }
             if (getenv("NET_JITTER")) usleep(rand() % (atoi(getenv("NET_JITTER")) * 1000 + 1));
+            // NET_FPS=30: frames at the Vita's pace (else as fast as they come), catching up as it does
+            static double next_us;
+            static int waits, last_delay = -1;
+            if (getenv("NET_FPS")) {
+                struct timespec ts;
+                clock_gettime(CLOCK_MONOTONIC, &ts);
+                double now = ts.tv_sec * 1e6 + ts.tv_nsec / 1e3, step = 1e6 / atoi(getenv("NET_FPS"));
+                if (net_catch_up()) next_us -= step;
+                if (next_us < now - 2 * step) next_us = now - 2 * step;
+                if (next_us > now) usleep((useconds_t)(next_us - now));
+                next_us += step;
+            }
+            if (net.delay != last_delay) { printf("net: frame %d, delay %d\n", f, net.delay); last_delay = net.delay; }
+            if (f > 0 && f % 300 == 0) { printf("net: frame %d, %d frames waited for so far\n", f, waits); fflush(stdout); }
             int waited = 0;
             while (!netplay_step(vm, f, &in, 0)) {
+                if (!waited) waits++;
                 net_poll();
                 // ~60 s, as long as a Vita waits (the host's slow file loads take ~15 s)
                 if (net.state != NET_PLAYING || ++waited > 120000) { printf("net: stopped at frame %d (%s)\n", f, net.error); return 1; }

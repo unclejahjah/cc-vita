@@ -319,7 +319,7 @@ and Help & Options; Host a game / Join a game (hosts found by UDP broadcast on t
 - Each Vita saves only its own player (cc_storage_save_as: port n -> its save's port 0) and
   counts only its own achievements; leaving reloads its save.
 - PC test (hosttest): NET_MODE=host|join, NET_PORT, NET_WAIT, NET_ADDR, CC_PAD="frame:CCB bit[:hold]",
-  NET_JITTER, CC_PREFETCH, NET_LOG, NET_TEST_DESYNC. E.g. host
+  NET_JITTER, CC_PREFETCH, NET_LOG, NET_TEST_DESYNC, NET_FPS=30 (Vita pace). E.g. host
   CC_PAD="150:14,300:1,450:0,600:1,750:14" and join CC_PAD="230:14,330:1" (P2 joins as Red).
   Checked: 2 and 3 copies stay in step through LEVEL4 fights with random lag, slow loads and
   file freeing on one side; a forced difference is caught; a leaver is dropped.
@@ -334,11 +334,17 @@ and Help & Options; Host a game / Join a game (hosts found by UDP broadcast on t
   the HUD over their portrait (hosttest CC_NAMETAGS="a,b" sets the names) (netplay_hud_names: hud<n>.stats.textstuff.gamertag/bg), and
   the Vita's own notes (waiting, out of step, why a game ended) use the game font (game_text). A shared provider address (CGNAT, 100.64/10 or
   private) says "Wi-Fi only" with the reason. Joining connects on a thread (NET_CONNECTING).
-  The delay is per game and per side (sent in START): the host's buttons NET_SPARE (3) frames,
-  the joiners' 3 + the furthest joiner's round trip in frames (median of the lobby's
-  MSG_PING/PONG, every 250 ms), 4 to 15. The joiners settle behind the host by themselves.
-  The state checks in the inputs are all of frame k - slowest - 1 (the host keeps a few old
-  ones). NET_VERSION 3. tools: a lag proxy (Python, delays TCP+UDP both ways) checked 200 ms. hosttest: NET_CODE, NET_DELAY,
+  Input delay (2026-10-27, NET_VERSION 4): the game's UDP is sent and read on its own thread
+  (io_thread, every 1 ms, under g_lock) instead of once a picture. Start delays from the lobby's
+  round trip (median MSG_PING/PONG, frames): host trip/2 (at least 1), joiners trip - host + 2.
+  Each CCF packet's byte 3 tells the joiner how early its buttons got to the host (-1: the host is
+  waiting for them); the joiner adds a frame on a wait (then 0.5 s pause, 10 s before coming
+  down again) and takes one off after 2 s at 1+ frames early (net_adapt: one input skipped, or
+  the same one twice). A joiner with 3+ frames in hand for 2 s runs one extra (net_catch_up).
+  Own hitches (>120 ms between asks) don't count. NET_DELAY fixes both. Main loop waits up to
+  4 ms for a frame that's due. The state checks are all of frame k - NET_MAX_DELAY - 1.
+  Measured in hosttest (NET_FPS=30, lag proxy): ~5 ms Wi-Fi: host 1, joiner 1-3 (was 3/4);
+  50+-15 ms each way: host 1, joiner 5-7 (was 3/6). tools: a lag proxy (Python, delays TCP+UDP both ways) checked 200 ms. hosttest: NET_CODE, NET_DELAY,
   UPNP_ROUTER (and a pretend router was used to test it: SSDP + SOAP in Python).
 
 ### Bears walking along the top of Tall Grass Field (2026-10-27, thread "Fix bears leaving grassy fields")
