@@ -1869,6 +1869,9 @@ int main(void) {
     cc_achievements_load(ACH_PATH);
 #ifdef CC_TROPHIES
     int trophies = trophies_init();   // with NoTrpDrm; earned achievements are synced below
+    if (trophies < 0) log_line("trophies off (0x%08X): is NoTrpDrm under *main?", (unsigned)trophies);
+    else log_line("trophies on");
+    trophies = trophies > 0;
 #else
     int trophies = 0;
 #endif

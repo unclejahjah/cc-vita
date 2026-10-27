@@ -69,18 +69,18 @@ endif()
 
 # Vita trophies (need the NoTrpDrm plugin): an unsigned trophy pack and its NP communication id.
 # TROPHY_ICONS=dir: your own ICON0.PNG / TROPnnn.PNG instead of the drawn ones.
-# On hold (2026-10-20): every build with the trophy code, even without the pack, failed to start
-# on Jah's Vita ("Could not prepare the application to start") with NoTrpDrm installed.
+# Set up like Rinnegatamante's own NoTrpDrm ports (World of Goo): unsafe self, plain
+# SceNpTrophy stub, and NO NP_COMMUNICATION_ID in param.sfo (with it the 2026-10-20 builds
+# failed to start: "Could not prepare the application to start").
 option(CC_TROPHIES "Vita trophies through NoTrpDrm (experimental)" OFF)
 set(TROPHY_ICONS "" CACHE PATH "folder with trophy icons")
 if(CC_TROPHIES)
 target_sources(${PROJECT_NAME} PRIVATE src/trophies.c)
 target_compile_definitions(${PROJECT_NAME} PRIVATE CC_TROPHIES)
-target_link_libraries(${PROJECT_NAME} SceNpTrophy_stub_weak)
+target_link_libraries(${PROJECT_NAME} SceNpTrophy_stub)
 add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/TROPHY.TRP
   COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/tools/make_trp.py ${CMAKE_CURRENT_BINARY_DIR}/TROPHY.TRP ${TROPHY_ICONS}
   DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/tools/make_trp.py)
-set(VITA_MKSFOEX_FLAGS "${VITA_MKSFOEX_FLAGS} -s NP_COMMUNICATION_ID=CCRV00001_00")
 set(TROPHY_FILES FILE ${CMAKE_CURRENT_BINARY_DIR}/TROPHY.TRP sce_sys/trophy/CCRV00001_00/TROPHY.TRP)
 endif()
 
