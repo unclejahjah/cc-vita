@@ -759,7 +759,7 @@ static void pads_read(SceCtrlData *p1, int extra) {
     static SceCtrlPortInfo info;
     if (frames++ % 30 == 0 && sceCtrlGetControllerPortInfo(&info) < 0) memset(&info, 0, sizeof info);
     // the sticks from the plain read only, as before more pads (with the Ext2 reads' sticks
-    // they did nothing in a level on Jah's PS TV); Ext2 only gives the buttons (L1/R1, L2/R2)
+    // they did nothing in a level on Jah's Vita); Ext2 only gives the buttons (L1/R1, L2/R2)
     sceCtrlPeekBufferPositive(0, p1, 1);
     SceCtrlData q;
     if (pad_read_ext(0, &q)) {
