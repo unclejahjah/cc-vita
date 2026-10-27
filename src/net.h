@@ -27,7 +27,7 @@
 #define NET_MAX_DELAY 15       // the most, however far away someone is (half a second)
 #define NET_CODE_LEN 7
 #define NET_NAME 32
-#define NET_VERSION 4          // both sides must have the same: the frame format and the game code
+#define NET_VERSION 5         // both sides must have the same: the frame format and the game code
 
 // One player's part of a frame.
 typedef struct {
@@ -61,6 +61,7 @@ typedef struct {
     int delay;                 // frames between reading this Vita's buttons and using them (now)
     int first;                 // the host's delay: frames 0..first-1 have no buttons
     int slowest;               // the joiners' delay at the start: their frames 0..slowest-1 have none
+    int mode;                  // what the host picked to play: GetGameMode()'s answer (cc_host.h CC_MODE_*)
     char error[96];            // why the last join or game ended
 } NetInfo;
 

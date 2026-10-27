@@ -225,6 +225,17 @@ static AsMc *place(AsVm *vm, AsMc *parent, const Place *p, int depth) {
     return mc;
 }
 
+AsMc *as_mc_place_char(AsVm *vm, AsMc *parent, int cid, Mat m, CXform cx, const char *name, int depth) {
+    Place p;
+    memset(&p, 0, sizeof p);
+    p.cid = cid;
+    p.m = m;
+    p.cx = cx;
+    AsMc *mc = place(vm, parent, &p, depth);
+    if (mc && name) mc->name = as_atom(vm, name);
+    return mc;
+}
+
 static void apply_frame(AsVm *vm, AsMc *mc, int frame) {
     const Frame *fr = &mc->def->frames[frame];
     // drop or update what the timeline placed

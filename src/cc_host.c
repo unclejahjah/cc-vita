@@ -102,6 +102,185 @@ static AsVal ret_zero(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
     return as_num(0);
 }
 
+// GetGameMode(): what Local Game's mode menu picked (CC_MODE_*). The executable answers
+// 0 for the story, 1 for All You Can Quaff, 3 for Arena.
+int cc_game_mode;
+// QuitTo(where) / ChangeMovie(file): a mini game is over and wants the menus back
+int cc_quit_requested;
+
+// the script function a native was called from ("" outside any)
+static int called_from(AsVm *vm, const char *name) {
+    return vm->cur_fn && vm->cur_fn->fname && !strcmp(vm->cur_fn->fname->s, name);
+}
+
+static AsVal game_mode(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
+    (void)this_; (void)argc; (void)argv;
+    if (cc_game_mode == CC_MODE_VOLLEYBALL)   // the PS3's mode 1; two functions there treat it as Arena
+        return as_num(called_from(vm, "f_FirstTimeInitOnce") || called_from(vm, "f_ItemToggle") ? CC_MODE_ARENA : 1);
+    return as_num(cc_game_mode);
+}
+
+// Volleyball, as the PS3 version has it (its MAIN.swf, SELECT.swf and VMENU.swf): after
+// character select the team and court picker (VMENU.swf, from the PS3 files), then one of the
+// five courts (LEVEL61-65, the same files on the PC), then back to the picker. The PC's MAIN.swf
+// has none of the PS3's mode 1 differences, so they are made here: some of _root's functions
+// are wrapped (the scripts' own kept on _root as cc_<name>) and behave as the PS3's do in
+// mode 1. Nothing of it is saved (main.c).
+static AsVal call_own(AsVm *vm, const char *name, AsVal this_, int argc, AsVal *argv) {
+    char key[64];
+    snprintf(key, sizeof key, "cc_%s", name);
+    return as_call(vm, as_get(vm, as_objv(&vm->root->obj), as_str(vm, key)), this_, argc, argv);
+}
+
+static void set_member(AsVm *vm, AsVal o, const char *k, AsVal v) {
+    if (o.t == V_OBJ) as_set(vm, o, as_atom(vm, k), v);
+}
+
+static AsVal get_member(AsVm *vm, AsVal o, const char *k) {
+    return o.t == V_OBJ ? as_get(vm, o, as_atom(vm, k)) : as_undef();
+}
+
+// SELECT.swf (PC) goes on to the map or Home Castle; the PS3's goes to the court picker
+static AsVal v_change_level(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
+    AsVal a[8];
+    int n = argc < 8 ? argc : 8;
+    for (int i = 0; i < n; i++) a[i] = argv[i];
+    if (n >= 1 && a[0].t == V_STR && (strstr(a[0].s->s, "map.swf") || strstr(a[0].s->s, "level2.swf")))
+        a[0] = as_strv(as_str(vm, "../vmenu/vmenu.swf"));
+    return call_own(vm, "f_ChangeLevel", this_, n, a);
+}
+
+// no experience, no magic explosions
+static AsVal v_nothing(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
+    (void)vm; (void)this_; (void)argc; (void)argv;
+    return as_undef();
+}
+
+// f_SpawnPlayer: no animal orb
+static AsVal v_assign_animal(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
+    if (called_from(vm, "f_SpawnPlayer")) return as_undef();
+    return call_own(vm, "f_AssignAnimal", this_, argc, argv);
+}
+
+// f_MoveCharH: a player is always on screen and in bounds (may walk off the camera's view),
+// and picks nothing up
+static AsVal v_check_pickups(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
+    if (called_from(vm, "f_MoveCharH")) {
+        set_member(vm, argc ? argv[0] : as_undef(), "onscreen", as_bool(1));
+        return as_undef();
+    }
+    return call_own(vm, "f_PlayerCheckPickups", this_, argc, argv);
+}
+
+static AsVal v_on_screen(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
+    if (called_from(vm, "f_MoveCharH")) return as_bool(1);
+    return call_own(vm, "f_SZ_PlayerXOnScreen", this_, argc, argv);
+}
+
+static AsVal v_safe_screen(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
+    if (called_from(vm, "f_MoveCharH")) return as_bool(1);
+    return call_own(vm, "f_SZ_PlayerWithinSafeScreen", this_, argc, argv);
+}
+
+// f_FireClock: no burning damage
+static AsVal v_damage(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
+    if (called_from(vm, "f_FireClock")) return as_undef();
+    return call_own(vm, "f_Damage", this_, argc, argv);
+}
+
+static AsVal v_check_health(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
+    if (called_from(vm, "f_FireClock")) return as_undef();
+    return call_own(vm, "f_CheckHealth", this_, argc, argv);
+}
+
+// f_Damage: no damage numbers (its f_FX(x, y, depth, "damage_val", ...) and f_ShowVal)
+static AsVal v_fx(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
+    if (called_from(vm, "f_Damage") && argc >= 4 && argv[3].t == V_STR && !strcmp(argv[3].s->s, "damage_val"))
+        return as_undef();
+    return call_own(vm, "f_FX", this_, argc, argv);
+}
+
+static AsVal v_show_val(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
+    if (called_from(vm, "f_Damage")) return as_undef();
+    return call_own(vm, "f_ShowVal", this_, argc, argv);
+}
+
+// f_PunchSet2: the heavy attack in the air while holding magic is a plain heavy attack
+// (punch2_1), not the downward magic
+static AsVal v_punch_set2(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
+    AsVal z = argc ? argv[0] : as_undef();
+    AsVal unlocks = get_member(vm, z, "magic_unlocks");
+    AsVal down = unlocks.t == V_OBJ ? as_get(vm, unlocks, as_str(vm, "4")) : as_undef();
+    if (!as_tobool(vm, get_member(vm, z, "magicmode")) || !(as_tonum(vm, get_member(vm, z, "body_y")) < -5) ||
+        !as_tobool(vm, down))
+        return call_own(vm, "f_PunchSet2", this_, argc, argv);
+    set_member(vm, z, "punching", as_bool(1));
+    if (!as_tobool(vm, get_member(vm, z, "jumping"))) {
+        set_member(vm, z, "freeze", as_bool(1));
+        AsVal fa[2] = {z, as_num(10)};
+        as_call(vm, as_get(vm, as_objv(&vm->root->obj), as_atom(vm, "f_SetFloat")), as_undef(), 2, fa);
+    }
+    set_member(vm, z, "punch_group", as_num(2));
+    set_member(vm, z, "punch_num", as_num(1));
+    AsVal label = as_strv(as_str(vm, "punch2_1"));
+    as_call_method(vm, z, "gotoAndStop", 1, &label);
+    return as_undef();
+}
+
+static const struct { const char *name; AsNative fn; } volley_wraps[] = {
+    {"f_ChangeLevel", v_change_level},
+    {"f_Exp", v_nothing},
+    {"f_MagicExplosion", v_nothing},
+    {"f_AssignAnimal", v_assign_animal},
+    {"f_PlayerCheckPickups", v_check_pickups},
+    {"f_SZ_PlayerXOnScreen", v_on_screen},
+    {"f_SZ_PlayerWithinSafeScreen", v_safe_screen},
+    {"f_Damage", v_damage},
+    {"f_CheckHealth", v_check_health},
+    {"f_FX", v_fx},
+    {"f_ShowVal", v_show_val},
+    {"f_PunchSet2", v_punch_set2},
+};
+
+void cc_volleyball_tick(AsVm *vm) {
+    if (cc_game_mode != CC_MODE_VOLLEYBALL || !vm->root) return;
+    AsVal root = as_objv(&vm->root->obj);
+    // the PS3's MAIN.swf has f_IsCSDown(key) for VMENU.swf: Key.isDown on a console
+    AsVal cs = as_get(vm, root, as_atom(vm, "f_IsCSDown"));
+    if (cs.t == V_UNDEF && as_get(vm, root, as_atom(vm, "f_ChangeLevel")).t == V_OBJ)
+        as_def_fn(vm, &vm->root->obj, "f_IsCSDown", key_isdown);
+    for (size_t i = 0; i < sizeof volley_wraps / sizeof volley_wraps[0]; i++) {
+        AsVal f = as_get(vm, root, as_atom(vm, volley_wraps[i].name));
+        if (f.t != V_OBJ || f.o->type != OBJ_FUNC || f.o->native == volley_wraps[i].fn) continue;
+        char key[64];
+        snprintf(key, sizeof key, "cc_%s", volley_wraps[i].name);
+        as_set(vm, root, as_atom(vm, key), f);
+        as_set(vm, root, as_atom(vm, volley_wraps[i].name), as_objv(as_native(vm, volley_wraps[i].fn)));
+    }
+}
+
+// Volleyball's courts 2-5 (ReadStorage(26) on the PS3: bits 1, 2, 4, 8) open with the levels
+// the PS3 opens them with (its f_LoadLevelUnlocks): levels 40, 47, 21 and 31
+static int volley_courts(AsVm *vm, int port) {
+    char hud[16];
+    snprintf(hud, sizeof hud, "hud%d", port + 1);
+    AsVal lu = get_member(vm, get_member(vm, as_objv(&vm->root->obj), hud), "level_unlocks");
+    static const int with[4] = {40, 47, 21, 31};
+    int bits = 0;
+    for (int i = 0; i < 4; i++) {
+        char k[8];
+        snprintf(k, sizeof k, "%d", with[i]);
+        if (lu.t == V_OBJ && as_tonum(vm, as_get(vm, lu, as_str(vm, k))) >= 3) bits |= 1 << i;
+    }
+    return bits;
+}
+
+static AsVal quit_to(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
+    (void)vm; (void)this_; (void)argc; (void)argv;
+    cc_quit_requested = 1;
+    return as_undef();
+}
+
 // GetLocalSecond(): the clock's seconds (0-59); the loading screen picks its hint with it
 static AsVal local_second(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
     (void)this_; (void)argc; (void)argv;
@@ -146,6 +325,8 @@ static int storage_slot(AsVm *vm, AsVal port, int has_addr, AsVal addr, int *p) 
 
 static AsVal read_storage(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
     (void)this_;
+    if (cc_game_mode == CC_MODE_VOLLEYBALL && argc >= 2 && as_tonum(vm, argv[0]) == 26)   // the PS3's courts
+        return as_num(volley_courts(vm, as_toint32(vm, argv[1])));
     int p, a = storage_slot(vm, ARG(0), argc >= 2, ARG(1), &p);
     return a < 0 ? as_num(0) : as_num(storage[p][a]);
 }
@@ -838,9 +1019,28 @@ static void on_loaded(AsVm *vm, AsMc *target) {
     if (is_level_slot(vm, target) && loading_shown) exit_wait = 0;   // its exit is next
 }
 
+// Volleyball's court picker (VMENU.swf) comes from the PS3, whose string table isn't in any file
+// (it's in the encrypted executable): its numbers past the PC's are the PS3's, so their words are
+// here (strings_vita_en.txt can replace them as vita.volley.N), worked out from the fields'
+// placeholder words and what the scripts do with them
+static const char *volley_text(int n) {
+    static const struct { int n; const char *words; } table[] = {
+        {444, "Ready!"}, {452, "Ready"}, {716, "Matches"}, {717, "Best of"}, {719, "CPU"},
+        {730, "Each team needs a player"}, {731, "Each team needs a player"}, {733, "Fill Teams"},
+    };
+    char key[32];
+    snprintf(key, sizeof key, "vita.volley.%d", n);
+    const char *s = strtab_get(key);
+    if (s) return s;
+    for (size_t i = 0; i < sizeof table / sizeof table[0]; i++)
+        if (table[i].n == n) return table[i].words;
+    return NULL;
+}
+
 static const char *text_for_number(AsVm *vm, int n) {
     (void)vm;
-    return strtab_number(n);
+    const char *s = cc_game_mode == CC_MODE_VOLLEYBALL ? volley_text(n) : NULL;
+    return s ? s : strtab_number(n);
 }
 
 // Auto Potion: inside f_CheckHealthPots(zone), active_players reads 2 when it's on and zone's
@@ -916,7 +1116,13 @@ void cc_host_init(AsVm *vm) {
     cc_set_flash_global(vm, "g_bAllowHiddenCharacters", as_bool(1));
     cc_own_dlc_characters();
     cc_own_dlc_items();
-    as_def_fn(vm, g, "GetGameMode", ret_zero);
+    as_def_fn(vm, g, "GetGameMode", game_mode);
+    as_def_fn(vm, g, "UseCircleSelect", ret_false);   // (PS3 files: Circle never confirms)
+    // QuitTo("menu.cok6") / ChangeMovie(quitto): back to the executable's menus (backing out of
+    // character select, the end of a one-player Arena match, leaving All You Can Quaff)
+    cc_quit_requested = 0;
+    as_def_fn(vm, g, "QuitTo", quit_to);
+    as_def_fn(vm, g, "ChangeMovie", quit_to);
     as_def_fn(vm, g, "GetWidescreen", ret_true);   // the Vita screen is 16:9
     as_def_fn(vm, g, "IsPalMode", ret_false);
     as_def_fn(vm, g, "GetGore", ret_true);
