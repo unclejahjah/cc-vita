@@ -339,3 +339,9 @@ and Help & Options; Host a game / Join a game (hosts found by UDP broadcast on t
   The state checks in the inputs are all of frame k - slowest - 1 (the host keeps a few old
   ones). NET_VERSION 3. tools: a lag proxy (Python, delays TCP+UDP both ways) checked 200 ms. hosttest: NET_CODE, NET_DELAY,
   UPNP_ROUTER (and a pretend router was used to test it: SSDP + SOAP in Python).
+
+- Public games list (2026-10-27): Multiplayer > Host a Public Game / Public Games (shown only when
+  a list server is set: CC_LOBBY_URL in cc_host.h or ux0:data/CastleCrashers/lobby.txt). `src/lobby.c`
+  talks to the server on its own thread (sceHttp on the Vita, sockets in hosttest); the server is
+  `tools/lobby/` (Cloudflare Worker + a Python copy for tests). A public host is listed only once
+  UPnP has opened its router, and taken off when the game starts or the page closes.
