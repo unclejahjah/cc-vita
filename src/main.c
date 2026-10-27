@@ -752,29 +752,24 @@ static int pad_read_ext(int port, SceCtrlData *p) {
     return 1;
 }
 
-static uint8_t stick_far(uint8_t a, uint8_t b) { return abs(a - 128) >= abs(b - 128) ? a : b; }
-
 // player 1 into *p1 and g_pads[0]; players 2-4 into g_pads[] while their pads are paired
 // (not in a Wi-Fi game, where each Vita is one player)
 static void pads_read(SceCtrlData *p1, int extra) {
     static int frames;
     static SceCtrlPortInfo info;
     if (frames++ % 30 == 0 && sceCtrlGetControllerPortInfo(&info) < 0) memset(&info, 0, sizeof info);
-    // the sticks from the plain read, as before more pads (with the Ext2 one's the sticks did
-    // nothing in a level on Jah's handheld Vita); Ext2 only gives the buttons (L1/R1, L2/R2)
+    // the sticks from the plain read only, as before more pads (with the Ext2 reads' sticks
+    // they did nothing in a level on Jah's PS TV); Ext2 only gives the buttons (L1/R1, L2/R2)
     sceCtrlPeekBufferPositive(0, p1, 1);
     SceCtrlData q;
     if (pad_read_ext(0, &q)) {
         p1->buttons = q.buttons;
         if (q.rx == 0 || q.rx == 255) p1->rx = q.rx;   // L2/R2
     }
-    // port 1 only when it's a paired pad (on a handheld it's the Vita's own buttons again)
+    // port 1's buttons only when it's a paired pad (on a handheld it's the Vita's own again)
     if ((info.port[1] == SCE_CTRL_TYPE_DS3 || info.port[1] == SCE_CTRL_TYPE_DS4) && pad_read_ext(1, &q)) {
         p1->buttons |= q.buttons;
-        p1->lx = stick_far(p1->lx, q.lx);
-        p1->ly = stick_far(p1->ly, q.ly);
-        p1->rx = stick_far(p1->rx, q.rx);
-        p1->ry = stick_far(p1->ry, q.ry);
+        if (q.rx == 0 || q.rx == 255) p1->rx = q.rx;
     }
     g_pads[0] = *p1;
     g_pad_on[0] = 1;
