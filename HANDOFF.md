@@ -434,4 +434,5 @@ back under the loading screen. Without the file the title is the original's. hos
 with MENU.swf. Drawn at full size it was 15 fps (GPU: 80k-416k triangles, 46 MB of meshes), so:
 its curves are flattened coarser (swf.c g_curve_tolerance 45 twips for that file), it's drawn into a
 640x363 texture without MSAA once per tick and shown scaled up (main.c vignette_rt_draw), and on
-boot the knights' loading screen covers from the intro until it's read (cc_loading_hold).
+boot the knights' loading screen covers from the intro end while it's read (cc_loading_hold); it's
+not read during the intro (that slowed the intro down).
