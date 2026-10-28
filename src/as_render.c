@@ -295,6 +295,17 @@ void as_render_mc(AsMc *mc, Mat parent, CXform pcx, DrawList *out) {
             return;
         }
     }
+    if (mc->def && mc->movie->is_player && cc_paintjr_p_type()) {   // Paint Jr.'s pieces (paint_jr.h)
+        int t = 0;   // the player it's on (the nearest p_type up to 8 levels, as custom_part)
+        AsMc *p = mc->parent;
+        for (int i = 0; p && !t && i < 8; i++, p = p->parent) t = p_type_of(p);
+        Movie *pm;
+        const Frame *pf;
+        if (cc_paintjr_part(mc->movie, mc->def, mc->frame, t, &pm, &pf)) {
+            render_display_list(pm, pf, m, cx, 0, out);
+            return;
+        }
+    }
     const BitmapFill *painted = custom_part(mc);
     if (painted) {
         render_bitmap_fill(painted, m, cx, out);

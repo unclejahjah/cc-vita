@@ -355,7 +355,7 @@ static int as_mode(int argc, char **argv) {
     {   // Paint Jr. when GAME/game has PLAYER_NEW.swf and PAINTJR.swf, as on the Vita
         char a[700], b[700], c[700];
         snprintf(a, sizeof a, "%s/game/PLAYER_NEW.swf", game_dir);
-        snprintf(b, sizeof b, "%s/game/PLAYER_PJ.swf", game_dir);
+        snprintf(b, sizeof b, "%s/game/PJPARTS.swf", game_dir);
         snprintf(c, sizeof c, "%s/game/PAINTJR.swf", game_dir);
         cc_paintjr_set_available(access(a, R_OK) == 0, access(b, R_OK) == 0, access(c, R_OK) == 0);
         if (cc_paintjr_p_type()) printf("Paint Jr. (character %d)\n", cc_paintjr_p_type());

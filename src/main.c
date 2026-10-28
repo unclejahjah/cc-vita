@@ -1870,7 +1870,7 @@ int main(void) {
         char path[256];
         int lvl;
         cc_paintjr_set_available(find_file("PLAYER_NEW.swf", path, sizeof path, &lvl),
-                                 find_file("PLAYER_PJ.swf", path, sizeof path, &lvl),
+                                 find_file("PJPARTS.swf", path, sizeof path, &lvl),
                                  find_file("PAINTJR.swf", path, sizeof path, &lvl));
         if (cc_paintjr_p_type()) log_line("Paint Jr. (character %d)", cc_paintjr_p_type());
     }
@@ -1966,6 +1966,7 @@ new_game:   // the title again after Exit to Main Menu
 #endif
     cc_animal_set_active(!g_netgame);   // not in Wi-Fi games: the other machine may not have it
     cc_paintjr_set_active(!g_netgame);  // nor Paint Jr.'s files
+    if (cc_paintjr_p_type()) host_movie("PJPARTS.swf");   // his pieces: kept (paint_jr.h)
     cc_host_init(vm);
     as_render_init(vm);
     cc_set_auto_potion(vm, g_auto_potion);

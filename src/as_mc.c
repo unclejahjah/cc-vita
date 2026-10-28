@@ -489,19 +489,6 @@ void as_mc_load_movie(AsVm *vm, AsMc *mc, Movie *m) {
     as_mc_goto(vm, mc, 0, 1);
 }
 
-void as_mc_swap_movie(AsVm *vm, AsMc *mc, Movie *m) {
-    if (mc->movie == m) return;
-    int frame = mc->frame < 0 ? 0 : mc->frame, play = mc->playing;
-    for (int i = 0; i < mc->ndisp; i++)
-        if (mc->disp[i].mc) mc_unload(vm, mc->disp[i].mc);
-    mc->ndisp = 0;
-    mc->movie = m;
-    mc->def = &m->root;
-    mc->frame = -1;
-    for (int i = 0; i < m->ninit; i++) as_run_block(vm, m, m->init[i].off, m->init[i].len, mc);
-    as_mc_goto(vm, mc, frame, play);
-}
-
 // ---- paths ------------------------------------------------------------------------
 
 AsStr *as_mc_target_path(AsVm *vm, AsMc *mc) {

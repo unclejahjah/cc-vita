@@ -3,9 +3,10 @@
 
     make_paintjr.py --modtool "Castle Mod Tool/castlecrashers-main" --pc-data "CastleCrashers/data" --out GAME_DIR/game
 
-decrypts the PC's player_new.pak into PLAYER_NEW.swf and makes PAINTJR.swf: one DoAction with
-Paint Jr.'s script functions copied out of the PC's MAIN.swf (main.pak), each with the constant
-pool it was written against. The decryption is the Castle Mod Tool's (decrypt_asset.py), which
+decrypts the PC's player_new.pak into PLAYER_NEW.swf (the FRESH look), makes PJPARTS.swf from it
+(Paint Jr.'s own pieces of the part clips, drawn over the original PLAYER.swf's: see PARTS) and
+PAINTJR.swf: one DoAction with Paint Jr.'s script functions copied out of the PC's MAIN.swf
+(main.pak), each with the constant pool it was written against. The decryption is the Castle Mod Tool's (decrypt_asset.py), which
 must be given; nothing here holds game data, and the outputs must never go into git.
 """
 import argparse, struct, sys
@@ -56,7 +57,6 @@ def functions(d, start, end):
 
 
 SHAPES = {2, 22, 32, 83}
-SELECTORS = (b'f_Helmet\0', b'f_Belt\0', b'f_Shield\0')   # part clips showing a character's frame
 FRAME = 33   # Paint Jr.'s frame of them (character 32)
 
 
@@ -78,63 +78,68 @@ def placements(d, p, end):
     return frames
 
 
-def strip_to_paint_jr(d):
-    """PLAYER_NEW.swf with only Paint Jr.'s frame of the part clips: the shapes only the other
-    characters' frames show are emptied (ids and timelines stay), which more than halves the
-    meshes the Vita has to keep for him"""
+# PJPARTS.swf: for each part clip of the original PLAYER.swf (by the MAIN selector its first frame
+# calls and its order among them, as src/custom_char.c finds them), the PC PLAYER_NEW.swf sprite
+# that is the same part (matched by eye: frame 4, Red Knight, side by side), and the frame of it
+# to show (1-based). The sprites keep their timelines and ids; every shape another frame shows is
+# emptied, so the file holds only Paint Jr.'s pieces and the pencil.
+PARTS = [
+    ('helmet', 0, 311, FRAME), ('helmet', 1, 619, FRAME), ('helmet', 2, 730, FRAME),
+    ('helmet', 3, 832, FRAME), ('helmet', 4, 881, FRAME),
+    ('shield', 0, 550, FRAME), ('shield', 1, 59, FRAME),
+    ('belt', 0, 129, FRAME), ('belt', 1, 669, FRAME), ('belt', 2, 490, FRAME), ('belt', 3, 458, FRAME),
+    ('belt', 4, 763, FRAME),
+] + [('belt', 5 + i, s, FRAME) for i, s in enumerate(
+    (1142, 1166, 1190, 1271, 1355, 1379, 1409, 1433, 1458, 1488, 1512, 1536, 1601, 1644, 1668, 1703, 1742,
+     1782, 1806, 1837, 1861))] + [
+    ('weapon', 0, 499, 86),   # weapon 86, his pencil (empty in the original PLAYER.swf)
+]
+
+
+def make_parts(d):
     nb = d[8] >> 3
     st = 8 + (5 + nb * 4 + 7) // 8 + 4
-    top, sprites, selector = [], {}, set()
+    defs, sprites, order = {}, {}, []
     for c, p, l in tags(d, st, len(d)):
-        top.append((c, p, l))
-        if c == 39:
-            sid = struct.unpack_from('<H', d, p)[0]
-            sprites[sid] = placements(d, p + 4, p + l)
-            for c2, q, l2 in tags(d, p + 4, p + l):
-                if c2 == 1:
-                    break
-                if c2 == 12 and any(s in d[q:q + l2] for s in SELECTORS) and len(sprites[sid]) >= FRAME:
-                    selector.add(sid)
-    root = {}
-    for c, p, l in top:   # the root timeline's placements
-        if c == 26 and d[p] & 2:
-            root[struct.unpack_from('<H', d, p + 3)[0]] = 1
-
-    def children(sid):   # what a sprite shows: a part clip only its frame for him
-        fr = sprites[sid]
-        return set().union(*(set(dl.values()) for f, dl in fr.items() if sid not in selector or f == FRAME))
-
-    keep, todo = set(), list(root) + [s for s in sprites if s not in selector]
-    while todo:   # everything reachable without the other characters' frames
+        if c in SHAPES or c == 39:
+            cid = struct.unpack_from('<H', d, p)[0]
+            defs[cid] = (c, d[p:p + l])
+            order.append(cid)
+            if c == 39:
+                sprites[cid] = placements(d, p + 4, p + l)
+    keep, todo = set(), []
+    for _, _, sid, frame in PARTS:
+        keep.add(sid)
+        todo += list(sprites[sid].get(frame, sprites[sid][max(sprites[sid])]).values())
+    while todo:   # what those frames show, all of it (nested clips play)
         c = todo.pop()
-        if c in keep:
+        if c in keep or c not in defs:
             continue
         keep.add(c)
         if c in sprites:
-            todo += children(c)
-    others, todo = set(), []
-    for s in selector:
-        for f, dl in sprites[s].items():
-            if f != FRAME:
-                todo += list(dl.values())
-    while todo:
-        c = todo.pop()
-        if c in others:
-            continue
-        others.add(c)
-        if c in sprites:
             todo += [x for dl in sprites[c].values() for x in dl.values()]
-    blank = others - keep
-    out, n = bytearray(d[:st]), 0
-    for c, p, l in top:
-        body = d[p:p + l]
-        if c in SHAPES and struct.unpack_from('<H', d, p)[0] in blank:
-            # an empty shape: no bounds, no styles, just the end record
-            body = d[p:p + 2] + b'\0' + (b'\0\0' if c == 83 else b'') + b'\0\0\0\0'
-            n += 1
+    referenced = set()
+    for s in keep:
+        if s in sprites:
+            referenced |= {x for dl in sprites[s].values() for x in dl.values()}
+    out = bytearray(d[:st])
+    for cid in order:
+        if cid not in keep and cid not in referenced:
+            continue
+        c, body = defs[cid]
+        if cid not in keep:   # placed by another frame: an empty stand-in under the same id
+            if c == 39:
+                c, body = 39, body[:2] + struct.pack('<H', 1) + struct.pack('<HH', 1 << 6, 0)
+            else:
+                body = body[:2] + b'\0' + (b'\0\0' if c == 83 else b'') + b'\0\0\0\0'
         out += struct.pack('<HI', c << 6 | 63, len(body)) + body
+    names = [('pj_%s_%d' % (g, n), sid) for g, n, sid, _ in PARTS]
+    exp = struct.pack('<H', len(names)) + b''.join(struct.pack('<H', s) + n.encode() + b'\0' for n, s in names)
+    out += struct.pack('<HI', 56 << 6 | 63, len(exp)) + exp
+    out += struct.pack('<H', 1 << 6) + struct.pack('<H', 0)
     struct.pack_into('<I', out, 4, len(out))
-    return bytes(out), n
+    struct.pack_into('<H', out, st - 2, 1)   # one root frame
+    return bytes(out), len(keep)
 
 
 def main():
@@ -149,9 +154,9 @@ def main():
     out.mkdir(parents=True, exist_ok=True)
     player_new = decrypt(da, game / 'player_new.pak')
     (out / 'PLAYER_NEW.swf').write_bytes(player_new)
-    pj, n = strip_to_paint_jr(player_new)
-    (out / 'PLAYER_PJ.swf').write_bytes(pj)
-    print('PLAYER_PJ.swf: %d shapes of the other characters emptied' % n)
+    parts, n = make_parts(player_new)
+    (out / 'PJPARTS.swf').write_bytes(parts)
+    print('PJPARTS.swf: %d parts, %d characters' % (len(PARTS), n))
 
     d = decrypt(da, game / 'main.pak')
     if d[:3] != b'FWS':

@@ -302,7 +302,6 @@ void as_prof_report(int top, void (*out)(const char *line));
 // movie clips (as_mc.c)
 AsMc *as_mc_new(AsVm *vm, const Movie *m, const Sprite *def, AsMc *parent, int depth);
 void as_mc_load_movie(AsVm *vm, AsMc *mc, Movie *m);  // replace its contents with a whole SWF
-void as_mc_swap_movie(AsVm *vm, AsMc *mc, Movie *m);  // the same, keeping its variables and frame
 void as_mc_goto(AsVm *vm, AsMc *mc, int frame, int play);
 int as_mc_frame_of(AsMc *mc, AsVal label);            // 0-based, -1 if none
 void as_mc_remove(AsVm *vm, AsMc *mc);
