@@ -1081,9 +1081,13 @@ static int help_mode(int argc, char **argv) {
         help_book_open(&hb, book, 7, 10, 1, getenv("HB_NO_FRESH") ? -1 : 1);
         if (book == HB_SETTINGS && getenv("HB_ROW")) hb.row = atoi(getenv("HB_ROW"));
         hb.achieved = 1 << 2 | 1 << 4 | 1 << 7 | 1 << 11;
-        int pages = book == HB_HOWTO ? HB_HOWTO_PAGES : book == HB_CONTROLS ? 2 : 1;
+        int pages = book == HB_HOWTO ? HB_HOWTO_PAGES : book == HB_CONTROLS || book == HB_SETTINGS ? 2 : 1;
         for (int pg = 0; pg < pages; pg++) {
             int sound;
+            if (book == HB_SETTINGS && pg == 1) {   // Item Switch chosen, on front touch
+                unsigned keys[] = {HB_UP, HB_RIGHT};
+                for (int i = 0; i < 2; i++) help_book_update(&hb, keys[i], 1 / 60.0f, &sound);
+            }
             if (book == HB_CONTROLS && pg == 1) {   // Square chosen, and Jump moved onto it
                 unsigned keys[] = {HB_DOWN, HB_DOWN, HB_DOWN, HB_RIGHT, HB_RIGHT};
                 for (int i = 0; i < 5; i++) help_book_update(&hb, keys[i], 1 / 60.0f, &sound);
