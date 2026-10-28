@@ -1190,6 +1190,7 @@ void cc_host_init(AsVm *vm) {
     as_def_fn(vm, g, "AddShader", add_shader);
     as_def_fn(vm, g, "RemoveShader", remove_shader);
     as_def_fn(vm, g, "IsSameProfile", is_same_profile);
+    as_def_fn(vm, g, "IsCharacterUnlockedForPlayer", ret_true);   // (the PC's castle file asks)
     // the rest the level and menu files call that matter offline: profiles are signed in,
     // nothing is ranked, and the PC/online extras (skins, avatar items, the loading screen's
     // own hide call, interpolation, session ends) have nothing to do here
