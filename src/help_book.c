@@ -25,13 +25,16 @@
 // right R, Triangle, Square, Circle, Cross
 static const int CONTROL_ROWS[CC_ACTIONS] = {4, 5, 1, 0, 3, 2};
 
-void help_book_open(HelpBook *hb, int book, int music, int sfx, int auto_potion) {
+void help_book_open(HelpBook *hb, int book, int music, int sfx, int auto_potion, int fresh) {
     memset(hb, 0, sizeof *hb);
     hb->book = book;
     hb->volume[0] = music;
     hb->volume[1] = sfx;
     hb->auto_potion = auto_potion;
+    hb->fresh = fresh;
 }
+
+static int settings_rows(const HelpBook *hb) { return hb->fresh < 0 ? 3 : 4; }
 
 int help_book_update(HelpBook *hb, unsigned pressed, float dt, int *sound) {
     *sound = -1;
@@ -76,14 +79,16 @@ int help_book_update(HelpBook *hb, unsigned pressed, float dt, int *sound) {
             *sound = 1;
         }
     } else if (hb->book == HB_SETTINGS) {
+        int rows = settings_rows(hb);
         if (pressed & (HB_UP | HB_DOWN)) {
-            hb->row = (hb->row + (pressed & HB_UP ? 2 : 1)) % 3;
+            hb->row = (hb->row + (pressed & HB_UP ? rows - 1 : 1)) % rows;
             *sound = 0;
         }
         int step = pressed & HB_RIGHT ? 1 : pressed & HB_LEFT ? -1 : 0;
-        if (hb->row == 2) {   // On / Off: left or right flips it
+        if (hb->row >= 2) {   // On / Off: left or right flips it
             if (step) {
-                hb->auto_potion ^= 1;
+                if (hb->row == 2) hb->auto_potion ^= 1;
+                else hb->fresh ^= 1;
                 hb->changed = 1;
                 *sound = 0;
             }
@@ -501,11 +506,14 @@ static void settings_page(DrawList *out, Art *a, float k, const HelpBook *hb, fl
     page_title(out, a, k, words("help.title.settings", "Settings"), alpha);
     float mx, my, bw;
     book_middle(a, &mx, &my, &bw);
-    static const char *keys[3] = {"help.settings.music", "help.settings.sfx", "help.settings.autopotion"};
-    static const char *fb[3] = {"Music Volume", "SFX Volume", "Auto Potion"};
+    static const char *keys[4] = {"help.settings.music", "help.settings.sfx", "help.settings.autopotion",
+                                  "help.settings.fresh"};
+    static const char *fb[4] = {"Music Volume", "SFX Volume", "Auto Potion", "FRESH Look"};
     float sc = place_scale(a);
-    for (int r = 0; r < 3; r++) {
-        float y = my - 115 * sc + r * 125 * sc;   // (the bars sit under the first two)
+    int rows = settings_rows(hb);
+    static const float Y4[4] = {-150, -40, 70, 150};   // four rows: the bars still fit under the first two
+    for (int r = 0; r < rows; r++) {
+        float y = my + (rows == 4 ? Y4[r] : -115 + r * 125) * sc;   // (the bars sit under the first two)
         uint32_t c = INK;
         if (r == hb->row) {   // the chosen row pulses yellow like the pause menu's chosen line
             int v = (int)(sinf(hb->time * 10) * 34 + 221) & 255;
@@ -520,8 +528,8 @@ static void settings_page(DrawList *out, Art *a, float k, const HelpBook *hb, fl
         static const char *vk[2] = {"help.settings.off", "help.settings.on"};
         static const char *vf[2] = {"Off", "On"};
         for (int o = 0; o < 2; o++) {
-            int set = o == hb->auto_potion;
-            text(out, k, words(vk[o], vf[o]), mx + (o ? 70 : -70) * sc, y + 42 * sc, 30 * sc, 2,
+            int set = o == (r == 2 ? hb->auto_potion : hb->fresh);
+            text(out, k, words(vk[o], vf[o]), mx + (o ? 70 : -70) * sc, y + (rows == 4 ? 36 : 42) * sc, 30 * sc, 2,
                  set ? c : INK, set ? alpha : alpha * 0.45f);
         }
     }

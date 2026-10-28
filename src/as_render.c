@@ -286,11 +286,14 @@ void as_render_mc(AsMc *mc, Mat parent, CXform pcx, DrawList *out) {
     Mat m = mat_mul(parent, mc->m);
     CXform cx = cx_mul(pcx, cx_with_alpha(mc->cx, mc->alpha));
     if (cx.mul[3] <= 0 && cx.add[3] <= 0 && !out->masking) return;
-    // Paint Jr.'s select portrait (paint_jr.h): his slot's frame is empty, the PC's art is further on
-    if (cc_paintjr_p_type() && mc->def && mc->name && !strncmp(mc->name->s, "portrait_", 9) &&
-        mc->frame == CC_PAINTJR_P_TYPE + 2 && mc->def->nframes > CC_PAINTJR_PORTRAIT) {
-        render_display_list((Movie *)mc->movie, &mc->def->frames[CC_PAINTJR_PORTRAIT], m, cx, 0, out);
-        return;
+    // select portraits (paint_jr.h): Paint Jr.'s (his slot's frame is empty), and everyone's newer
+    // ones with the FRESH look
+    if (mc->def && mc->name && !strncmp(mc->name->s, "portrait_", 9)) {
+        int f = cc_portrait_frame(mc->frame, mc->def->nframes);
+        if (f >= 0) {
+            render_display_list((Movie *)mc->movie, &mc->def->frames[f], m, cx, 0, out);
+            return;
+        }
     }
     const BitmapFill *painted = custom_part(mc);
     if (painted) {

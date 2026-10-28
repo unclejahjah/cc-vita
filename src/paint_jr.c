@@ -4,9 +4,22 @@
 #include <stdio.h>
 #include <string.h>
 
-static int g_available;
-void cc_paintjr_set_available(int on) { g_available = on; }
+static int g_available, g_new_player, g_fresh;
+void cc_paintjr_set_available(int new_player, int paint_jr) {
+    g_new_player = new_player;
+    g_available = new_player && paint_jr;
+}
 int cc_paintjr_p_type(void) { return g_available ? CC_PAINTJR_P_TYPE : 0; }
+int cc_fresh_available(void) { return g_new_player; }
+void cc_fresh_set(int on) { g_fresh = on; }
+int cc_fresh(void) { return g_fresh && g_new_player; }
+
+int cc_portrait_frame(int frame, int nframes) {
+    int t = frame - 2;   // the character
+    if (t < 1 || t > CC_PAINTJR_P_TYPE || (t != cc_paintjr_p_type() && !cc_fresh())) return -1;
+    int f = CC_NEW_PORTRAITS + t - 1;
+    return f < nframes ? f : -1;
+}
 
 // his functions from the PC's MAIN.swf, defined on _root the first time he's needed (MAIN's own
 // are in by then: they are defined on its first frame)
@@ -39,12 +52,13 @@ static AsVal spawn_player(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
         AsVal p = as_resolve_path(vm, vm->root, path, &found);
         if (found && p.t == V_OBJ && p.o->type == OBJ_MC) {
             AsMc *mc = (AsMc *)p.o;
-            Movie *want = vm->loader(vm, t == CC_PAINTJR_P_TYPE ? "PLAYER_NEW.swf" : "PLAYER.swf");
-            if (want && mc->movie && mc->movie != want && (t == CC_PAINTJR_P_TYPE || mc->movie->is_player == 0))
+            int fresh = (g_available && t == CC_PAINTJR_P_TYPE) || cc_fresh();
+            Movie *want = vm->loader(vm, fresh ? "PLAYER_NEW.swf" : "PLAYER.swf");
+            if (want && mc->movie && mc->movie != want && (fresh || mc->movie->is_player == 0))
                 as_mc_swap_movie(vm, mc, want);
         }
     }
-    if (t == CC_PAINTJR_P_TYPE) graft(vm);
+    if (g_available && t == CC_PAINTJR_P_TYPE) graft(vm);
     return as_call_script(vm, this_, argc, argv);
 }
 
@@ -72,8 +86,8 @@ static AsVal magic_bullet_down(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
 
 void cc_paintjr_init(AsVm *vm) {
     g_grafted = 0;
+    if (g_new_player) as_override(vm, "f_SpawnPlayer", spawn_player);   // the FRESH look, and him
     if (!g_available) return;
-    as_override(vm, "f_SpawnPlayer", spawn_player);
     as_override(vm, "f_ShootMagic", shoot_magic);
     as_override(vm, "f_MagicBulletDown", magic_bullet_down);
 }

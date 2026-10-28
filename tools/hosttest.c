@@ -355,8 +355,10 @@ static int as_mode(int argc, char **argv) {
         char a[700], b[700];
         snprintf(a, sizeof a, "%s/game/PLAYER_NEW.swf", game_dir);
         snprintf(b, sizeof b, "%s/game/PAINTJR.swf", game_dir);
-        cc_paintjr_set_available(access(a, R_OK) == 0 && access(b, R_OK) == 0);
+        cc_paintjr_set_available(access(a, R_OK) == 0, access(b, R_OK) == 0);
         if (cc_paintjr_p_type()) printf("Paint Jr. (character %d)\n", cc_paintjr_p_type());
+        if (getenv("CC_FRESH")) cc_fresh_set(atoi(getenv("CC_FRESH")));   // CC_FRESH=1: the FRESH look
+        if (cc_fresh()) printf("FRESH look\n");
     }
     extern void cc_host_init(AsVm *vm);
     if (getenv("CC_GAME_MODE")) cc_game_mode = atoi(getenv("CC_GAME_MODE"));   // 1 Quaff, 3 Arena
@@ -1053,7 +1055,7 @@ static int help_mode(int argc, char **argv) {
     }
     for (int book = 0; book < 4; book++) {
         HelpBook hb;
-        help_book_open(&hb, book, 7, 10, 1);
+        help_book_open(&hb, book, 7, 10, 1, getenv("HB_NO_FRESH") ? -1 : 1);
         if (book == HB_SETTINGS && getenv("HB_ROW")) hb.row = atoi(getenv("HB_ROW"));
         hb.achieved = 1 << 2 | 1 << 4 | 1 << 7 | 1 << 11;
         int pages = book == HB_HOWTO ? HB_HOWTO_PAGES : book == HB_CONTROLS ? 2 : 1;
