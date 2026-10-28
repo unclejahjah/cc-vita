@@ -511,7 +511,7 @@ static void settings_page(DrawList *out, Art *a, float k, const HelpBook *hb, fl
     static const char *fb[4] = {"Music Volume", "SFX Volume", "Auto Potion", "FRESH Look"};
     float sc = place_scale(a);
     int rows = settings_rows(hb);
-    static const float Y4[4] = {-150, -40, 70, 150};   // four rows: the bars still fit under the first two
+    static const float Y4[4] = {-150, -55, 45, 125};   // four rows: the bars still fit under the first two
     for (int r = 0; r < rows; r++) {
         float y = my + (rows == 4 ? Y4[r] : -115 + r * 125) * sc;   // (the bars sit under the first two)
         uint32_t c = INK;
@@ -519,9 +519,17 @@ static void settings_page(DrawList *out, Art *a, float k, const HelpBook *hb, fl
             int v = (int)(sinf(hb->time * 10) * 34 + 221) & 255;
             c = (uint32_t)v << 16 | (uint32_t)v << 8;
         }
-        text(out, k, words(keys[r], fb[r]), mx, y, 30 * sc, 2, c, alpha);
+        if (r == 3) {   // FRESH Look is a beta: heavy on the Vita, so it says so
+            char label[96];
+            snprintf(label, sizeof label, "%s %s", words(keys[r], fb[r]), words("help.settings.beta", "(BETA)"));
+            text(out, k, label, mx, y, 30 * sc, 2, c, alpha);
+            text(out, k, words("help.settings.fresh_note", "Overclocking recommended"), mx, y + 66 * sc, 20 * sc, 2,
+                 INK, alpha * 0.8f);
+        } else {
+            text(out, k, words(keys[r], fb[r]), mx, y, 30 * sc, 2, c, alpha);
+        }
         if (r < 2) {
-            volume_bar(out, a, k, mx, y + 50 * sc, bw * 0.40f, hb->volume[r], r == hb->row, alpha);
+            volume_bar(out, a, k, mx, y + 40 * sc, bw * 0.26f, hb->volume[r], r == hb->row, alpha);
             continue;
         }
         // On and Off side by side under it, the one set in the row's colour, the other dimmed
