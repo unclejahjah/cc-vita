@@ -405,7 +405,7 @@ static void shape_box(Shape *sh, Mat m, float box[4]) {
 }
 
 static void modemenu_extras(AsVm *vm, AsMc *menu);
-static void modemenu_small_arena(AsMc *menu);
+static void modemenu_small_arena(AsVm *vm, AsMc *menu);
 
 AsMc *cc_modemenu_attach(AsVm *vm, float x, float y) {
     AsVal args[3] = {as_strv(as_str(vm, "modemenu")), as_strv(as_str(vm, "modepanel")), as_num(5001)};
@@ -436,7 +436,7 @@ AsMc *cc_modemenu_attach(AsVm *vm, float x, float y) {
     set_num(vm, menu, "_yscale", 100 * k);
     set_num(vm, menu, "_x", x - (bb[0] + bb[2]) / 40 * k);
     set_num(vm, menu, "_y", y - (bb[1] + bb[3]) / 40 * k);
-    modemenu_small_arena(menu);
+    modemenu_small_arena(vm, menu);
     modemenu_extras(vm, menu);
     // the dark veil behind it was made for a 4:3 screen: over all of this one
     for (int i = 0; i < menu->ndisp; i++) {
@@ -548,12 +548,16 @@ static void modemenu_extras(AsVm *vm, AsMc *menu) {
     if (!word) word = "Volleyball";
     if (name) {
         as_set(vm, as_objv(&name->obj), as_atom(vm, "text"), as_strv(as_str(vm, word)));
-        float dx = 0;   // in the middle where Quaff's heading is (the fields are left-aligned)
-        AsVal qt = as_get(vm, as_objv(&quaff->obj), as_atom(vm, "text"));
-        if (quaff->text && qt.t == V_STR)
-            dx = (as_render_host_text_width(qt.s->s) - as_render_host_text_width(word)) / 2 * quaff->text->height / 20 *
-                 quaff->m.a;
-        set_num(vm, name, "_x", (quaff->m.tx + dx) / 20);
+        // in the page's middle (over the pictures)
+        float x = quaff->m.tx;
+        if (quaff->text) {
+            const int32_t *r = quaff->text->bounds;
+            if (quaff->text->align == 2)
+                x = mid - (r[0] + r[1]) / 2.0f * quaff->m.a;
+            else
+                x = mid - as_render_host_text_width(word) * quaff->text->height / 20 * quaff->m.a / 2 - r[0] * quaff->m.a;
+        }
+        set_num(vm, name, "_x", x / 20);
         set_num(vm, name, "_y", (quaff->m.ty + top - qb[1]) / 20);
         top += th;
     }
@@ -574,9 +578,9 @@ static void modemenu_extras(AsVm *vm, AsMc *menu) {
     }
 }
 
-// Arena's picture (depth 25) a little smaller, its bottom where it was: room over it for
-// Volleyball. Once, on attaching.
-static void modemenu_small_arena(AsMc *menu) {
+// Arena's picture (depth 25) a little smaller, its bottom where it was, and its heading down
+// with it: room over them for Volleyball. Once, on attaching.
+static void modemenu_small_arena(AsVm *vm, AsMc *menu) {
     for (int i = 0; i < menu->ndisp; i++) {
         AsDisp *e = &menu->disp[i];
         const Character *c = &menu->movie->chars[e->cid];
@@ -587,6 +591,8 @@ static void modemenu_small_arena(AsMc *menu) {
         e->m.a *= s; e->m.b *= s; e->m.c *= s; e->m.d *= s;
         e->m.tx = cx + (e->m.tx - cx) * s;
         e->m.ty = by + (e->m.ty - by) * s;
+        AsMc *head = panel_path(vm, menu, "txt2");   // its picture's top came down (1 - s) of its height
+        if (head) set_num(vm, head, "_y", (head->m.ty + (b[3] - b[1]) * (1 - s)) / 20);
     }
 }
 
