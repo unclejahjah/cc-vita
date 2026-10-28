@@ -10,6 +10,7 @@
 #include "cc_host.h"
 #include "strtab.h"
 #include "custom_char.h"
+#include "paint_jr.h"
 #include "as_render.h"
 
 // ---- collision: f_BSPHitTest(x1, y1, x2, y2) and its helpers ------------------------
@@ -185,6 +186,7 @@ static const uint8_t default_weapon[32] = {
 
 int cc_default_weapon(int p_type) {
     if (p_type == CC_CUSTOM_P_TYPE && cc_custom_p_type()) p_type = cc_custom_base();   // its base's weapon
+    if (p_type == CC_PAINTJR_P_TYPE && cc_paintjr_p_type()) return 86;   // his pencil (PLAYER_NEW.swf)
     return p_type >= 1 && p_type <= 31 ? default_weapon[p_type] : 0;
 }
 

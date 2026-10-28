@@ -16,7 +16,7 @@
 #include "swf.h"
 
 #define CC_CHARACTERS 31          // the game's own
-#define CC_CUSTOM_P_TYPE 32       // the custom character's number
+#define CC_CUSTOM_P_TYPE 33       // the custom character's number (32 is Paint Jr., paint_jr.h)
 
 // Looks in dir (ending in '/') for a painting; 1 if one was loaded. The painting becomes a
 // Bitmap that swf_bitmap_loaded (if set) turns into the platform's texture.
@@ -27,8 +27,8 @@ int cc_custom_p_type(void);          // CC_CUSTOM_P_TYPE once loaded, else 0
 int cc_custom_base(void);            // the character it fights like
 const char *cc_custom_name(void);    // pbp.xml's displayname, or "CUSTOM"
 
-// The game script changes for the 32nd character (character count, spawn, colour); with a
-// painting loaded, call before the VM runs MAIN.swf (cc_host_init does).
+// The game script changes for the characters after the 31 (character count, colour; with a
+// painting, its spawn); call before the VM runs MAIN.swf (cc_host_init does).
 void cc_custom_init(AsVm *vm);
 
 // A part clip of PLAYER.swf (its sprite, 0-based frame) on a player of p_type: the painted box to
