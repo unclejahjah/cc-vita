@@ -17,6 +17,7 @@
 #include <psp2/kernel/threadmgr.h>
 #include <psp2/kernel/sysmem.h>
 #include <psp2/power.h>
+#include <psp2/touch.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -792,6 +793,22 @@ static unsigned pad_nav(const SceCtrlData *pad, const SceCtrlData *old) {
     return nav;
 }
 
+// Settings' Item Switch: besides the right stick (always), a touch on the left or right half of
+// the front screen, the rear pad, or either switches to the previous or next item (L2 / R2)
+static int g_item_switch;   // HB_SWITCH_*
+
+static uint32_t touch_buttons(void) {
+    uint32_t k = 0;
+    for (int port = 0; port < 2; port++) {
+        if (!(g_item_switch & (port ? HB_SWITCH_REAR : HB_SWITCH_FRONT))) continue;
+        SceTouchData t;
+        if (sceTouchPeek(port ? SCE_TOUCH_PORT_BACK : SCE_TOUCH_PORT_FRONT, &t, 1) < 1) continue;
+        for (unsigned i = 0; i < t.reportNum; i++)   // both panels are 1920 wide
+            k |= 1u << (t.report[i].x < 960 ? CCB_L2 : CCB_R2);
+    }
+    return k;
+}
+
 // ---- pause menu ----------------------------------------------------------------------
 // The original draws its pause menu in castle.exe (PAUSE.swf only holds the art) and
 // tells the scripts through g_nPort<n>State: 2 paused, 1 playing, 3 quit to the map.
@@ -809,7 +826,7 @@ typedef struct {
 } Pause;
 
 // Settings' volumes, 0..HB_VOLUME_STEPS, and Auto Potion: kept in settings.txt as "music = N",
-// "sfx = N" and "autopotion = 0/1"; the Controls page's buttons as "buttons = " and cc_bind's
+// "sfx = N", "autopotion = 0/1" and "itemswitch = 0..3" (HB_SWITCH_*); the Controls page's buttons as "buttons = " and cc_bind's
 // six numbers
 static int g_volume[2] = {HB_VOLUME_STEPS, HB_VOLUME_STEPS};
 static int g_auto_potion;
@@ -827,6 +844,7 @@ static void settings_load(void) {
             if (sscanf(line, " music = %d", &v) == 1 && v >= 0 && v <= HB_VOLUME_STEPS) g_volume[0] = v;
             if (sscanf(line, " sfx = %d", &v) == 1 && v >= 0 && v <= HB_VOLUME_STEPS) g_volume[1] = v;
             if (sscanf(line, " autopotion = %d", &v) == 1) g_auto_potion = v != 0;
+            if (sscanf(line, " itemswitch = %d", &v) == 1 && v >= 0 && v < HB_SWITCH_N) g_item_switch = v;
             int nb[CC_ACTIONS], used = 0;
             if (sscanf(line, " buttons = %d %d %d %d %d %d", &nb[0], &nb[1], &nb[2], &nb[3], &nb[4], &nb[5]) ==
                 CC_ACTIONS) {
@@ -843,7 +861,8 @@ static void settings_load(void) {
 static void settings_save(void) {
     FILE *f = fopen(SETTINGS_PATH, "w");
     if (!f) return;
-    fprintf(f, "music = %d\nsfx = %d\nautopotion = %d\n", g_volume[0], g_volume[1], g_auto_potion);
+    fprintf(f, "music = %d\nsfx = %d\nautopotion = %d\nitemswitch = %d\n", g_volume[0], g_volume[1], g_auto_potion,
+            g_item_switch);
     fprintf(f, "buttons = %d %d %d %d %d %d\n", cc_bind[0], cc_bind[1], cc_bind[2], cc_bind[3], cc_bind[4],
             cc_bind[5]);
     fclose(f);
@@ -978,6 +997,7 @@ static void pause_draw(Pause *ps) {
 static void help_input(Pause *ps, unsigned pressed, float dt) {
     if (ps->m.book_new) {
         help_book_open(&ps->hb, ps->m.book, g_volume[0], g_volume[1], g_auto_potion);
+        ps->hb.item_switch = g_item_switch;
         ps->hb.achieved = cc_achievements();
         ps->m.book_new = 0;
     }
@@ -993,6 +1013,7 @@ static void help_input(Pause *ps, unsigned pressed, float dt) {
         settings_apply();
     }
     g_auto_potion = ps->hb.auto_potion;   // the game's VM picks it up (not mid Wi-Fi game)
+    g_item_switch = ps->hb.item_switch;
     if (sound >= 0) audio_sfx_play(sound == 0 ? "sound_toggle_b.wav" : "sound_player_select.wav", 1, 0, 0, ps);
     if (open) return;
     if (ps->hb.changed) settings_save();
@@ -1850,6 +1871,8 @@ int main(void) {
     for (int i = 0; g_indices && i < MAX_BATCH; i++) g_indices[i] = i;
     sceCtrlSetSamplingMode(SCE_CTRL_MODE_ANALOG);
     sceCtrlSetSamplingModeExt(SCE_CTRL_MODE_ANALOG);   // the other pads (Ext2 reads)
+    sceTouchSetSamplingState(SCE_TOUCH_PORT_FRONT, SCE_TOUCH_SAMPLING_STATE_START);   // Item Switch
+    sceTouchSetSamplingState(SCE_TOUCH_PORT_BACK, SCE_TOUCH_SAMPLING_STATE_START);
     log_open();
     log_line("cc_vita started");
     if (cc_custom_load(DATA_DIR "custom/"))   // optional: a painted character (custom_char.h)
@@ -2022,7 +2045,7 @@ new_game:   // the title again after Exit to Main Menu
         // the mini games: Start is the pause menu's too, except at character select and on
         // Volleyball's court picker (their own menus)
         int mini = cc_game_mode != CC_MODE_STORY && !select && !in_loader(vm, "VMENU.swf");
-        uint32_t buttons = debug ? 0 : pad_buttons(&pad, level);
+        uint32_t buttons = debug ? 0 : pad_buttons(&pad, level) | touch_buttons();
         // character select: the Cross or Start that closed the menu isn't a pick until let go
         if (select_eat && !(held & select_eat)) select_eat = 0;
         if (select_eat) buttons = 0;
