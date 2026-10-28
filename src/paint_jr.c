@@ -39,9 +39,9 @@ static const char *const GROUP[] = {"helmet", "belt", "weapon", "shield"};
 static struct {
     const Movie *player;   // the PLAYER.swf the table is for
     int n;
-    uint16_t id[MAX_PARTS];     // its part clips
-    char name[MAX_PARTS][24];   // their export names in PJPARTS.swf and FRESHnn.swf
+    char name[MAX_PARTS][24];   // its part clips' export names in PJPARTS.swf and FRESHnn.swf
     uint8_t weapon[MAX_PARTS];
+    uint8_t slot[65536];        // its index + 1 by sprite id, 0: not a part clip
 } g_parts;
 
 // PJPARTS.swf (file 0) and FRESH01.swf.. (file nn: frame nn of each part clip), loaded the first
@@ -80,9 +80,9 @@ static void index_parts(const Movie *player) {
         const Sprite *s = player->chars[id].ptr;
         for (int g = 0; g < NGROUPS; g++) {
             if (!calls(player, s, SELECTOR[g])) continue;
-            g_parts.id[g_parts.n] = (uint16_t)id;
             snprintf(g_parts.name[g_parts.n], sizeof g_parts.name[0], "pj_%s_%d", GROUP[g], nth[g]++);
             g_parts.weapon[g_parts.n++] = g == 2;
+            g_parts.slot[id] = (uint8_t)g_parts.n;
             break;
         }
     }
@@ -105,33 +105,34 @@ static int load_file(int f) {
     return g_files[f].m != NULL;
 }
 
-int cc_paintjr_part(const Movie *m, const Sprite *s, int frame, int p_type, Movie **mv, const Frame **fr) {
-    if (!m->is_player || frame < 0) return 0;
+int cc_paintjr_is_part(const Movie *m, const Sprite *s) {
+    if (!m->is_player || !(cc_paintjr_p_type() || cc_fresh())) return 0;
     if (g_parts.player != m) {
         index_parts(m);
         memset(g_files, 0, sizeof g_files);   // (a new PLAYER.swf: the names are looked up again)
     }
-    for (int i = 0; i < g_parts.n; i++) {
-        if (g_parts.id[i] != s->id) continue;
-        int file, f;
-        if (g_parts.weapon[i]) {   // the pencil, for whoever holds it
-            if (frame + 1 != PENCIL || !cc_paintjr_p_type()) return 0;
-            file = 0, f = PENCIL - 1;
-        } else if (p_type == CC_PAINTJR_P_TYPE && cc_paintjr_p_type()) {   // his frame
-            file = 0, f = CC_PAINTJR_P_TYPE;
-        } else if (p_type >= 1 && cc_fresh()) {   // the PC's version of the frame it shows
-            file = frame + 1, f = frame;
-        } else {
-            return 0;
-        }
-        if (!load_file(file)) return 0;
-        const Sprite *v = g_files[file].s[i];
-        if (!v || f >= v->nframes || !v->frames[f].count) return 0;
-        *mv = g_files[file].m;
-        *fr = &v->frames[f];
-        return 1;
+    return g_parts.slot[s->id] != 0;
+}
+
+int cc_paintjr_part(const Movie *m, const Sprite *s, int frame, int p_type, Movie **mv, const Frame **fr) {
+    if (frame < 0 || !cc_paintjr_is_part(m, s)) return 0;
+    int i = g_parts.slot[s->id] - 1, file, f;
+    if (g_parts.weapon[i]) {   // the pencil, for whoever holds it
+        if (frame + 1 != PENCIL || !cc_paintjr_p_type()) return 0;
+        file = 0, f = PENCIL - 1;
+    } else if (p_type == CC_PAINTJR_P_TYPE && cc_paintjr_p_type()) {   // his frame
+        file = 0, f = CC_PAINTJR_P_TYPE;
+    } else if (p_type >= 1 && cc_fresh()) {   // the PC's version of the frame it shows
+        file = frame + 1, f = frame;
+    } else {
+        return 0;
     }
-    return 0;
+    if (!load_file(file)) return 0;
+    const Sprite *v = g_files[file].s[i];
+    if (!v || f >= v->nframes || !v->frames[f].count) return 0;
+    *mv = g_files[file].m;
+    *fr = &v->frames[f];
+    return 1;
 }
 
 // ---- his magic ----------------------------------------------------------------------------
