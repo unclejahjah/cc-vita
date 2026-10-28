@@ -1677,10 +1677,13 @@ static void vignette_rt_draw(AsMc *vignettes, Mat m, RecolourCache *cache) {
     }
     static DrawList dl;
     render_begin(&dl);
-    dl.view[2] = SCREEN_W;   // the list is in screen pixels; the texture takes the whole of it
-    dl.view[3] = SCREEN_H;
+    // vita2d's projection and viewport stay the screen's in any target: the list is drawn in
+    // the texture's own pixels, its top left VIGNETTE_W x VIGNETTE_H of "screen"
+    dl.view[2] = VIGNETTE_W;
+    dl.view[3] = VIGNETTE_H;
     dl.cache = cache;
-    as_render_mc(vignettes, m, CX_IDENTITY, &dl);
+    as_render_mc(vignettes, mat_mul((Mat){(float)VIGNETTE_W / SCREEN_W, 0, 0, (float)VIGNETTE_H / SCREEN_H, 0, 0}, m),
+                 CX_IDENTITY, &dl);
     vita2d_start_drawing_advanced(g_vignette_rt, 0);
     vita2d_set_clear_color(RGBA8(0, 0, 0, 255));
     vita2d_clear_screen();
