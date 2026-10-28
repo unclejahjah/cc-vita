@@ -295,7 +295,7 @@ void as_render_mc(AsMc *mc, Mat parent, CXform pcx, DrawList *out) {
             return;
         }
     }
-    if (mc->def && mc->movie->is_player && (cc_paintjr_p_type() || cc_fresh())) {   // paint_jr.h
+    if (mc->def && cc_paintjr_is_part(mc->movie, mc->def)) {   // Paint Jr., the FRESH look (paint_jr.h)
         int t = 0;   // the player it's on (the nearest p_type up to 8 levels, as custom_part)
         AsMc *p = mc->parent;
         for (int i = 0; p && !t && i < 8; i++, p = p->parent) t = p_type_of(p);

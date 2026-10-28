@@ -39,6 +39,8 @@ int cc_fresh(void);
 // PJPARTS.swf or FRESHnn.swf to draw instead (his pieces, the pencil for anyone holding weapon 86,
 // the FRESH look's), else 0
 int cc_paintjr_part(const Movie *m, const Sprite *s, int frame, int p_type, Movie **mv, const Frame **fr);
+// Whether that sprite is one of the part clips at all (cheap: asked for every clip drawn)
+int cc_paintjr_is_part(const Movie *m, const Sprite *s);
 // LOBBY.swf portrait_top/mid/bot on frame (0-based) of the character frame + 2: the frame to draw
 // instead, or -1 (Paint Jr.'s always, everyone's with the FRESH look)
 int cc_portrait_frame(int frame, int nframes);
