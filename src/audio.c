@@ -3,6 +3,7 @@
 #include <mpg123.h>
 #include <psp2/audioout.h>
 #include <psp2/kernel/threadmgr.h>
+#include <psp2/rtc.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -53,6 +54,11 @@ static volatile int g_music_req_loop, g_music_req_seq;
 static mpg123_handle *g_music;
 static int g_music_loop, g_music_rate;
 static char g_music_path[192];
+// After the Vita sleeps (or sits in LiveArea) the track's open file can go bad, so a read
+// error doesn't end the music: the mixer reopens the file and carries on from here.
+static int g_music_lost;           // 1 while waiting to reopen
+static off_t g_music_lost_pos;     // sample to resume from
+static int g_music_retry_wait, g_music_retries;
 
 static void lock(void) { sceKernelLockLwMutex(&g_lock, 1, NULL); }
 static void unlock(void) { sceKernelUnlockLwMutex(&g_lock, 1); }
@@ -132,11 +138,45 @@ static int load_thread(SceSize args, void *argp) {
 
 // ---- mixing ------------------------------------------------------------------------
 
-static void music_open(void) {
+static void music_close(void) {
     if (g_music) { mpg123_close(g_music); mpg123_delete(g_music); g_music = NULL; }
+}
+
+static void music_open(void) {
+    music_close();
+    g_music_lost = 0;
+    g_music_retries = 0;
     long rate;
     g_music = open_mp3(g_music_path, &rate);
     g_music_rate = (int)rate;
+}
+
+// Drops the track's file but remembers where it was, to be reopened by music_retry.
+static void music_lose(off_t pos) {
+    music_close();
+    g_music_lost = 1;
+    g_music_lost_pos = pos < 0 ? 0 : pos;
+    g_music_retry_wait = 0;
+}
+
+#define MUSIC_RETRY_BLOCKS 20      // ~0.5 s between tries while the memory card comes back
+#define MUSIC_MAX_RETRIES 120      // then give up on this track
+
+static void music_retry(void) {
+    if (!g_music_lost || g_music) return;
+    if (g_music_retry_wait > 0) { g_music_retry_wait--; return; }
+    long rate;
+    mpg123_handle *h = open_mp3(g_music_path, &rate);
+    if (h && (g_music_lost_pos == 0 || mpg123_seek(h, g_music_lost_pos, SEEK_SET) >= 0)) {
+        g_music = h;
+        g_music_rate = (int)rate;
+        g_music_lost = 0;
+        g_music_retries = 0;
+        return;
+    }
+    if (h) { mpg123_close(h); mpg123_delete(h); }
+    g_music_retry_wait = MUSIC_RETRY_BLOCKS;
+    if (++g_music_retries >= MUSIC_MAX_RETRIES) g_music_lost = 0;
 }
 
 // Adds up to n frames of music at the output rate into mix.
@@ -156,11 +196,14 @@ static void mix_music(int32_t *mix, int n) {
             int r = mpg123_read(g_music, (unsigned char *)(buf + have * 2), (OUT_FRAMES * 2 - have) * 4, &got);
             have += got / 4;
             if (r == MPG123_NEW_FORMAT) continue;
-            if (r == MPG123_DONE || (r != MPG123_OK && !got)) {
-                if (g_music_loop && mpg123_seek(g_music, 0, SEEK_SET) >= 0) continue;
-                mpg123_close(g_music);
-                mpg123_delete(g_music);
-                g_music = NULL;
+            if (r == MPG123_DONE) {
+                if (!g_music_loop) { music_close(); return; }
+                if (mpg123_seek(g_music, 0, SEEK_SET) >= 0) continue;
+                music_lose(0);   // the file went bad right at the loop point
+                return;
+            }
+            if (r != MPG123_OK && !got) {   // a read error, not the end: reopen and resume
+                music_lose(mpg123_tell(g_music));
                 return;
             }
         }
@@ -179,6 +222,7 @@ static int mix_thread(SceSize args, void *argp) {
     static int16_t out[2][OUT_FRAMES * 2];
     static int32_t mix[OUT_FRAMES * 2];
     int which = 0, music_seq = 0;
+    SceUInt64 last_tick = 0;
     while (!g_quit) {
         // the latest music request: a track, or "" to stop
         if (g_music_req_seq != music_seq) {
@@ -189,11 +233,13 @@ static int mix_thread(SceSize args, void *argp) {
             g_music_loop = g_music_req_loop;
             unlock();
             if (stop) {
-                if (g_music) { mpg123_close(g_music); mpg123_delete(g_music); g_music = NULL; }
+                music_close();
+                g_music_lost = 0;
             } else {
                 music_open();
             }
         }
+        music_retry();
         memset(mix, 0, sizeof mix);
         mix_music(mix, OUT_FRAMES);
         float sfx = g_sfx_gain;
@@ -223,8 +269,21 @@ static int mix_thread(SceSize args, void *argp) {
             int32_t x = mix[i];
             out[which][i] = x > 32767 ? 32767 : x < -32768 ? -32768 : x;
         }
-        sceAudioOutOutput(g_port, out[which]);   // blocks until the port takes it
+        int err = sceAudioOutOutput(g_port, out[which]);   // blocks until the port takes it
         which ^= 1;
+        if (err < 0) {
+            // the port didn't survive the suspend: open a fresh one
+            sceAudioOutReleasePort(g_port);
+            int port = sceAudioOutOpenPort(SCE_AUDIO_OUT_PORT_TYPE_BGM, OUT_FRAMES, OUT_RATE, SCE_AUDIO_OUT_MODE_STEREO);
+            if (port >= 0) g_port = port;
+            else sceKernelDelayThread(100 * 1000);
+        }
+        // a block normally takes ~23 ms; a long stall means the Vita slept or the game was in
+        // the background, so reopen the track's file before it fails on us
+        SceRtcTick now;   // wall clock, which keeps counting while the Vita sleeps
+        sceRtcGetCurrentTick(&now);
+        if (last_tick && now.tick - last_tick > 1000 * 1000 && g_music) music_lose(mpg123_tell(g_music));
+        last_tick = now.tick;
     }
     return 0;
 }
