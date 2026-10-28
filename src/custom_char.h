@@ -35,6 +35,11 @@ void cc_custom_init(AsVm *vm);
 // draw instead of its own frame, or NULL to draw it as usual.
 const BitmapFill *cc_custom_part(const Movie *m, const Sprite *s, int frame, int p_type);
 
+// The painting's weapon for weapon looks (weapon_look.h): whether s is PLAYER.swf's weapon part
+// clip, and the painted weapon drawn in its coordinates (NULL without a painting, or off)
+int cc_custom_is_weapon_part(const Movie *m, const Sprite *s);
+const BitmapFill *cc_custom_weapon(void);
+
 // Clips outside PLAYER.swf that show a character's face, found by their instance names
 // (as_render.c): the HUD's face and the character select portrait.
 enum { CC_ICON, CC_PORTRAIT };
