@@ -408,6 +408,7 @@ static void shape_box(Shape *sh, Mat m, float box[4]) {
 
 static void modemenu_extras(AsVm *vm, AsMc *menu);
 static void modemenu_small_arena(AsVm *vm, AsMc *menu);
+static void modemenu_hand(AsVm *vm, AsMc *menu);
 
 AsMc *cc_modemenu_attach(AsVm *vm, float x, float y) {
     AsVal args[3] = {as_strv(as_str(vm, "modemenu")), as_strv(as_str(vm, "modepanel")), as_num(5001)};
@@ -424,13 +425,13 @@ AsMc *cc_modemenu_attach(AsVm *vm, float x, float y) {
         const char *w = strtab_get(words[i][1]);
         if (field) as_set(vm, as_objv(&field->obj), as_atom(vm, "text"), as_strv(as_str(vm, w ? w : words[i][2])));
     }
-    // the book as tall as the screen allows (the hand below it may go off the bottom),
-    // its middle at (x, y)
+    // the book as tall as the screen, as the original fills its own (the hand below it goes off
+    // the bottom), its middle at (x, y)
     AsMc *book = panel_child(menu, 2);
     float bb[4], k = 1;
     if (book && vm->root->movie) {
         render_mc_bounds(book, book->m, bb);
-        if (bb[3] > bb[1]) k = vm->root->movie->stage_h * 0.86f * 20 / (bb[3] - bb[1]);
+        if (bb[3] > bb[1]) k = vm->root->movie->stage_h * 0.99f * 20 / (bb[3] - bb[1]);
     } else {
         bb[0] = bb[1] = bb[2] = bb[3] = 0;
     }
@@ -440,6 +441,7 @@ AsMc *cc_modemenu_attach(AsVm *vm, float x, float y) {
     set_num(vm, menu, "_y", y - (bb[1] + bb[3]) / 40 * k);
     modemenu_small_arena(vm, menu);
     modemenu_extras(vm, menu);
+    modemenu_hand(vm, menu);
     // the dark veil behind it was made for a 4:3 screen: over all of this one
     for (int i = 0; i < menu->ndisp; i++) {
         AsDisp *e = &menu->disp[i];
@@ -609,7 +611,9 @@ static void modemenu_extras(AsVm *vm, AsMc *menu) {
     AsMc *hand = panel_path(vm, menu, "hand");
     if (hand) {
         float pc = (pb[1] + pb[3]) / 2;
+        set_num(vm, menu, "cc_hand_x", hand->m.tx / 20);
         set_num(vm, menu, "cc_hand_y", hand->m.ty / 20);
+        set_num(vm, menu, "cc_hand_s", hand->m.d);
         set_num(vm, menu, "cc_hand_dyq", (pq - pc) / 20);
         set_num(vm, menu, "cc_hand_dyv", (vq - pc) / 20);
     }
@@ -651,21 +655,43 @@ void cc_modemenu_point(AsVm *vm, AsMc *menu, int from, int to) {
     as_call_method(vm, as_objv(&hand->obj), "gotoAndPlay", 1, &arg);
 }
 
+// The hand bigger than the book's (the book's is cut off at the arm on a wide screen): its finger,
+// the top-left corner of its art, stays where the book's hand points, the arm reaching further
+// down off the screen. Every tick, as the hand's moves change where its finger is.
+#define HAND_K 1.45f
+
+static void modemenu_hand(AsVm *vm, AsMc *menu) {
+    AsVal o = as_objv(&menu->obj);
+    double x = as_tonum(vm, as_get(vm, o, as_atom(vm, "cc_hand_x")));
+    double y = as_tonum(vm, as_get(vm, o, as_atom(vm, "cc_hand_y")));
+    double s = as_tonum(vm, as_get(vm, o, as_atom(vm, "cc_hand_s")));
+    double at = as_tonum(vm, as_get(vm, o, as_atom(vm, "cc_hand_at")));
+    AsMc *hand = panel_path(vm, menu, "hand");
+    if (!hand || x != x || y != y || s != s || s == 0) return;   // (NaN: not laid out)
+    if (at != at) at = 0;
+    float b[4];
+    render_mc_bounds(hand, (Mat){1, 0, 0, 1, 0, 0}, b);
+    if (b[2] <= b[0] || b[3] <= b[1]) b[0] = b[1] = 0;
+    double tx = x + s * b[0] / 20, ty = y + at + s * b[1] / 20;   // the finger, where the book has it
+    set_num(vm, hand, "_xscale", 100 * s * HAND_K);
+    set_num(vm, hand, "_yscale", 100 * s * HAND_K);
+    set_num(vm, hand, "_x", tx - s * HAND_K * b[0] / 20);
+    set_num(vm, hand, "_y", ty - s * HAND_K * b[1] / 20);
+}
+
 void cc_modemenu_tick(AsVm *vm, AsMc *menu) {
     modemenu_extras(vm, menu);
     AsVal o = as_objv(&menu->obj);
-    AsVal y = as_get(vm, o, as_atom(vm, "cc_hand_y"));
-    AsMc *hand = panel_path(vm, menu, "hand");
-    if (!hand || y.t != V_NUM) return;
     double at = as_tonum(vm, as_get(vm, o, as_atom(vm, "cc_hand_at")));
     double to = as_tonum(vm, as_get(vm, o, as_atom(vm, "cc_hand_to")));
     if (at != at) at = 0;   // (NaN: not set yet)
     if (to != to) to = 0;
-    if (at == to) return;
-    at += (to - at) * 0.35;   // as quick as the hand's own moves
-    if (fabs(to - at) < 0.5) at = to;
-    set_num(vm, menu, "cc_hand_at", at);
-    set_num(vm, hand, "_y", y.n + at);
+    if (at != to) {
+        at += (to - at) * 0.35;   // as quick as the hand's own moves
+        if (fabs(to - at) < 0.5) at = to;
+        set_num(vm, menu, "cc_hand_at", at);
+    }
+    modemenu_hand(vm, menu);
 }
 
 // the power button's square, in the panel's twips: on the (hidden) Quit button's bottom-left

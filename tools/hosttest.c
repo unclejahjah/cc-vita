@@ -685,6 +685,12 @@ static int as_mode(int argc, char **argv) {
         double t0 = as_time_ms();
         long long ops0 = vm->ops;
         cc_volleyball_tick(vm);
+        if (cc_quaff_title(vm)) {   // as the Vita: Cross (accept) is the title's Start, Start isn't
+            for (int p = 0; p < 4; p++) {
+                static const uint8_t accept[4] = {2, 4, 6, 10}, start[4] = {49, 50, 51, 52};
+                cc_keys[start[p]] = cc_keys[accept[p]];
+            }
+        }
         if (g_modes) cc_modemenu_tick(vm, g_modes);
         if (covering != 1) as_tick(vm);
         double tg = as_time_ms();
