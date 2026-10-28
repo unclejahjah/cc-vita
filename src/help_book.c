@@ -34,7 +34,7 @@ void help_book_open(HelpBook *hb, int book, int music, int sfx, int auto_potion,
     hb->fresh = fresh;
 }
 
-static int settings_rows(const HelpBook *hb) { return hb->fresh < 0 ? 3 : 4; }
+static int settings_rows(const HelpBook *hb) { return hb->fresh < 0 ? 4 : 5; }   // FRESH Look: the title's only
 
 int help_book_update(HelpBook *hb, unsigned pressed, float dt, int *sound) {
     *sound = -1;
@@ -85,10 +85,18 @@ int help_book_update(HelpBook *hb, unsigned pressed, float dt, int *sound) {
             *sound = 0;
         }
         int step = pressed & HB_RIGHT ? 1 : pressed & HB_LEFT ? -1 : 0;
-        if (hb->row >= 2) {   // On / Off: left or right flips it
+        if (hb->row == 2 || hb->row == 4) {   // On / Off: left or right flips it
             if (step) {
                 if (hb->row == 2) hb->auto_potion ^= 1;
                 else hb->fresh ^= 1;
+                hb->changed = 1;
+                *sound = 0;
+            }
+            return 1;
+        }
+        if (hb->row == 3) {   // Item Switch: left / right go round its four choices
+            if (step) {
+                hb->item_switch = (hb->item_switch + step + HB_SWITCH_N) % HB_SWITCH_N;
                 hb->changed = 1;
                 *sound = 0;
             }
@@ -506,30 +514,43 @@ static void settings_page(DrawList *out, Art *a, float k, const HelpBook *hb, fl
     page_title(out, a, k, words("help.title.settings", "Settings"), alpha);
     float mx, my, bw;
     book_middle(a, &mx, &my, &bw);
-    static const char *keys[4] = {"help.settings.music", "help.settings.sfx", "help.settings.autopotion",
-                                  "help.settings.fresh"};
-    static const char *fb[4] = {"Music Volume", "SFX Volume", "Auto Potion", "FRESH Look"};
+    static const char *keys[5] = {"help.settings.music", "help.settings.sfx", "help.settings.autopotion",
+                                  "help.settings.itemswitch", "help.settings.fresh"};
+    static const char *fb[5] = {"Music Volume", "SFX Volume", "Auto Potion", "Item Switch", "FRESH Look"};
     float sc = place_scale(a);
     int rows = settings_rows(hb);
-    static const float Y4[4] = {-150, -55, 45, 125};   // four rows: the bars still fit under the first two
+    static const float Y5[5] = {-146, -70, 2, 64, 126};   // five rows (the title's): tighter
     for (int r = 0; r < rows; r++) {
-        float y = my + (rows == 4 ? Y4[r] : -115 + r * 125) * sc;   // (the bars sit under the first two)
+        float y = my + (rows == 5 ? Y5[r] : -138 + r * 94) * sc;   // (the bars sit under the first two)
         uint32_t c = INK;
         if (r == hb->row) {   // the chosen row pulses yellow like the pause menu's chosen line
             int v = (int)(sinf(hb->time * 10) * 34 + 221) & 255;
             c = (uint32_t)v << 16 | (uint32_t)v << 8;
         }
-        if (r == 3) {   // FRESH Look is a beta: heavy on the Vita, so it says so
+        float ls = (rows == 5 ? 26 : 30) * sc;   // the row's name
+        if (r == 4) {   // FRESH Look is a beta: heavy on the Vita, so it says so
             char label[96];
             snprintf(label, sizeof label, "%s %s", words(keys[r], fb[r]), words("help.settings.beta", "(BETA)"));
-            text(out, k, label, mx, y, 30 * sc, 2, c, alpha);
-            text(out, k, words("help.settings.fresh_note", "Overclocking recommended"), mx, y + 66 * sc, 20 * sc, 2,
+            text(out, k, label, mx, y, ls, 2, c, alpha);
+            text(out, k, words("help.settings.fresh_note", "Overclocking recommended"), mx, y + 58 * sc, 18 * sc, 2,
                  INK, alpha * 0.8f);
         } else {
-            text(out, k, words(keys[r], fb[r]), mx, y, 30 * sc, 2, c, alpha);
+            text(out, k, words(keys[r], fb[r]), mx, y, ls, 2, c, alpha);
         }
         if (r < 2) {
-            volume_bar(out, a, k, mx, y + 40 * sc, bw * 0.26f, hb->volume[r], r == hb->row, alpha);
+            volume_bar(out, a, k, mx, y + (rows == 5 ? 36 : 42) * sc, bw * 0.26f, hb->volume[r], r == hb->row, alpha);
+            continue;
+        }
+        if (r == 3) {   // Item Switch: the choice under it, between arrows
+            static const char *sk[HB_SWITCH_N] = {"help.settings.switch.stick", "help.settings.switch.front",
+                                                  "help.settings.switch.rear", "help.settings.switch.both"};
+            static const char *sf[HB_SWITCH_N] = {"Right Stick", "Front Touch", "Rear Touch", "Front + Rear Touch"};
+            float vy = (rows == 5 ? 32 : 40) * sc;
+            const char *v = words(sk[hb->item_switch], sf[hb->item_switch]);
+            float w = as_render_host_text_width(v) * 26 * sc / 20;
+            text(out, k, v, mx, y + vy, 26 * sc, 2, c, alpha);
+            text(out, k, "<", mx - w / 2 - 16 * sc, y + vy, 26 * sc, 2, c, alpha);
+            text(out, k, ">", mx + w / 2 + 16 * sc, y + vy, 26 * sc, 2, c, alpha);
             continue;
         }
         // On and Off side by side under it, the one set in the row's colour, the other dimmed
@@ -537,7 +558,7 @@ static void settings_page(DrawList *out, Art *a, float k, const HelpBook *hb, fl
         static const char *vf[2] = {"Off", "On"};
         for (int o = 0; o < 2; o++) {
             int set = o == (r == 2 ? hb->auto_potion : hb->fresh);
-            text(out, k, words(vk[o], vf[o]), mx + (o ? 70 : -70) * sc, y + (rows == 4 ? 36 : 42) * sc, 30 * sc, 2,
+            text(out, k, words(vk[o], vf[o]), mx + (o ? 70 : -70) * sc, y + (rows == 5 ? 32 : 40) * sc, 30 * sc, 2,
                  set ? c : INK, set ? alpha : alpha * 0.45f);
         }
     }
