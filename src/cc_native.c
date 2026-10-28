@@ -523,6 +523,35 @@ AsMc *cc_menu_fresh(AsVm *vm, AsMc *panel, int on) {
     return st && on ? st : NULL;
 }
 
+#define VIGNETTES_DEPTH (-16384)   // under the root timeline's lowest depth (1 = -16383)
+AsMc *cc_title_vignettes(AsVm *vm, Movie *v) {
+    AsMc *root = vm->root;
+    if (!root || !v || v->stage_w <= 0 || v->stage_h <= 0) return NULL;
+    AsMc *mc = as_mc_create_empty(vm, root, as_str(vm, "vignettes"), VIGNETTES_DEPTH);
+    if (!mc) return NULL;
+    as_mc_load_movie(vm, mc, v);
+    // 16:9 over the 848x480 stage: scaled to cover it, centred (a few px off the sides)
+    float sw = root->movie->stage_w, sh = root->movie->stage_h;
+    float k = fmaxf(sw / v->stage_w, sh / v->stage_h);
+    mc->m = (Mat){k, 0, 0, k, (sw - v->stage_w * k) / 2 * 20, (sh - v->stage_h * k) / 2 * 20};
+    return mc;
+}
+
+void cc_title_hide_backdrop(AsMc *mc) {
+    for (int i = 0; i < mc->ndisp; i++) {
+        AsDisp *e = &mc->disp[i];
+        if (e->kind != DISP_MC || !e->mc) continue;
+        if (e->cid != 631) { cc_title_hide_backdrop(e->mc); continue; }
+        AsMc *body = e->mc;   // the logo (60) and the news bar (63 on) stay; the Red Knight (61) goes
+        for (int j = 0; j < body->ndisp; j++) {
+            AsDisp *b = &body->disp[j];
+            if (b->depth < 2 - 16384 || b->depth > 61 - 16384 || b->depth == 60 - 16384) continue;
+            if (b->kind == DISP_MC && b->mc) b->mc->visible = 0;
+            else b->m.a = b->m.b = b->m.c = b->m.d = 0;
+        }
+    }
+}
+
 // a text field's box in its parent (twips), through where it stands
 static void field_box(AsMc *f, float b[4]) {
     if (f->text) {

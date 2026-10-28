@@ -13,7 +13,9 @@ enum { CC_BTN_STYLE_COLOURED, CC_BTN_STYLE_DARK, CC_BTN_STYLE_GREY };   // the g
 int cc_buttons_playstation(Movie *m, int style);
 // MENU.swf's title: the painted "Steam Edition" badge covered and "Vita Edition" drawn in
 // its place (fills added to the logo). 1 if this was that file. Call before tessellating.
+// cc_menu_badge_outline set: the words get a dark rim (no cloud behind them under the PC's scenes).
 int cc_menu_vita_badge(Movie *m);
+extern int cc_menu_badge_outline;
 // The "BETA" sticker for the Multiplayer button (CC_BETA_STICKER in cc_host.h), built once from
 // MENU.swf's font (1 if m was that file); then cc_menu_beta_sticker gives it (NULL before).
 int cc_menu_beta_sticker_build(const Movie *m);

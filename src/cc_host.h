@@ -66,6 +66,13 @@ AsMc *cc_menu_attach(AsVm *vm, float x, float y);
 // button while on (the FRESH look, paint_jr.h): its clip, a hidden child of the panel that the
 // app draws over the highlight as it does the BETA sticker; NULL when off or without the file
 AsMc *cc_menu_fresh(AsVm *vm, AsMc *panel, int on);
+// The PC title's moving backdrop (2025): MENU_VIGNETTES.swf (the PC's menu_vignettes.pak, 1920x1080,
+// eight scenes in one 2248-frame loop) that castle.exe plays under MENU.swf. cc_title_vignettes puts
+// it on the title's root under everything, covering the stage; cc_title_hide_backdrop hides the
+// original's painted scene and Red Knight in "body" (sprite 631, depths 2-61 but the logo at 60),
+// as the PC's body has only the logo and the news bar
+AsMc *cc_title_vignettes(AsVm *vm, Movie *vignettes);
+void cc_title_hide_backdrop(AsMc *root);
 // Local Game's mode menu (MENU.swf "modemenu") on _root at (x, y), its hand on Castle
 // Crashers; cc_modemenu_point moves the hand from one item to another (0 Castle Crashers,
 // 1 Arena, 2 All You Can Quaff, 3 Volleyball: under Castle Crashers, where the right page's

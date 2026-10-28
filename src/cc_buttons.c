@@ -421,6 +421,7 @@ static float badge_text(Poly *p, const BadgeSpace *bs, const Font *f, const char
     return pen * scale;
 }
 
+int cc_menu_badge_outline;
 int cc_menu_vita_badge(Movie *m) {
     // MENU.swf: the title sprite 631 shows the logo (shape 354) at depth 60; the root's "main"
     // frame shows 631 as "body"
@@ -439,6 +440,16 @@ int cc_menu_vita_badge(Movie *m) {
     static const uint8_t WHITE[4] = {255, 255, 255, 255};
     remove_steam_badge(m);
     const Font *f = badge_font(m, "VITAEDON");
+    if (f && cc_menu_badge_outline) {   // over the PC's moving scenes, not the painted cloud: a dark rim
+        static const uint8_t DARK[4] = {35, 31, 32, 255};
+        for (int o = 0; o < 8; o++) {
+            float a = o * 3.14159265f / 4, dx = 2.2f * cosf(a), dy = 2.2f * sinf(a);
+            Poly rim = {0};
+            badge_text(&rim, &bs, f, "VITA", 358 + dx, 92 + dy, 22, -0.12f);
+            badge_text(&rim, &bs, f, "EDITION", 340 + dx, 117 + dy, 16, -0.12f);
+            append_fill(s, fill_from(&rim, DARK));
+        }
+    }
     if (f) {
         float slope = -0.12f;   // the original lettering rises to the right
         // drawn a few times a pixel apart: as heavy as the hand-lettered original

@@ -585,10 +585,10 @@ static int cached_movie_peek(const char *base) {
 // select's on the title, the game's (effects, players, animals, the map) after that. Each took
 // the Vita seconds with the screen standing still (fx, player and animals 15 s). A file the
 // game asks for while another one is loading waits for it, so nothing is read ahead of its stage.
-static const char *const g_preload[] = {"MENU.swf",                                              // intro
+static const char *const g_preload[] = {"MENU.swf", "MENU_VIGNETTES.swf",                        // intro
                                         "LOADING.swf", "PAUSE.swf", "sounds.swf", "lobby.swf",   // title
                                         "fx.swf", "player.swf", "animals.swf", "map.swf"};       // game
-enum { PRELOAD_INTRO = 1, PRELOAD_TITLE = 5, PRELOAD_GAME = 9 };
+enum { PRELOAD_INTRO = 2, PRELOAD_TITLE = 6, PRELOAD_GAME = 10 };
 static int g_npreloaded;   // of g_preload, started
 
 static void preload_step(int upto) {   // upto: the PRELOAD_ stage
@@ -689,6 +689,17 @@ static Movie *host_movie(const char *name) {
     return m;
 }
 
+static void movie_free_at(int i) {   // g_movies[i]'s file, its textures and video memory
+    Movie *m = g_movies[i].m;
+    log_line("free %s", g_movies[i].name);
+    for (int c = 0; c < 65536; c++)
+        if (m->chars[c].type == CHAR_BITMAP && ((Bitmap *)m->chars[c].ptr)->tex)
+            vita2d_free_texture(((Bitmap *)m->chars[c].ptr)->tex);
+    as_forget_movie(m);
+    swf_free(m);
+    gpu_free(&g_movies[i].gpu);
+}
+
 // Frees the files no clip or script function of the game belongs to any more. Their meshes
 // may be in the last frame's draw list and the recolour cache, so the GPU is let finish and
 // the cache starts over; the caller builds a new frame before drawing again. Returns how many.
@@ -707,18 +718,27 @@ static int free_unused_movies(AsVm *vm, RecolourCache *cache, void *cache_mem, s
     int n = 0;
     for (int i = 0; i < g_nmovies; i++) {
         if (used[i] || g_movies[i].keep) { g_movies[n++] = g_movies[i]; continue; }
-        Movie *m = g_movies[i].m;
-        log_line("free %s", g_movies[i].name);
-        for (int c = 0; c < 65536; c++)
-            if (m->chars[c].type == CHAR_BITMAP && ((Bitmap *)m->chars[c].ptr)->tex)
-                vita2d_free_texture(((Bitmap *)m->chars[c].ptr)->tex);
-        as_forget_movie(m);
-        swf_free(m);
-        gpu_free(&g_movies[i].gpu);
+        movie_free_at(i);
     }
     g_nmovies = n;
     log_flush();
     return unused;
+}
+
+// Frees one file by name, whatever its keep (the title's backdrop once the game starts): only
+// when nothing uses it any more. The GPU is let finish and the cache starts over, as above.
+static void free_movie_named(const char *base, RecolourCache *cache, void *cache_mem, size_t cache_bytes) {
+    for (int i = 0; i < g_nmovies; i++) {
+        if (strcasecmp(g_movies[i].name, base)) continue;
+        vita2d_wait_rendering_done();
+        recolour_cache_free(cache);
+        recolour_cache_init(cache, cache_mem, cache_bytes);
+        movie_free_at(i);
+        memmove(&g_movies[i], &g_movies[i + 1], (g_nmovies - i - 1) * sizeof *g_movies);
+        g_nmovies--;
+        log_flush();
+        return;
+    }
 }
 
 // ---- controls -> the game's buttons (cc_port_keys gives them port 1's key codes) -------
@@ -1662,6 +1682,13 @@ static int title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, siz
     as_render_init(t);
     t->root = as_mc_new(t, m, &m->root, NULL, 0);
     cc_native_root_functions(t, &t->root->obj);
+    // the PC's moving scenes behind the menu, when its MENU_VIGNETTES.swf is there (read during
+    // the intro; back from a game, under the loading screen)
+    AsMc *vignettes = NULL;
+    if (find_file("MENU_VIGNETTES.swf", art_path, sizeof art_path, &art_level)) {
+        Movie *v = vita_loader(NULL, "MENU_VIGNETTES.swf");
+        if (v) vignettes = cc_title_vignettes(t, v);
+    }
     if (from_game) {
         EXIT_TRACE("exit: title made");
         cc_loading_reveal(t);
@@ -1832,6 +1859,7 @@ static int title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, siz
             Mat screen = {k / 20, 0, 0, k / 20, 0, 0};
             render_begin(vb);
             hide_sprite(t->root, 626);   // the news bar (no news on the Vita)
+            if (vignettes) cc_title_hide_backdrop(t->root);   // the painted one, under the PC's scenes
             as_render_mc(t->root, screen, CX_IDENTITY, vb);
             if (!panel && !cc_loading_busy(t) && (frame / 30) % 2 == 0 && as_render_host_line_height() > 0) {   // blinking, in the game's font, where the news bar was
                 Mat id = {1, 0, 0, 1, 0, 0};
@@ -1945,6 +1973,8 @@ int main(void) {
                                  find_file("PAINTJR.swf", path, sizeof path, &lvl));
         cc_paintjr_set_castle(find_file("LEVEL15_NEW.swf", path, sizeof path, &lvl));
         if (cc_paintjr_p_type()) log_line("Paint Jr. (character %d)", cc_paintjr_p_type());
+        // the PC's moving title scenes: "Vita Edition" then has no painted cloud behind it
+        cc_menu_badge_outline = find_file("MENU_VIGNETTES.swf", path, sizeof path, &lvl);
     }
     bg_init();
 
@@ -2023,6 +2053,10 @@ int main(void) {
 new_game:   // the title again after Exit to Main Menu
     g_npreloaded = 0;
     g_netgame = title_screen(&vb, &cache, cache_mem, cache_bytes, from_game);
+    // the title's moving scenes aren't wanted in the game: their meshes are video memory the
+    // levels need (read again under the loading screen on the way back)
+    free_movie_named("MENU_VIGNETTES.swf", &cache, cache_mem, cache_bytes);
+    render_begin(&vb);
 #ifdef CC_NET
     if (g_netgame) cc_game_mode = net.mode;   // the host's pick, on every Vita
 #endif
