@@ -178,6 +178,18 @@ static AsVal magic_bullet_down(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
     return as_call_script(vm, this_, argc, argv);
 }
 
+// f_WeaponStats(zone, num): the original MAIN has no weapon 86; the PC's gives the pencil +2
+// defense, +7 magic, +1 agility
+static AsVal weapon_stats(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
+    AsVal r = as_call_script(vm, this_, argc, argv);
+    if (argc > 1 && argv[0].t == V_OBJ && as_toint32(vm, argv[1]) == PENCIL) {
+        as_set(vm, argv[0], as_atom(vm, "weapon_defense"), as_num(2));
+        as_set(vm, argv[0], as_atom(vm, "weapon_magic"), as_num(7));
+        as_set(vm, argv[0], as_atom(vm, "weapon_agility"), as_num(1));
+    }
+    return r;
+}
+
 void cc_paintjr_init(AsVm *vm) {
     g_grafted = 0;
     g_vm = vm;
@@ -185,4 +197,5 @@ void cc_paintjr_init(AsVm *vm) {
     if (!cc_paintjr_p_type()) return;
     as_override(vm, "f_ShootMagic", shoot_magic);
     as_override(vm, "f_MagicBulletDown", magic_bullet_down);
+    as_override(vm, "f_WeaponStats", weapon_stats);
 }

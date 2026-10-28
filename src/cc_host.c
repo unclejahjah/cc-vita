@@ -381,6 +381,10 @@ void cc_own_dlc_items(void) {
             double *b = &storage[p][8 + dlc_animals[i] / 8];
             *b = (int)*b | 1 << (dlc_animals[i] % 8);
         }
+        if (cc_paintjr_p_type()) {   // Paint Jr.'s pencil (weapon 86, paint_jr.h)
+            int id = 50 + 86;
+            storage[p][28 + (id - 128) / 8] = (int)storage[p][28 + (id - 128) / 8] | 1 << (id % 8);
+        }
         if (cc_animal_type()) {   // and a custom animal orb (custom_animal.h), if there is one
             double *b = &storage[p][8 + CC_CUSTOM_ANIMAL / 8];
             *b = (int)*b | 1 << (CC_CUSTOM_ANIMAL % 8);
