@@ -856,12 +856,14 @@ static int in_level(AsVm *vm) {
 }
 
 // the world map (MAP.swf in the level slot): the executable's pause menu opens there too
-static int in_map(AsVm *vm) {
+static int in_loader(AsVm *vm, const char *file) {
     int found;
     AsVal l = as_resolve_path(vm, vm->root, "loader", &found);
-    Movie *map = cached_movie("MAP.swf");
-    return found && map && l.t == V_OBJ && l.o->type == OBJ_MC && ((AsMc *)l.o)->movie == map;
+    Movie *m = cached_movie(file);
+    return found && m && l.t == V_OBJ && l.o->type == OBJ_MC && ((AsMc *)l.o)->movie == m;
 }
+
+static int in_map(AsVm *vm) { return in_loader(vm, "MAP.swf"); }
 
 // character select (lobby.swf in the loader): Start opens the pause menu there too, a knight is
 // picked with Cross
@@ -2013,12 +2015,15 @@ new_game:   // the title again after Exit to Main Menu
         if (debug && (pressed & SCE_CTRL_UP)) overlay = !overlay;
         // in a level and on the map, Start is the pause menu's (the executable's in the original)
         int level = in_level(vm), on_map = !level && in_map(vm), select = !level && !on_map && in_select(vm);
+        // the mini games: Start is the pause menu's too, except at character select and on
+        // Volleyball's court picker (their own menus)
+        int mini = cc_game_mode != CC_MODE_STORY && !select && !in_loader(vm, "VMENU.swf");
         uint32_t buttons = debug ? 0 : pad_buttons(&pad, level);
         // character select: the Cross or Start that closed the menu isn't a pick until let go
         if (select_eat && !(held & select_eat)) select_eat = 0;
         if (select_eat) buttons = 0;
         if (leaving) pressed = buttons = others_start = 0;
-        uint32_t no_start = (level || on_map || select) ? ~(1u << CCB_START) : ~0u;
+        uint32_t no_start = (level || on_map || select || mini) ? ~(1u << CCB_START) : ~0u;
         memset(cc_keys, 0, sizeof cc_keys);
         cc_port_keys(1, buttons & no_start);
         for (int i = 1; i < LOCAL_PADS; i++)
@@ -2033,6 +2038,12 @@ new_game:   // the title again after Exit to Main Menu
             if (r == 0 && was_select) select_eat = held & (SCE_CTRL_CROSS | SCE_CTRL_START | SCE_CTRL_CIRCLE);
             memset(cc_keys, 0, sizeof cc_keys);
             buttons = 0;   // (Wi-Fi play: the game runs on under the menu, without this player)
+        } else if (mini && start_port) {
+            // as at character select: no Exit To Map, the scripts aren't told (the game just
+            // stands still under it, outside Wi-Fi games); Exit to Main Menu goes to the title
+            pause_open(&pause, 1);
+            pause.select = 1;
+            if (!pause.have_art) pause_build_art(&pause);
         } else if ((level || on_map) && start_port && !as_tobool(vm, cc_flash_global(vm, "g_bNoPause"))) {
             g_pause_port = start_port;
             pause_open(&pause, on_map);
