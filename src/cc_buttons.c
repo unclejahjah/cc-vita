@@ -471,35 +471,54 @@ int cc_menu_vita_badge(Movie *m) {
 }
 
 // ---- the "BETA" sticker on the title's Multiplayer button ------------------------------
-// Drawn like the game's own signs: a thick dark outline, a two-tone gold face and the
-// letters in MENU.swf's hand-lettered font, white inside a dark outline. A shape of its own
-// (74 x 30 pixels, centred on 0,0, in twips); the app draws it over the button.
+// Drawn in the style of the PC title's FRESH* sticker (FRESHLOGO.swf): fat white letters that
+// bounce and lean a little each, a tan shade below and right of them and a thick dark outline
+// round both, the letters from MENU.swf's hand-lettered font. A shape of its own (about 80 x 30
+// pixels, centred on 0,0, in twips); the app draws it over the button.
 
 static Shape beta_sticker;
 static int beta_built;
 
-// the word's loops, centred on cx, cy (px), caps h px tall, shifted by ox, oy
-static void beta_text(Poly *p, const Font *f, const char *s, float cx, float cy, float h, float ox, float oy) {
+// the word's loops, centred on cx, cy (px), caps h px tall, shifted by ox, oy; each letter turned
+// by tilt[i] degrees round its own middle and raised by lift[i] px
+static void beta_text(Poly *p, const Font *f, const char *s, float cx, float cy, float h, float ox, float oy,
+                      const float *tilt, const float *lift) {
     float scale = h / (f->ascent ? f->ascent * 0.72f : f->em * 0.7f), width = 0;
     for (const char *c = s; *c; c++) {
         int gi = font_glyph(f, *c);
-        width += (f->has_layout && gi >= 0 ? f->advance[gi] : f->em * 0.6f) * 1.1f;
+        width += (f->has_layout && gi >= 0 ? f->advance[gi] : f->em * 0.6f) * 1.16f;
     }
     float x = cx - width * scale / 2 + ox, y = cy + h / 2 + oy, pen = 0;
-    for (; *s; s++) {
-        int gi = font_glyph(f, *s);
+    for (int i = 0; s[i]; i++) {
+        int gi = font_glyph(f, s[i]);
+        float adv = (f->has_layout && gi >= 0 ? f->advance[gi] : f->em * 0.6f) * 1.16f;
+        float a = tilt[i] * 3.14159265f / 180, ca = cosf(a), sa = sinf(a);
+        float mx = x + (pen + adv / 2) * scale, my = y - h / 2 - lift[i];   // the letter's middle
         if (gi >= 0 && f->glyphs[gi]) {
             const Shape *g = f->glyphs[gi];
             for (int fi = 0; fi < g->nfills; fi++) {
                 const ShapeFill *sf = &g->fills[fi];
                 for (int l = 0; l < sf->nloops; l++) {
                     poly_begin_loop(p);
-                    for (int i = sf->loop_start[l]; i < sf->loop_start[l + 1]; i++)
-                        poly_pt(p, (x + (pen + sf->pts[i * 2]) * scale) * 20, (y + sf->pts[i * 2 + 1] * scale) * 20);
+                    for (int q = sf->loop_start[l]; q < sf->loop_start[l + 1]; q++) {
+                        float gx = x + (pen + sf->pts[q * 2]) * scale - mx, gy = y + sf->pts[q * 2 + 1] * scale - lift[i] - my;
+                        poly_pt(p, (mx + gx * ca - gy * sa) * 20, (my + gx * sa + gy * ca) * 20);
+                    }
                 }
             }
         }
-        pen += (f->has_layout && gi >= 0 ? f->advance[gi] : f->em * 0.6f) * 1.1f;
+        pen += adv;
+    }
+}
+
+// the word fattened by r px (copies round a ring, each a fill of its own so they add up)
+static void beta_layer(Shape *s, const Font *f, float ox, float oy, float r, int n, const uint8_t colour[4]) {
+    static const float TILT[] = {-7, 4, -3, 6}, LIFT[] = {1.0f, -0.5f, 0.8f, -0.8f};
+    for (int k = 0; k <= n; k++) {
+        Poly p = {0};
+        float a = k * 6.2831853f / (n ? n : 1), d = k == n ? 0 : r;   // and one in the middle
+        beta_text(&p, f, "BETA", 0, 0.5f, 15, ox + cosf(a) * d, oy + sinf(a) * d, TILT, LIFT);
+        append_fill(s, fill_from(&p, colour));
     }
 }
 
@@ -507,43 +526,16 @@ int cc_menu_beta_sticker_build(const Movie *m) {
     if (beta_built || m->chars[631].type != CHAR_SPRITE) return 0;   // MENU.swf's title only, once
     const Font *f = badge_font(m, "BETA");
     if (!f) return 0;
-    static const uint8_t SHADOW[4] = {0, 0, 0, 90}, INK[4] = {0x24, 0x17, 0x10, 255}, GOLD[4] = {0xee, 0xa8, 0x22, 255},
-                         LIGHT[4] = {0xff, 0xd6, 0x4a, 255}, SHINE[4] = {0xff, 0xf2, 0xb0, 255}, WHITE[4] = {0xff, 0xfc, 0xee, 255};
-    const float w = 74, h = 30, x0 = -w / 2, y0 = -h / 2, x1 = w / 2, y1 = h / 2;
-    const float r[4] = {9 * 20, 6 * 20, 9 * 20, 6 * 20};   // uneven corners, as if cut out by hand
+    // FRESHLOGO.swf's own colours
+    static const uint8_t INK[4] = {0x41, 0x3e, 0x3e, 255}, SHADE[4] = {0xff, 0xcc, 0x7e, 255},
+                         WHITE[4] = {0xff, 0xff, 0xff, 255};
     Shape *s = &beta_sticker;
     memset(s, 0, sizeof *s);
-    // inset, then moved by dx, dy; cut: off the bottom
-    struct { float e, dx, dy, cut; const uint8_t *c; } layers[] = {
-        {0, 2.5f, 3.0f, 0, SHADOW},   // its shadow on the button
-        {0, 0, 0, 0, INK},            // the outline
-        {3, 0, 0, 0, GOLD},           // the face: darker below,
-        {3, 0, 0, 4, LIGHT},          // lit above
-    };
-    for (size_t i = 0; i < sizeof layers / sizeof *layers; i++) {
-        Poly p = {0};
-        float e = layers[i].e, dx = layers[i].dx, dy = layers[i].dy, ri[4];
-        for (int k = 0; k < 4; k++) ri[k] = fmaxf(r[k] - e * 20, 2 * 20);
-        if (layers[i].cut) ri[2] = ri[3] = 3 * 20;
-        round_box(&p, (x0 + e + dx) * 20, (y0 + e + dy) * 20, (x1 - e + dx) * 20, (y1 - e - layers[i].cut + dy) * 20, ri);
-        append_fill(s, fill_from(&p, layers[i].c));
-    }
-    {   // the glint: a short stroke along the top left
-        Poly p = {0};
-        const float gr[4] = {2 * 20, 2 * 20, 2 * 20, 2 * 20};
-        round_box(&p, (x0 + 7) * 20, (y0 + 5) * 20, (x0 + 19) * 20, (y0 + 8) * 20, gr);
-        append_fill(s, fill_from(&p, SHINE));
-    }
-    // the word: its dark outline (the letters drawn in a ring round their place), then white
-    for (int k = 0; k < 12; k++) {
-        Poly p = {0};
-        float a = k * 6.2831853f / 12;
-        beta_text(&p, f, "BETA", 0, 0.5f, 15, cosf(a) * 2.4f, sinf(a) * 2.4f + 0.6f);
-        append_fill(s, fill_from(&p, INK));
-    }
-    Poly p = {0};
-    beta_text(&p, f, "BETA", 0, 0.5f, 15, 0, 0);
-    append_fill(s, fill_from(&p, WHITE));
+    const float sx = 2.6f, sy = 3.6f;   // the shade, down and right
+    beta_layer(s, f, sx / 2, sy / 2, 7.0f, 24, INK);   // the outline round letters and shade
+    beta_layer(s, f, sx / 2, sy / 2, 3.5f, 12, INK);
+    beta_layer(s, f, sx, sy, 0.9f, 8, SHADE);
+    beta_layer(s, f, 0, 0, 0.9f, 8, WHITE);
     beta_built = 1;
     return 1;
 }

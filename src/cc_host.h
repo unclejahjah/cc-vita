@@ -60,8 +60,9 @@ enum { CC_MENU_PLAY, CC_MENU_OPTIONS, CC_MENU_QUIT, CC_MENU_WIFI, CC_MENU_ITEMS 
 extern int cc_menu_wifi;
 AsMc *cc_menu_attach(AsVm *vm, float x, float y);
 // The PC title's "FRESH*" sticker (FRESHLOGO.swf, tools/freshlogo) on the panel's Local Game
-// button, shown while on (the FRESH look, paint_jr.h); nothing without the file
-void cc_menu_fresh(AsVm *vm, AsMc *panel, int on);
+// button while on (the FRESH look, paint_jr.h): its clip, a hidden child of the panel that the
+// app draws over the highlight as it does the BETA sticker; NULL when off or without the file
+AsMc *cc_menu_fresh(AsVm *vm, AsMc *panel, int on);
 // Local Game's mode menu (MENU.swf "modemenu") on _root at (x, y), its hand on Castle
 // Crashers; cc_modemenu_point moves the hand from one item to another (0 Castle Crashers,
 // 1 Arena, 2 All You Can Quaff, 3 Volleyball: under Castle Crashers, where the right page's

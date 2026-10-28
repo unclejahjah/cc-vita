@@ -490,26 +490,26 @@ static AsMc *place_art(AsVm *vm, AsMc *menu, const char *export, const char *nam
 // smaller and higher than there (36% of the button's width, its middle on the top edge) so it
 // stays clear of the longer "Local Game" label
 #define FRESH_DEPTH 9001   // a timeline depth over everything on the panel
-void cc_menu_fresh(AsVm *vm, AsMc *panel, int on) {
-    if (!panel) return;
+AsMc *cc_menu_fresh(AsVm *vm, AsMc *panel, int on) {
+    if (!panel) return NULL;
     AsMc *st = panel_child(panel, FRESH_DEPTH);
     if (!st && on) {
         static int missing;
         Movie *m = vm->loader && !missing ? vm->loader(vm, "FRESHLOGO.swf") : NULL;
-        if (!m) { missing = 1; return; }
+        if (!m) { missing = 1; return NULL; }
         int cid = 0;
         for (int c = 1; c < 65536 && !cid; c++)
             if (m->chars[c].type == CHAR_SPRITE && m->chars[c].export && !strcmp(m->names[m->chars[c].export], "fresh"))
                 cid = c;
         AsMc *local = panel_child(panel, 9);
-        if (!cid || !local) return;
+        if (!cid || !local) return NULL;
         Mat id = {1, 0, 0, 1, 0, 0};
         st = as_mc_place_foreign(vm, panel, m, cid, id, "fresh", FRESH_DEPTH - 16384);
-        if (!st) return;
+        if (!st) return NULL;
         float lb[4], sb[4];
         render_mc_bounds(local, local->m, lb);
         render_mc_bounds(st, id, sb);
-        if (sb[2] <= sb[0] || lb[2] <= lb[0]) return;
+        if (sb[2] <= sb[0] || lb[2] <= lb[0]) return NULL;
         float k = 0.36f * (lb[2] - lb[0]) / (sb[2] - sb[0]);
         float cx = lb[0] + 0.84f * (lb[2] - lb[0]), cy = lb[1] + 0.02f * (lb[3] - lb[1]);
         set_num(vm, st, "_xscale", 100 * k);
@@ -517,7 +517,8 @@ void cc_menu_fresh(AsVm *vm, AsMc *panel, int on) {
         set_num(vm, st, "_x", (cx - (sb[0] + sb[2]) / 2 * k) / 20);
         set_num(vm, st, "_y", (cy - (sb[1] + sb[3]) / 2 * k) / 20);
     }
-    if (st) st->visible = on;
+    if (st) st->visible = 0;   // drawn by the app, after the highlight
+    return st && on ? st : NULL;
 }
 
 // a text field's box in its parent (twips), through where it stands
@@ -864,7 +865,7 @@ int cc_menu_beta_place(AsMc *panel, Mat screen, Mat *out) {
     if (!b || !b->visible || (render_mc_bounds(b, b->m, bb), bb[2] <= bb[0])) return 0;
     Mat m = mat_mul(screen, mat_mul(panel->parent ? panel->parent->m : (Mat){1, 0, 0, 1, 0, 0}, panel->m));
     // stuck on at the button's top right corner, over its edge, tilted up a little
-    float x = bb[2] - 47 * 20, y = bb[1] + 2 * 20, a = -8 * 3.14159265f / 180, k = m.a;
+    float x = bb[2] - 56 * 20, y = bb[1] + 2 * 20, a = -8 * 3.14159265f / 180, k = m.a;
     *out = (Mat){cosf(a) * k, sinf(a) * k, -sinf(a) * k, cosf(a) * k, m.a * x + m.c * y + m.tx, m.b * x + m.d * y + m.ty};
     return 1;
 }

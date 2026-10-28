@@ -102,6 +102,17 @@ static void *gpu_alloc(size_t bytes, void *ctx) {
     return blk->addr;
 }
 
+// free video memory, in MB
+static int cdram_free_mb(void) {
+    SceKernelFreeMemorySizeInfo info = {.size = sizeof info};
+    return sceKernelGetFreeMemorySize(&info) < 0 ? 1 << 20 : info.size_cdram >> 20;
+}
+// Below this much free video memory unused files go before another loads: a file whose meshes
+// don't fit there is drawn from main memory, far slower for the GPU (War Machine with Paint Jr.'s
+// and the FRESH files about: draw 17 ms a frame, script time up too)
+#define CDRAM_LOW_MB 48
+static int g_mesh_in_main;   // the last upload's meshes went to main memory
+
 // Meshes: video memory when there's room (fast for the GPU, written once), else main memory.
 static void *mesh_alloc(size_t bytes, void *ctx) {
     GpuBlock *blk = ctx;
@@ -115,6 +126,7 @@ static void *mesh_alloc(size_t bytes, void *ctx) {
         }
         sceKernelFreeMemBlock(blk->uid);
     }
+    g_mesh_in_main = 1;
     return gpu_alloc(bytes, ctx);
 }
 
@@ -483,7 +495,9 @@ static Movie *register_movie(const char *base, const char *path, Movie *m) {
     log_flush();   // loads and frees go to the writer at once: a crash right after keeps them
     GpuBlock *blk = &g_movies[g_nmovies].gpu;
     blk->uid = -1;
+    g_mesh_in_main = 0;
     if (render_upload(m, mesh_alloc, blk)) render_release_cpu(m);
+    log_line("  video memory %d MB free%s", cdram_free_mb(), g_mesh_in_main ? ", its meshes in main memory (slow)" : "");
     snprintf(g_movies[g_nmovies].name, sizeof g_movies[0].name, "%s", base);
     g_movies[g_nmovies].keep = 0;
     g_movies[g_nmovies++].m = m;
@@ -492,7 +506,7 @@ static Movie *register_movie(const char *base, const char *path, Movie *m) {
 
 // a big file (a sky is up to 34 MB of pixels) after a long session: make room first
 static void make_room(AsVm *vm) {
-    if (vm && g_cache && mallinfo().uordblks > (size_t)_newlib_heap_size_user / 2)
+    if (vm && g_cache && (mallinfo().uordblks > (size_t)_newlib_heap_size_user / 2 || cdram_free_mb() < CDRAM_LOW_MB))
         free_unused_movies(vm, g_cache, g_cache_mem, g_cache_bytes);
 }
 
@@ -813,6 +827,7 @@ static unsigned pad_nav(const SceCtrlData *pad, const SceCtrlData *old) {
 typedef struct {
     int open;
     int select;                // opened at character select: no player state to set
+    int title;                 // the title's Help & Options (the FRESH Look row is only there)
     PauseMenu m;               // the menu (pause_menu.c)
     DrawList ui;               // this frame's backdrop, words and button prompts
     DrawList art;              // the pause book (controls and achievements pages)
@@ -995,7 +1010,7 @@ static void pause_draw(Pause *ps) {
 static void help_input(Pause *ps, unsigned pressed, float dt) {
     if (ps->m.book_new) {
         help_book_open(&ps->hb, ps->m.book, g_volume[0], g_volume[1], g_auto_potion,
-                       cc_fresh_available() ? g_fresh : -1);
+                       ps->title && cc_fresh_available() ? g_fresh : -1);
         ps->hb.achieved = cc_achievements();
         ps->m.book_new = 0;
     }
@@ -1011,8 +1026,8 @@ static void help_input(Pause *ps, unsigned pressed, float dt) {
         settings_apply();
     }
     g_auto_potion = ps->hb.auto_potion;   // the game's VM picks it up (not mid Wi-Fi game)
-    // the FRESH look: from the next game (switching player files mid-game would have both in
-    // memory, too much); the title's sticker shows the setting at once
+    // the FRESH look (the title's Settings only): from the next game; the title's sticker shows
+    // the setting at once
     if (ps->hb.fresh >= 0) g_fresh = ps->hb.fresh;
     if (sound >= 0) audio_sfx_play(sound == 0 ? "sound_toggle_b.wav" : "sound_player_select.wav", 1, 0, 0, ps);
     if (open) return;
@@ -1606,6 +1621,8 @@ static int title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, siz
     char art_path[256];
     int art_level;
     if (find_file("MODEART.swf", art_path, sizeof art_path, &art_level)) host_movie("MODEART.swf");
+    // and the FRESH sticker's (FRESHLOGO.swf), else the menu's first frame hitched loading it
+    if (find_file("FRESHLOGO.swf", art_path, sizeof art_path, &art_level)) host_movie("FRESHLOGO.swf");
     int wifi_game = 0;
 #ifdef CC_NET
     cc_menu_wifi = 1;
@@ -1649,7 +1666,7 @@ static int title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, siz
         if (lx < -80 && olx >= -80) pressed |= SCE_CTRL_LEFT;
         if (lx > 80 && olx <= 80) pressed |= SCE_CTRL_RIGHT;
         old = pad;
-        cc_menu_fresh(t, panel, g_fresh && cc_fresh_available());   // the FRESH sticker while the look is on
+        AsMc *fresh = cc_menu_fresh(t, panel, g_fresh && cc_fresh_available());   // the FRESH sticker while the look is on
 #ifdef CC_NET
         if (g_wifi.page != W_CLOSED || net.state != NET_OFF) {
             int w = wifi_update(pressed);
@@ -1759,6 +1776,7 @@ static int title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, siz
                 }
                 if (chosen == CC_MENU_OPTIONS) {
                     controls.open = 1;
+                    controls.title = 1;
                     pause_menu_open_help(&controls.m);
                 }
             }
@@ -1821,6 +1839,16 @@ static int title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, siz
                 as_render_mc(hl, pm, CX_IDENTITY, &hvb);
                 hl->visible = 0;
                 draw_list(&hvb);
+            }
+            if (fresh) {   // the FRESH sticker on Local Game, over the highlight
+                static DrawList fvb;
+                render_begin(&fvb);
+                fvb.view[2] = SCREEN_W;
+                fvb.view[3] = SCREEN_H;
+                fresh->visible = 1;
+                as_render_mc(fresh, mat_mul((Mat){k / 20, 0, 0, k / 20, 0, 0}, mat_mul(t->root->m, panel->m)), CX_IDENTITY, &fvb);
+                fresh->visible = 0;
+                draw_list(&fvb);
             }
             Mat bm;   // the BETA sticker on Multiplayer, over everything
             if (cc_menu_beta_sticker() && cc_menu_beta_place(panel, (Mat){k / 20, 0, 0, k / 20, 0, 0}, &bm)) {
@@ -2194,7 +2222,7 @@ new_game:   // the title again after Exit to Main Menu
             // Only after a new file came in: once over half, a pass every 3 s that finds the
             // rest still in use costs frames for nothing (the map dropped to 45 fps).
             if (vm->tick - last_free >= 90 && g_nmovies != last_free_count &&
-                mallinfo().uordblks > (size_t)_newlib_heap_size_user / 2) {
+                (mallinfo().uordblks > (size_t)_newlib_heap_size_user / 2 || cdram_free_mb() < CDRAM_LOW_MB)) {
                 last_free = vm->tick;
                 free_unused_movies(vm, &cache, cache_mem, cache_bytes);
                 last_free_count = g_nmovies;
@@ -2274,6 +2302,7 @@ new_game:   // the title again after Exit to Main Menu
                                   g_nmovies, g_gpu_bytes / 1048576.0, mallinfo().uordblks / 1048576.0,
                                   _newlib_heap_size_user >> 20, g_last_error);
         }
+        SceUInt64 swap_t0 = sceKernelGetProcessTimeWide();
         vita2d_end_drawing();
         vita2d_swap_buffers();
 
@@ -2283,9 +2312,11 @@ new_game:   // the title again after Exit to Main Menu
         // goes to the log with where the time went, to find what stalls on the Vita.
         static SceUInt64 last_shown;
         if (ticked && !pause.open && last_shown && now - last_shown > 50000)
-            log_line("[%u] slow frame %.0f ms: script %.1f gc %.1f build %.1f draw+swap %.1f ms, %d tris%s",
+            log_line("[%u] slow frame %.0f ms: script %.1f gc %.1f build %.1f draw %.1f swap %.1f ms, %d tris "
+                     "%d draws %d cpu-coloured%s",
                      (unsigned)vm->tick, (now - last_shown) / 1000.0f, hitch_script, hitch_gc, hitch_build,
-                     (now - draw_t0) / 1000.0f, render_stats.triangles, hitch_what);
+                     (swap_t0 - draw_t0) / 1000.0f, (now - swap_t0) / 1000.0f, render_stats.triangles,
+                     render_stats.draws, render_stats.cx_tris, hitch_what);
         if (ticked && !pause.open && last_shown && now - last_shown > 50000 && audio_sfx_pending())
             log_line("  (%d sounds loading)", audio_sfx_pending());
         if (pause.open) last_shown = 0;

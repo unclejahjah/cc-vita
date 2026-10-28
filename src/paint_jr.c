@@ -52,7 +52,9 @@ static struct {
 } g_parts;
 
 // PJPARTS.swf (file 0) and FRESH01.swf.. (file nn: frame nn of each part clip), loaded the first
-// time a clip needs one and kept for the game (cc_movie_keep): their sprites are held here
+// time a clip needs one and kept for the game (cc_movie_keep): their sprites are held here. They
+// load in the background (vm->prefetch) where the app can: until a file is in, its clips draw
+// their own frame, rather than the game standing still while it's read (the FRESH look's dips).
 #define MAX_FILES 64
 static struct {
     int tried;
@@ -100,10 +102,11 @@ static AsVm *g_vm;
 static int load_file(int f) {
     if (f < 0 || f >= MAX_FILES) return 0;
     if (!g_files[f].tried) {
-        g_files[f].tried = 1;
         char name[16];
         if (f) snprintf(name, sizeof name, "FRESH%02d.swf", f);
         else snprintf(name, sizeof name, "PJPARTS.swf");
+        if (g_vm && g_vm->prefetch && g_vm->prefetch(g_vm, name)) return 0;   // not in yet: asked again next frame
+        g_files[f].tried = 1;
         Movie *m = g_vm && g_vm->loader ? g_vm->loader(g_vm, name) : NULL;
         if (m && cc_movie_keep) cc_movie_keep(m);
         g_files[f].m = m;

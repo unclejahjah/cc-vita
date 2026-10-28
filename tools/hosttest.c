@@ -746,7 +746,6 @@ static int as_mode(int argc, char **argv) {
                     cc_menu_wifi = getenv("CC_MENU_WIFI") != NULL;   // the co-op build's menu
                     panel = cc_menu_attach(vm, vm->root->movie->stage_w * 0.226f, vm->root->movie->stage_h * 0.635f);
                     if (panel) cc_menu_highlight(vm, panel, getenv("CC_MENU_ITEM") ? atoi(getenv("CC_MENU_ITEM")) : 0);
-                    cc_menu_fresh(vm, panel, cc_fresh());   // CC_FRESH=1: the FRESH sticker
                     if (panel && getenv("CC_MODE_ITEM")) {   // Local Game's mode menu, its hand on that item
                         panel->visible = 0;
                         AsMc *mm = g_modes = cc_modemenu_attach(vm, atof(getenv("CC_MODE_X")), atof(getenv("CC_MODE_Y")));
@@ -867,6 +866,17 @@ static int as_mode(int argc, char **argv) {
                     as_render_mc(hl, mat_mul(screen, mat_mul(vm->root->m, mat_mul(panel->m, hm))), CX_IDENTITY, &hvb);
                     hl->visible = 0;
                     rasterise(&hvb);
+                }
+                AsMc *fresh = cc_menu_fresh(vm, panel, cc_fresh());   // CC_FRESH=1: the FRESH sticker, over that
+                if (fresh) {
+                    DrawList fvb = {0};
+                    render_begin(&fvb);
+                    fvb.view[2] = W;
+                    fvb.view[3] = H;
+                    fresh->visible = 1;
+                    as_render_mc(fresh, mat_mul(screen, mat_mul(vm->root->m, panel->m)), CX_IDENTITY, &fvb);
+                    fresh->visible = 0;
+                    rasterise(&fvb);
                 }
                 Mat bm;   // the BETA sticker on Multiplayer, over everything
                 if (cc_menu_beta_sticker() && cc_menu_beta_place(panel, screen, &bm)) {
