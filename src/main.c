@@ -1637,6 +1637,7 @@ static int title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, siz
         if (lx < -80 && olx >= -80) pressed |= SCE_CTRL_LEFT;
         if (lx > 80 && olx <= 80) pressed |= SCE_CTRL_RIGHT;
         old = pad;
+        cc_menu_fresh(t, panel, cc_fresh());   // the FRESH sticker while the look is on (Settings)
 #ifdef CC_NET
         if (g_wifi.page != W_CLOSED || net.state != NET_OFF) {
             int w = wifi_update(pressed);

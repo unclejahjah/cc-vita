@@ -486,6 +486,40 @@ static AsMc *place_art(AsVm *vm, AsMc *menu, const char *export, const char *nam
     return mc;
 }
 
+// The sticker sits on the top right corner of the button as on the PC's Play button, a little
+// smaller and higher than there (36% of the button's width, its middle on the top edge) so it
+// stays clear of the longer "Local Game" label
+#define FRESH_DEPTH 9001   // a timeline depth over everything on the panel
+void cc_menu_fresh(AsVm *vm, AsMc *panel, int on) {
+    if (!panel) return;
+    AsMc *st = panel_child(panel, FRESH_DEPTH);
+    if (!st && on) {
+        static int missing;
+        Movie *m = vm->loader && !missing ? vm->loader(vm, "FRESHLOGO.swf") : NULL;
+        if (!m) { missing = 1; return; }
+        int cid = 0;
+        for (int c = 1; c < 65536 && !cid; c++)
+            if (m->chars[c].type == CHAR_SPRITE && m->chars[c].export && !strcmp(m->names[m->chars[c].export], "fresh"))
+                cid = c;
+        AsMc *local = panel_child(panel, 9);
+        if (!cid || !local) return;
+        Mat id = {1, 0, 0, 1, 0, 0};
+        st = as_mc_place_foreign(vm, panel, m, cid, id, "fresh", FRESH_DEPTH - 16384);
+        if (!st) return;
+        float lb[4], sb[4];
+        render_mc_bounds(local, local->m, lb);
+        render_mc_bounds(st, id, sb);
+        if (sb[2] <= sb[0] || lb[2] <= lb[0]) return;
+        float k = 0.36f * (lb[2] - lb[0]) / (sb[2] - sb[0]);
+        float cx = lb[0] + 0.84f * (lb[2] - lb[0]), cy = lb[1] + 0.02f * (lb[3] - lb[1]);
+        set_num(vm, st, "_xscale", 100 * k);
+        set_num(vm, st, "_yscale", 100 * k);
+        set_num(vm, st, "_x", (cx - (sb[0] + sb[2]) / 2 * k) / 20);
+        set_num(vm, st, "_y", (cy - (sb[1] + sb[3]) / 2 * k) / 20);
+    }
+    if (st) st->visible = on;
+}
+
 // a text field's box in its parent (twips), through where it stands
 static void field_box(AsMc *f, float b[4]) {
     if (f->text) {
