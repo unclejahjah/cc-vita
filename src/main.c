@@ -625,6 +625,7 @@ static int vita_prefetch(AsVm *vm, const char *url) {
 static Movie *vita_loader(AsVm *vm, const char *url) {
     const char *base = strrchr(url, '/');
     base = base ? base + 1 : url;
+    base = cc_level_file(base);   // Paint Jr.'s castle (paint_jr.h)
     Movie *m = cached_movie(base);
     if (m) return m;
     if (g_bg.state != BG_IDLE) {   // never two loads at once (the tessellator is shared)
@@ -1883,6 +1884,7 @@ int main(void) {
         cc_paintjr_set_available(find_file("FRESH01.swf", path, sizeof path, &lvl),
                                  find_file("PJPARTS.swf", path, sizeof path, &lvl),
                                  find_file("PAINTJR.swf", path, sizeof path, &lvl));
+        cc_paintjr_set_castle(find_file("LEVEL15_NEW.swf", path, sizeof path, &lvl));
         if (cc_paintjr_p_type()) log_line("Paint Jr. (character %d)", cc_paintjr_p_type());
     }
     bg_init();

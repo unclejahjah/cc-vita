@@ -18,6 +18,13 @@ int cc_fresh_available(void) { return g_fresh_files; }
 void cc_fresh_set(int on) { g_fresh = on; }
 int cc_fresh(void) { return g_fresh && g_fresh_files; }
 
+static int g_castle;   // levels/LEVEL15_NEW.swf is there
+void cc_paintjr_set_castle(int present) { g_castle = present; }
+
+const char *cc_level_file(const char *base) {
+    return g_castle && cc_paintjr_p_type() && !strcasecmp(base, "level15.swf") ? "LEVEL15_NEW.swf" : base;
+}
+
 int cc_portrait_frame(int frame, int nframes) {
     int t = frame - 2;   // the character
     if (t < 1 || t > CC_PAINTJR_P_TYPE || (t != cc_paintjr_p_type() && !cc_fresh())) return -1;

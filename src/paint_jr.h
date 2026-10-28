@@ -9,6 +9,8 @@
 //                        f_ProjectileHitPaintJrSplash, f_ProjectilePhase); his spell's art and
 //                        sounds are already in the PC's FX.swf and SOUNDS.swf (magic type 33).
 //   game/FRESHnn.swf     the FRESH look: the PC's version of frame nn of every part clip.
+//   levels/LEVEL15_NEW.swf  the PC's castle (level15_new.pak): its weapon rack goes up to his
+//                        pencil (w86); loaded in place of LEVEL15.swf while he's available.
 // Without the first two the game has its 31 characters as before.
 #ifndef CC_PAINT_JR_H
 #define CC_PAINT_JR_H
@@ -27,6 +29,9 @@ void cc_paintjr_set_available(int fresh_files, int pj_parts, int paint_jr);
 int cc_paintjr_p_type(void);          // CC_PAINTJR_P_TYPE when available (and active), else 0
 void cc_paintjr_set_active(int on);   // off in a Wi-Fi game (the others may not have his files)
 int cc_fresh_available(void);         // the FRESHnn.swf files are there
+void cc_paintjr_set_castle(int present);   // levels/LEVEL15_NEW.swf is there
+// The file the loaders read for a base name: LEVEL15_NEW.swf for level15.swf with Paint Jr.
+const char *cc_level_file(const char *base);
 // The app's way to keep a file loaded for the game: the part files' sprites are held on to
 extern void (*cc_movie_keep)(Movie *m);
 

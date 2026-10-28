@@ -5,9 +5,9 @@
 
 decrypts the PC's player_new.pak and makes from it PJPARTS.swf (Paint Jr.'s own pieces of the part
 clips, drawn over the original PLAYER.swf's: see PARTS) and FRESH01.swf.. (the FRESH look: one
-file per frame of the part clips), and PAINTJR.swf: one DoAction with Paint Jr.'s script
+file per frame of the part clips), PAINTJR.swf: one DoAction with Paint Jr.'s script
 functions copied out of the PC's MAIN.swf (main.pak), each with the constant pool it was written
-against. The decryption is the Castle Mod Tool's (decrypt_asset.py), which
+against, and levels/LEVEL15_NEW.swf (the PC's castle, whose weapon rack has his pencil). The decryption is the Castle Mod Tool's (decrypt_asset.py), which
 must be given; nothing here holds game data, and the outputs must never go into git.
 """
 import argparse, struct, sys
@@ -150,7 +150,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--modtool', required=True, help='folder with the Castle Mod Tool decrypt_asset.py')
     ap.add_argument('--pc-data', required=True, help="the PC game's data folder (has game/main.pak)")
-    ap.add_argument('--out', required=True, help='where PLAYER_NEW.swf and PAINTJR.swf go (the game folder)')
+    ap.add_argument('--out', required=True, help='where PJPARTS, FRESHnn and PAINTJR.swf go (the game folder)')
+    ap.add_argument('--levels-out', help='where LEVEL15_NEW.swf goes (default: the levels folder beside --out)')
     a = ap.parse_args()
     sys.path.insert(0, a.modtool)
     import decrypt_asset as da
@@ -192,6 +193,11 @@ def main():
     swf = b'FWS' + d[3:4] + struct.pack('<I', 8 + len(body)) + body
     (out / 'PAINTJR.swf').write_bytes(swf)
     print('PAINTJR.swf (%s) written to %s' % (', '.join(FUNCTIONS), out))
+    # the PC's castle: its weapon rack has his pencil (w86)
+    levels = Path(a.levels_out) if a.levels_out else out.parent / 'levels'
+    levels.mkdir(parents=True, exist_ok=True)
+    (levels / 'LEVEL15_NEW.swf').write_bytes(decrypt(da, Path(a.pc_data) / 'levels' / 'level15_new.pak'))
+    print('LEVEL15_NEW.swf written to %s' % levels)
 
 
 if __name__ == '__main__':

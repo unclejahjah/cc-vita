@@ -250,6 +250,7 @@ static Movie *host_loader(AsVm *vm, const char *url) {
     (void)vm;
     const char *base = strrchr(url, '/');
     base = base ? base + 1 : url;
+    base = cc_level_file(base);   // Paint Jr.'s castle (paint_jr.h)
     load_count++;
     for (int i = 0; i < nmovie_cache; i++)
         if (!strcasecmp(movie_cache[i].name, base)) return movie_cache[i].m;
@@ -357,6 +358,8 @@ static int as_mode(int argc, char **argv) {
         snprintf(b, sizeof b, "%s/game/PJPARTS.swf", game_dir);
         snprintf(c, sizeof c, "%s/game/PAINTJR.swf", game_dir);
         cc_paintjr_set_available(access(a, R_OK) == 0, access(b, R_OK) == 0, access(c, R_OK) == 0);
+        snprintf(a, sizeof a, "%s/levels/LEVEL15_NEW.swf", game_dir);
+        cc_paintjr_set_castle(access(a, R_OK) == 0);
         if (cc_paintjr_p_type()) printf("Paint Jr. (character %d)\n", cc_paintjr_p_type());
         if (getenv("CC_FRESH")) cc_fresh_set(atoi(getenv("CC_FRESH")));   // CC_FRESH=1: the FRESH look
         if (cc_fresh()) printf("FRESH look\n");
