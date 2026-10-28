@@ -77,13 +77,21 @@ int help_book_update(HelpBook *hb, unsigned pressed, float dt, int *sound) {
         }
     } else if (hb->book == HB_SETTINGS) {
         if (pressed & (HB_UP | HB_DOWN)) {
-            hb->row = (hb->row + (pressed & HB_UP ? 2 : 1)) % 3;
+            hb->row = (hb->row + (pressed & HB_UP ? 3 : 1)) % 4;
             *sound = 0;
         }
         int step = pressed & HB_RIGHT ? 1 : pressed & HB_LEFT ? -1 : 0;
         if (hb->row == 2) {   // On / Off: left or right flips it
             if (step) {
                 hb->auto_potion ^= 1;
+                hb->changed = 1;
+                *sound = 0;
+            }
+            return 1;
+        }
+        if (hb->row == 3) {   // Item Switch: left / right go round its four choices
+            if (step) {
+                hb->item_switch = (hb->item_switch + step + HB_SWITCH_N) % HB_SWITCH_N;
                 hb->changed = 1;
                 *sound = 0;
             }
@@ -501,11 +509,12 @@ static void settings_page(DrawList *out, Art *a, float k, const HelpBook *hb, fl
     page_title(out, a, k, words("help.title.settings", "Settings"), alpha);
     float mx, my, bw;
     book_middle(a, &mx, &my, &bw);
-    static const char *keys[3] = {"help.settings.music", "help.settings.sfx", "help.settings.autopotion"};
-    static const char *fb[3] = {"Music Volume", "SFX Volume", "Auto Potion"};
+    static const char *keys[4] = {"help.settings.music", "help.settings.sfx", "help.settings.autopotion",
+                                  "help.settings.itemswitch"};
+    static const char *fb[4] = {"Music Volume", "SFX Volume", "Auto Potion", "Item Switch"};
     float sc = place_scale(a);
-    for (int r = 0; r < 3; r++) {
-        float y = my - 115 * sc + r * 125 * sc;   // (the bars sit under the first two)
+    for (int r = 0; r < 4; r++) {
+        float y = my - 138 * sc + r * 94 * sc;   // (the bars sit under the first two)
         uint32_t c = INK;
         if (r == hb->row) {   // the chosen row pulses yellow like the pause menu's chosen line
             int v = (int)(sinf(hb->time * 10) * 34 + 221) & 255;
@@ -513,7 +522,18 @@ static void settings_page(DrawList *out, Art *a, float k, const HelpBook *hb, fl
         }
         text(out, k, words(keys[r], fb[r]), mx, y, 30 * sc, 2, c, alpha);
         if (r < 2) {
-            volume_bar(out, a, k, mx, y + 50 * sc, bw * 0.40f, hb->volume[r], r == hb->row, alpha);
+            volume_bar(out, a, k, mx, y + 44 * sc, bw * 0.30f, hb->volume[r], r == hb->row, alpha);
+            continue;
+        }
+        if (r == 3) {   // Item Switch: the choice under it, between arrows
+            static const char *sk[HB_SWITCH_N] = {"help.settings.switch.stick", "help.settings.switch.front",
+                                                  "help.settings.switch.rear", "help.settings.switch.both"};
+            static const char *sf[HB_SWITCH_N] = {"Right Stick", "Front Touch", "Rear Touch", "Front + Rear Touch"};
+            const char *v = words(sk[hb->item_switch], sf[hb->item_switch]);
+            float w = as_render_host_text_width(v) * 26 * sc / 20;
+            text(out, k, v, mx, y + 40 * sc, 26 * sc, 2, c, alpha);
+            text(out, k, "<", mx - w / 2 - 16 * sc, y + 40 * sc, 26 * sc, 2, c, alpha);
+            text(out, k, ">", mx + w / 2 + 16 * sc, y + 40 * sc, 26 * sc, 2, c, alpha);
             continue;
         }
         // On and Off side by side under it, the one set in the row's colour, the other dimmed

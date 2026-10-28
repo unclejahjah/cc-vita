@@ -13,11 +13,14 @@ enum { HB_HOWTO, HB_CONTROLS, HB_SETTINGS, HB_ACHIEVEMENTS };   // ACHIEVEMENTS:
 enum { HB_UP = 1, HB_DOWN = 2, HB_LEFT = 4, HB_RIGHT = 8, HB_PREV = 16, HB_NEXT = 32, HB_BACK = 64, HB_RESET = 128 };
 #define HB_HOWTO_PAGES 7
 #define HB_VOLUME_STEPS 10
+// Settings' Item Switch: bit 1 the front touch screen, bit 2 the rear pad (left half previous, right next)
+enum { HB_SWITCH_STICK, HB_SWITCH_FRONT, HB_SWITCH_REAR, HB_SWITCH_BOTH, HB_SWITCH_N };
 
 typedef struct {
     int book, page;            // page: How to Play's page, 0..6
-    int row;                   // Settings: 0 music, 1 sound effects, 2 auto potion; Controls: the chosen button
+    int row;                   // Settings: 0 music, 1 sound effects, 2 auto potion, 3 item switch; Controls: the chosen button
     int volume[2];             // 0..HB_VOLUME_STEPS
+    int item_switch;           // HB_SWITCH_*: touch that switches items, besides the right stick
     int auto_potion;           // 1: a hit that would end you drinks a health potion instead
     int changed;               // the settings or buttons (cc_bind) changed since the book opened
     float time;                // seconds open (the chosen row pulses)
