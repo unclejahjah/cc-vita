@@ -310,6 +310,8 @@ AsMc *as_mc_attach(AsVm *vm, AsMc *mc, AsStr *linkage, AsStr *name, int depth);
 AsMc *as_mc_create_empty(AsVm *vm, AsMc *parent, AsStr *name, int depth);
 // one of the parent's file's characters at a (script) depth: a copy of a timeline's text field
 AsMc *as_mc_place_char(AsVm *vm, AsMc *parent, int cid, Mat m, CXform cx, const char *name, int depth);
+// a sprite of another file (m) at a (script) depth: art borrowed from that file
+AsMc *as_mc_place_foreign(AsVm *vm, AsMc *parent, const Movie *m, int cid, Mat mat, const char *name, int depth);
 void as_tick(AsVm *vm);                               // one frame of the whole tree
 void as_tick_clip(AsVm *vm, AsMc *mc);                // one frame of one clip only
 void as_drain(AsVm *vm);                              // run the frame scripts a goto queued, now

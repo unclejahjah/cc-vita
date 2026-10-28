@@ -236,6 +236,22 @@ AsMc *as_mc_place_char(AsVm *vm, AsMc *parent, int cid, Mat m, CXform cx, const 
     return mc;
 }
 
+AsMc *as_mc_place_foreign(AsVm *vm, AsMc *parent, const Movie *m, int cid, Mat mat, const char *name, int depth) {
+    if (!m || m->chars[cid].type != CHAR_SPRITE) return NULL;
+    AsDisp *e = disp_insert(parent, depth);
+    e->cid = 0;   // (the clip's own file is m, not the parent's)
+    e->m = mat;
+    e->cx = CX_IDENTITY;
+    e->kind = DISP_MC;
+    AsMc *mc = as_mc_new(vm, m, m->chars[cid].ptr, parent, depth);
+    mc->m = mat;
+    decompose(mc);
+    mc->name = name ? as_atom(vm, name) : NULL;
+    e->mc = mc;
+    as_mc_goto(vm, mc, 0, 1);
+    return mc;
+}
+
 static void apply_frame(AsVm *vm, AsMc *mc, int frame) {
     const Frame *fr = &mc->def->frames[frame];
     // drop or update what the timeline placed

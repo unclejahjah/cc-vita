@@ -373,8 +373,9 @@ AsMc *cc_menu_attach(AsVm *vm, float x, float y) {
 // Can Quaff) held open, a gloved hand pointing at the chosen one. The executable shows it
 // after Local Game; the hand's timeline has a move from each mode to each other one
 // ("storyarena", "arenaquaff", ...), each ending on a stop.
+// (the hand's names for where it points; the top-left page is Volleyball here, see modemenu_extras)
 static const char *MODE_NAME[CC_MODE_ITEMS] = {"story", "arena", "quaff", "story"};
-#define VOLLEY_HAND 0.25f   // of the way from Castle Crashers' heading down to Volleyball's
+#define UNDER_HAND 0.25f   // of the way from Castle Crashers' heading down to Quaff's
 
 // a shape's outline points through m, added to box (min x, min y, max x, max y; twips). The
 // Vita frees the outlines once the shapes are on the GPU: then its bounds' corners.
@@ -405,7 +406,7 @@ static void shape_box(Shape *sh, Mat m, float box[4]) {
     }
 }
 
-static void modemenu_volleyball(AsVm *vm, AsMc *menu);
+static void modemenu_extras(AsVm *vm, AsMc *menu);
 
 AsMc *cc_modemenu_attach(AsVm *vm, float x, float y) {
     AsVal args[3] = {as_strv(as_str(vm, "modemenu")), as_strv(as_str(vm, "modepanel")), as_num(5001)};
@@ -415,7 +416,7 @@ AsMc *cc_modemenu_attach(AsVm *vm, float x, float y) {
     // its first frame names the left page's pictures by string number (805, 390); the copies
     // of the string table made so far don't agree on those, so the words are set here
     as_drain(vm);
-    static const char *const words[][3] = {{"txt1", "vita.mode.quaff", "All You Can Quaff"},
+    static const char *const words[][3] = {{"txt1", "vita.mode.volleyball", "Volleyball"},
                                            {"txt2", "vita.mode.arena", "Arena"}};
     for (int i = 0; i < 2; i++) {
         AsMc *field = panel_path(vm, menu, words[i][0]);
@@ -436,7 +437,7 @@ AsMc *cc_modemenu_attach(AsVm *vm, float x, float y) {
     set_num(vm, menu, "_yscale", 100 * k);
     set_num(vm, menu, "_x", x - (bb[0] + bb[2]) / 40 * k);
     set_num(vm, menu, "_y", y - (bb[1] + bb[3]) / 40 * k);
-    modemenu_volleyball(vm, menu);
+    modemenu_extras(vm, menu);
     // the dark veil behind it was made for a 4:3 screen: over all of this one
     for (int i = 0; i < menu->ndisp; i++) {
         AsDisp *e = &menu->disp[i];
@@ -446,28 +447,72 @@ AsMc *cc_modemenu_attach(AsVm *vm, float x, float y) {
     return menu;
 }
 
-// Volleyball (the PS3's mini game) under Castle Crashers: its name where the right page's
-// scribbles were, in a copy of Castle Crashers' heading (two lines of them: depths 18 and 19).
-// Run on attaching and every tick after: on Jah's Vita the scribbles were still there and the
-// name never came, so the book's timeline can put them back or place them later.
-static void modemenu_volleyball(AsVm *vm, AsMc *menu) {
-    float sb[4] = {1e9f, 1e9f, -1e9f, -1e9f}, hb[4];
+// MODEART.swf (tools/modeart/make_modeart.py, from the player's files): the PS3 book's
+// Volleyball picture and QUOFF.swf's Quaff banner. Without it the pages just have no picture.
+static Movie *modeart(AsVm *vm) {
+    static int missing;
+    Movie *m = vm->loader && !missing ? vm->loader(vm, "MODEART.swf") : NULL;
+    if (!m) missing = 1;
+    return m;
+}
+
+// that export of MODEART.swf at a script depth in the book, as big as fits in box (twips, the
+// book's), in its middle; *got: where it went. NULL without the file.
+static AsMc *place_art(AsVm *vm, AsMc *menu, const char *export, const char *name, int depth, const float box[4],
+                       float got[4]) {
+    Movie *m = modeart(vm);
+    int cid = 0;
+    for (int c = 1; m && c < 65536 && !cid; c++)
+        if (m->chars[c].type == CHAR_SPRITE && m->chars[c].export && !strcmp(m->names[m->chars[c].export], export))
+            cid = c;
+    if (!cid) return NULL;
+    Mat id = {1, 0, 0, 1, 0, 0};
+    AsMc *mc = as_mc_place_foreign(vm, menu, m, cid, id, name, depth);
+    if (!mc) return NULL;
+    float ab[4];
+    render_mc_bounds(mc, id, ab);
+    if (ab[2] <= ab[0] || ab[3] <= ab[1]) return mc;
+    float k = (box[2] - box[0]) / (ab[2] - ab[0]), ky = (box[3] - box[1]) / (ab[3] - ab[1]);
+    if (ky < k) k = ky;
+    float x = (box[0] + box[2]) / 2 - (ab[0] + ab[2]) / 2 * k, y = (box[1] + box[3]) / 2 - (ab[1] + ab[3]) / 2 * k;
+    set_num(vm, mc, "_xscale", 100 * k);
+    set_num(vm, mc, "_yscale", 100 * k);
+    set_num(vm, mc, "_x", x / 20);
+    set_num(vm, mc, "_y", y / 20);
+    got[0] = x + ab[0] * k; got[1] = y + ab[1] * k;
+    got[2] = x + ab[2] * k; got[3] = y + ab[3] * k;
+    return mc;
+}
+
+// The book as the Vita has it: Volleyball on the top-left page, with the PS3 book's own picture
+// for it (the PC's there is Back Off Barbarian's, a later game); All You Can Quaff under Castle
+// Crashers, where the right page's scribbles were (two lines of them: depths 18 and 19), with
+// QUOFF.swf's banner. Run on attaching and every tick after, as the book's timeline may put the
+// hidden art back. What's added goes at timeline depths the book leaves empty (16, 23, 24), so
+// the hand (27) stays over it.
+static void modemenu_extras(AsVm *vm, AsMc *menu) {
+    float sb[4] = {1e9f, 1e9f, -1e9f, -1e9f}, pb[4] = {1e9f, 1e9f, -1e9f, -1e9f}, hb[4];
     int scribbles = 0;
     for (int i = 0; i < menu->ndisp; i++) {
         AsDisp *e = &menu->disp[i];
         const Character *c = &menu->movie->chars[e->cid];
-        if ((e->depth != 18 - 16384 && e->depth != 19 - 16384) || e->kind != DISP_SHAPE || c->type != CHAR_SHAPE) continue;
+        int scribble = e->depth == 18 - 16384 || e->depth == 19 - 16384, picture = e->depth == 14 - 16384;
+        if (!(scribble || picture) || e->kind != DISP_SHAPE || c->type != CHAR_SHAPE) continue;
         if (e->m.a == 0 && e->m.b == 0 && e->m.c == 0 && e->m.d == 0) continue;   // hidden already
-        shape_box(c->ptr, e->m, sb);
+        shape_box(c->ptr, e->m, scribble ? sb : pb);
         e->m.a = e->m.b = e->m.c = e->m.d = 0;
-        scribbles++;
+        scribbles += scribble;
     }
-    if (panel_path(vm, menu, "txt4")) return;   // its name is there already
+    if (pb[2] > pb[0] && !panel_path(vm, menu, "cc_volleypic")) {
+        float got[4];
+        place_art(vm, menu, "volleyball", "cc_volleypic", 24 - 16384, pb, got);
+    }
+    if (panel_path(vm, menu, "txt4")) return;   // Quaff's name is there already
     AsMc *head = panel_path(vm, menu, "txt3");
     if (!(sb[2] > sb[0] && head)) {
         static int warned;
         if (!warned++)
-            as_warn(vm, "mode book: no place for Volleyball yet (%d scribbles, heading %s, %d placed)", scribbles,
+            as_warn(vm, "mode book: no place for Quaff yet (%d scribbles, heading %s, %d placed)", scribbles,
                     head ? "found" : "missing", menu->ndisp);
         return;
     }
@@ -480,26 +525,32 @@ static void modemenu_volleyball(AsVm *vm, AsMc *menu) {
         } else {
             render_mc_bounds(head, head->m, hb);
         }
-        AsMc *volley = NULL;
+        // Quaff's banner where the scribbles were, as wide as them, and its name over it (the
+        // two together in the scribbles' middle)
+        float cy = (sb[1] + sb[3]) / 2, th = hb[3] - hb[1], banner_top = cy;
+        float room[4] = {sb[0], cy + th / 2 - 1e6f, sb[2], cy + th / 2 + 1e6f}, got[4];
+        if (place_art(vm, menu, "quaff", "cc_quaffpic", 23 - 16384, room, got)) banner_top = got[1];
+        AsMc *under = NULL;
         for (int i = 0; i < menu->ndisp; i++)
-            if (menu->disp[i].mc == head) volley = as_mc_place_char(vm, menu, menu->disp[i].cid, head->m, head->cx, "txt4", 30);
-        const char *w = strtab_get("vita.mode.volleyball");
-        if (volley) {
-            as_set(vm, as_objv(&volley->obj), as_atom(vm, "text"), as_strv(as_str(vm, w ? w : "Volleyball")));
-            // under it, both in the page's middle (the fields are left-aligned)
+            if (menu->disp[i].mc == head) under = as_mc_place_char(vm, menu, menu->disp[i].cid, head->m, head->cx, "txt4", 16 - 16384);
+        const char *w = strtab_get("vita.mode.quaff");
+        if (!w) w = "All You Can Quaff";
+        if (under) {
+            as_set(vm, as_objv(&under->obj), as_atom(vm, "text"), as_strv(as_str(vm, w)));
+            // in the page's middle like Castle Crashers' (the fields are left-aligned)
             float dx = 0;
             AsVal ht = as_get(vm, as_objv(&head->obj), as_atom(vm, "text"));
             if (head->text && ht.t == V_STR)
-                dx = (as_render_host_text_width(ht.s->s) - as_render_host_text_width(w ? w : "Volleyball")) / 2 *
-                     head->text->height / 20 * head->m.a;
-            set_num(vm, volley, "_x", (head->m.tx + dx) / 20);
-            set_num(vm, volley, "_y", head->m.ty / 20 + ((sb[1] + sb[3]) - (hb[1] + hb[3])) / 40);
+                dx = (as_render_host_text_width(ht.s->s) - as_render_host_text_width(w)) / 2 * head->text->height / 20 *
+                     head->m.a;
+            set_num(vm, under, "_x", (head->m.tx + dx) / 20);
+            set_num(vm, under, "_y", (head->m.ty + banner_top - hb[3]) / 20);
         }
         // how far the hand goes down from Castle Crashers to point at it
         AsMc *hand = panel_path(vm, menu, "hand");
         if (hand) {
             set_num(vm, menu, "cc_hand_y", hand->m.ty / 20);
-            set_num(vm, menu, "cc_hand_dy", ((sb[1] + sb[3]) - (hb[1] + hb[3])) / 40 * VOLLEY_HAND);
+            set_num(vm, menu, "cc_hand_dy", (cy - (hb[1] + hb[3]) / 2) / 20 * UNDER_HAND);
         }
     }
 }
@@ -520,7 +571,7 @@ void cc_modemenu_point(AsVm *vm, AsMc *menu, int from, int to) {
 }
 
 void cc_modemenu_tick(AsVm *vm, AsMc *menu) {
-    modemenu_volleyball(vm, menu);
+    modemenu_extras(vm, menu);
     AsVal o = as_objv(&menu->obj);
     AsVal y = as_get(vm, o, as_atom(vm, "cc_hand_y"));
     AsMc *hand = panel_path(vm, menu, "hand");
