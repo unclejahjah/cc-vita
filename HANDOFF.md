@@ -432,7 +432,8 @@ Red Knight in "body" 631 (cc_title_hide_backdrop) and draws "Vita Edition" with 
 preloaded during the intro and freed when the game starts (video memory), read again on the way
 back under the loading screen. Without the file the title is the original's. hosttest: CC_VIGNETTES=1
 with MENU.swf. Drawn at full size it was 15 fps (GPU: 80k-416k triangles, 46 MB of meshes), so:
-its curves are flattened coarser (swf.c g_curve_tolerance 45 twips for that file), it's drawn into a
-640x363 texture without MSAA once per tick and shown scaled up (main.c vignette_rt_draw), and on
+its curves are flattened coarser (swf.c g_curve_tolerance 30 twips for that file), it's drawn into a
+screen-sized texture without MSAA once per tick (main.c vignette_rt_draw; a smaller one came out
+the wrong size on the Vita), and on
 boot the knights' loading screen covers from the intro end while it's read (cc_loading_hold); it's
 not read during the intro (that slowed the intro down).

@@ -785,9 +785,9 @@ Movie *swf_load(const char *path, char *err, int errlen) {
     m->version = d[3];
     const char *base = strrchr(path, '/');
     m->is_player = !strcasecmp(base ? base + 1 : path, "PLAYER.swf");
-    // the PC title's scenes: a 1920x1080 stage drawn at a third of that (main.c VIGNETTE_W), so
-    // their curves needn't be finer than under a pixel there (fewer triangles, less memory)
-    g_curve_tolerance = !strcasecmp(base ? base + 1 : path, "MENU_VIGNETTES.swf") ? 45.0f : 5.0f;
+    // the PC title's scenes: a 1920x1080 stage drawn at half that, so their curves needn't be
+    // finer than under a pixel there (fewer triangles, less memory)
+    g_curve_tolerance = !strcasecmp(base ? base + 1 : path, "MENU_VIGNETTES.swf") ? 30.0f : 5.0f;
     m->names = malloc(sizeof(char *));
     m->names[0] = strdup("");
     m->nnames = 1;
