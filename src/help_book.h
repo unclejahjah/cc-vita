@@ -16,9 +16,11 @@ enum { HB_UP = 1, HB_DOWN = 2, HB_LEFT = 4, HB_RIGHT = 8, HB_PREV = 16, HB_NEXT 
 
 typedef struct {
     int book, page;            // page: How to Play's page, 0..6
-    int row;                   // Settings: 0 music, 1 sound effects, 2 auto potion; Controls: the chosen button
+    int row;                   // Settings: 0 music, 1 sound effects, 2 auto potion, 3 FRESH look;
+                               // Controls: the chosen button
     int volume[2];             // 0..HB_VOLUME_STEPS
     int auto_potion;           // 1: a hit that would end you drinks a health potion instead
+    int fresh;                 // 1: the PC's redrawn knights and portraits (paint_jr.h); -1: no row (no files)
     int changed;               // the settings or buttons (cc_bind) changed since the book opened
     float time;                // seconds open (the chosen row pulses)
     float turn;                // seconds left of a page turn
@@ -27,7 +29,7 @@ typedef struct {
     unsigned achieved;         // Achievements: bit id set when unlocked (cc_achievements)
 } HelpBook;
 
-void help_book_open(HelpBook *hb, int book, int music, int sfx, int auto_potion);
+void help_book_open(HelpBook *hb, int book, int music, int sfx, int auto_potion, int fresh);
 // Controls: up/down choose a button, left/right change the action on it (the button that had
 // that action takes this one's), HB_RESET puts the original layout back. It sets cc_bind.
 // One frame (dt seconds) with the buttons pressed this frame. Returns 0 once Back closes

@@ -814,6 +814,7 @@ typedef struct {
 // six numbers
 static int g_volume[2] = {HB_VOLUME_STEPS, HB_VOLUME_STEPS};
 static int g_auto_potion;
+static int g_fresh;   // "fresh = 0/1": the FRESH look (paint_jr.h)
 
 static void settings_apply(void) {
     audio_set_volume(g_volume[0] / (float)HB_VOLUME_STEPS, g_volume[1] / (float)HB_VOLUME_STEPS);
@@ -828,6 +829,7 @@ static void settings_load(void) {
             if (sscanf(line, " music = %d", &v) == 1 && v >= 0 && v <= HB_VOLUME_STEPS) g_volume[0] = v;
             if (sscanf(line, " sfx = %d", &v) == 1 && v >= 0 && v <= HB_VOLUME_STEPS) g_volume[1] = v;
             if (sscanf(line, " autopotion = %d", &v) == 1) g_auto_potion = v != 0;
+            if (sscanf(line, " fresh = %d", &v) == 1) g_fresh = v != 0;
             int nb[CC_ACTIONS], used = 0;
             if (sscanf(line, " buttons = %d %d %d %d %d %d", &nb[0], &nb[1], &nb[2], &nb[3], &nb[4], &nb[5]) ==
                 CC_ACTIONS) {
@@ -844,7 +846,8 @@ static void settings_load(void) {
 static void settings_save(void) {
     FILE *f = fopen(SETTINGS_PATH, "w");
     if (!f) return;
-    fprintf(f, "music = %d\nsfx = %d\nautopotion = %d\n", g_volume[0], g_volume[1], g_auto_potion);
+    fprintf(f, "music = %d\nsfx = %d\nautopotion = %d\nfresh = %d\n", g_volume[0], g_volume[1], g_auto_potion,
+            g_fresh);
     fprintf(f, "buttons = %d %d %d %d %d %d\n", cc_bind[0], cc_bind[1], cc_bind[2], cc_bind[3], cc_bind[4],
             cc_bind[5]);
     fclose(f);
@@ -978,7 +981,8 @@ static void pause_draw(Pause *ps) {
 // closes it (the settings are saved then if they moved)
 static void help_input(Pause *ps, unsigned pressed, float dt) {
     if (ps->m.book_new) {
-        help_book_open(&ps->hb, ps->m.book, g_volume[0], g_volume[1], g_auto_potion);
+        help_book_open(&ps->hb, ps->m.book, g_volume[0], g_volume[1], g_auto_potion,
+                       cc_fresh_available() ? g_fresh : -1);
         ps->hb.achieved = cc_achievements();
         ps->m.book_new = 0;
     }
@@ -994,6 +998,10 @@ static void help_input(Pause *ps, unsigned pressed, float dt) {
         settings_apply();
     }
     g_auto_potion = ps->hb.auto_potion;   // the game's VM picks it up (not mid Wi-Fi game)
+    if (ps->hb.fresh >= 0) {   // the FRESH look: from the next spawn (not in a Wi-Fi game)
+        g_fresh = ps->hb.fresh;
+        cc_fresh_set(g_fresh && !g_netgame);
+    }
     if (sound >= 0) audio_sfx_play(sound == 0 ? "sound_toggle_b.wav" : "sound_player_select.wav", 1, 0, 0, ps);
     if (open) return;
     if (ps->hb.changed) settings_save();
@@ -1860,7 +1868,7 @@ int main(void) {
     {   // optional: Paint Jr. from the PC's files (paint_jr.h)
         char path[256];
         int lvl;
-        cc_paintjr_set_available(find_file("PLAYER_NEW.swf", path, sizeof path, &lvl) &&
+        cc_paintjr_set_available(find_file("PLAYER_NEW.swf", path, sizeof path, &lvl),
                                  find_file("PAINTJR.swf", path, sizeof path, &lvl));
         if (cc_paintjr_p_type()) log_line("Paint Jr. (character %d)", cc_paintjr_p_type());
     }
@@ -1958,6 +1966,7 @@ new_game:   // the title again after Exit to Main Menu
     cc_host_init(vm);
     as_render_init(vm);
     cc_set_auto_potion(vm, g_auto_potion);
+    cc_fresh_set(g_fresh && !g_netgame);   // the FRESH look: this Vita's own, not in a Wi-Fi game
     int net_wait = 0;        // Wi-Fi play: passes spent waiting for the others
 #ifdef CC_NET
     uint32_t net_tick = 0;   // the next frame to run
