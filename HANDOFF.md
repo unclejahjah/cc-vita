@@ -421,3 +421,14 @@ hosttest: CC_AUTO_POTION=1; HB_ROW=2 with --help shows the row chosen.
   Wi-Fi games start empty and don't save. hosttest: CC_LOOKS=file.
 - Not checked against the PC's LEVEL15_NEW.swf (Paint Jr.'s castle): needs its w3, counter and
   the same rope layout; without them it does nothing.
+
+## Title: the PC's moving scenes (2026-10-28)
+The PC title's animated background isn't in MENU.swf: castle.exe plays menu_vignettes.pak under it
+(1920x1080, 30 fps, 2248 root frames: eight scenes of ~281 frames, pushed in from the left, one
+seamless loop, no scripts but HiFps_Loop). `tools/vignettes/make_vignettes.py` makes
+MENU_VIGNETTES.swf from the user's PC copy; with it in game/, title_screen puts it under MENU's root
+(cc_title_vignettes: lowest depth, scaled to cover 848x480), hides the original's painted scene and
+Red Knight in "body" 631 (cc_title_hide_backdrop) and draws "Vita Edition" with a dark rim. It's
+preloaded during the intro and freed when the game starts (video memory), read again on the way
+back under the loading screen. Without the file the title is the original's. hosttest: CC_VIGNETTES=1
+with MENU.swf. About 155k-195k triangles a frame (LEVEL7's load).

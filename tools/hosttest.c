@@ -274,6 +274,7 @@ static Movie *host_loader(AsVm *vm, const char *url) {
         extern void cc_dump_shape(Movie *m, int cid);
         cc_dump_shape(m, atoi(getenv("CC_DUMP_SHAPE")));
     }
+    cc_menu_badge_outline = getenv("CC_VIGNETTES") != NULL;
     if (m && getenv("CC_PS_BUTTONS")) cc_menu_vita_badge(m);
     if (m && CC_BETA_STICKER) cc_menu_beta_sticker_build(m);
     if (m && getenv("CC_PS_BUTTONS"))   // as the Vita does for every file it loads
@@ -475,6 +476,9 @@ static int as_mode(int argc, char **argv) {
     }
     vm->root = as_mc_new(vm, start, &start->root, NULL, 0);
     if (!strcasecmp(argv[3], "MAIN.swf") && !getenv("CC_NO_LOADING")) cc_loading_attach(vm);
+    AsMc *vignettes = NULL;   // CC_VIGNETTES=1 with MENU.swf: the PC's moving scenes (MENU_VIGNETTES.swf) under the title
+    if (getenv("CC_VIGNETTES") && !strcasecmp(argv[3], "MENU.swf"))
+        vignettes = cc_title_vignettes(vm, host_loader(vm, "MENU_VIGNETTES.swf"));
     W = SCREEN_W; H = SCREEN_H;
     if (getenv("CC_SCALE") && atoi(getenv("CC_SCALE")) == 2) { W = MAX_W; H = MAX_H; }
     DrawList vb = {0};
@@ -820,6 +824,7 @@ static int as_mode(int argc, char **argv) {
                     if (v.t == V_OBJ && v.o->type == OBJ_MC) ((AsMc *)v.o)->visible = 0;
                 }
             }
+            if (vignettes) cc_title_hide_backdrop(vm->root);
             uint8_t bgc[3] = {start->bg[0], start->bg[1], start->bg[2]};
             if (getenv("CC_BG")) sscanf(getenv("CC_BG"), "%hhu,%hhu,%hhu", &bgc[0], &bgc[1], &bgc[2]);   // "r,g,b"
             clear(bgc);
