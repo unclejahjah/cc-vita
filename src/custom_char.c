@@ -1,5 +1,6 @@
 // Custom characters from the Painter Boss Paradise template: see custom_char.h.
 #include "custom_char.h"
+#include "paint_jr.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -287,27 +288,34 @@ static AsVal call_script(AsVm *vm, const char *name, AsNative self, AsVal this_,
 static void set_num(AsVm *vm, AsVal o, const char *name, double v) { as_set(vm, o, as_atom(vm, name), as_num(v)); }
 
 // f_InitSaveSystem: the save has room after the 31 records (64 + 48 * 31 is free), and the
-// character select (LOBBY/SELECT.swf) and char_colors go up to num_characters.
+// character select (LOBBY/SELECT.swf) and char_colors go up to num_characters: 32 with Paint Jr.,
+// 33 with a custom character (slot 32 then stays locked without Paint Jr.'s files).
 static AsVal init_save_system(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
     AsVal r = call_script(vm, "f_InitSaveSystem", init_save_system, this_, argc, argv);
     AsVal info = as_get(vm, as_objv(&vm->root->obj), as_atom(vm, "save_data_info"));
-    if (info.t == V_OBJ) set_num(vm, info, "num_characters", CC_CUSTOM_P_TYPE);
+    int n = cc_custom_p_type() ? CC_CUSTOM_P_TYPE : CC_PAINTJR_P_TYPE;
+    if (info.t == V_OBJ) set_num(vm, info, "num_characters", n);
     return r;
 }
 
-// f_InitCharColors: the custom character's select-screen background and HUD colour are its base's
+static void copy_color(AsVm *vm, AsVal colors, AsVal from, int to) {
+    char idx[8];
+    snprintf(idx, sizeof idx, "%d", to);
+    if (colors.t == V_OBJ && from.t == V_OBJ) as_set(vm, colors, as_str(vm, idx), from);
+}
+
+// f_InitCharColors: the custom character's select-screen background and HUD colour are its
+// base's; Paint Jr.'s are the Blue Knight's (the PC's MAIN has none of its own for him)
 static AsVal init_char_colors(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
     AsVal r = call_script(vm, "f_InitCharColors", init_char_colors, this_, argc, argv);
     static const char *const KNIGHT[] = {"", "color_green", "color_red", "color_blue", "color_orange"};
     AsVal root = as_objv(&vm->root->obj);
     AsVal colors = as_get(vm, root, as_atom(vm, "char_colors"));
+    if (cc_paintjr_p_type()) copy_color(vm, colors, as_get(vm, root, as_atom(vm, "color_blue")), CC_PAINTJR_P_TYPE);
+    if (!cc_custom_p_type()) return r;
     AsVal base = g.base <= 4 ? as_get(vm, root, as_atom(vm, KNIGHT[g.base]))
                              : (colors.t == V_OBJ && g.base < colors.o->nitems ? colors.o->items[g.base] : as_undef());
-    if (colors.t == V_OBJ && base.t == V_OBJ) {
-        char idx[8];
-        snprintf(idx, sizeof idx, "%d", CC_CUSTOM_P_TYPE);
-        as_set(vm, colors, as_str(vm, idx), base);
-    }
+    copy_color(vm, colors, base, CC_CUSTOM_P_TYPE);
     return r;
 }
 
@@ -340,8 +348,8 @@ static AsVal set_player_magic(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
 }
 
 void cc_custom_init(AsVm *vm) {
-    if (!cc_custom_p_type()) return;
+    if (!cc_custom_p_type() && !cc_paintjr_p_type()) return;
     as_override(vm, "f_InitSaveSystem", init_save_system);
     as_override(vm, "f_InitCharColors", init_char_colors);
-    as_override(vm, "f_SetPlayerMagic", set_player_magic);
+    if (cc_custom_p_type()) as_override(vm, "f_SetPlayerMagic", set_player_magic);
 }

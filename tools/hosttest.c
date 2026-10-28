@@ -16,6 +16,7 @@
 #include "../src/cc_buttons.h"
 #include "../src/cc_host.h"
 #include "../src/custom_char.h"
+#include "../src/paint_jr.h"
 #include "../src/custom_animal.h"
 #include "../src/pause_menu.h"
 #include "../src/help_book.h"
@@ -350,6 +351,13 @@ static int as_mode(int argc, char **argv) {
                cc_custom_base());
     if (getenv("CC_CUSTOM_ANIMAL"))   // CC_CUSTOM_ANIMAL=dir/ (with pet.png, pet.xml): a custom animal orb
         cc_animal_load(getenv("CC_CUSTOM_ANIMAL"));
+    {   // Paint Jr. when GAME/game has PLAYER_NEW.swf and PAINTJR.swf, as on the Vita
+        char a[700], b[700];
+        snprintf(a, sizeof a, "%s/game/PLAYER_NEW.swf", game_dir);
+        snprintf(b, sizeof b, "%s/game/PAINTJR.swf", game_dir);
+        cc_paintjr_set_available(access(a, R_OK) == 0 && access(b, R_OK) == 0);
+        if (cc_paintjr_p_type()) printf("Paint Jr. (character %d)\n", cc_paintjr_p_type());
+    }
     extern void cc_host_init(AsVm *vm);
     if (getenv("CC_GAME_MODE")) cc_game_mode = atoi(getenv("CC_GAME_MODE"));   // 1 Quaff, 3 Arena
     cc_host_init(vm);

@@ -34,6 +34,7 @@
 #include "custom_animal.h"
 #include "help_book.h"
 #include "custom_char.h"
+#include "paint_jr.h"
 #include "hostfont.h"
 #include "pause_menu.h"
 #include "render.h"
@@ -1856,6 +1857,13 @@ int main(void) {
         log_line("custom character \"%s\" (fights like character %d)", cc_custom_name(), cc_custom_base());
     if (cc_animal_load(DATA_DIR "custom/animal/"))   // optional: a custom animal orb (custom_animal.h)
         log_line("custom animal orb \"%s\"", cc_animal_name());
+    {   // optional: Paint Jr. from the PC's files (paint_jr.h)
+        char path[256];
+        int lvl;
+        cc_paintjr_set_available(find_file("PLAYER_NEW.swf", path, sizeof path, &lvl) &&
+                                 find_file("PAINTJR.swf", path, sizeof path, &lvl));
+        if (cc_paintjr_p_type()) log_line("Paint Jr. (character %d)", cc_paintjr_p_type());
+    }
     bg_init();
 
     Movie *start = host_movie("MAIN.swf");
