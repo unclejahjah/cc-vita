@@ -625,6 +625,7 @@ static int vita_prefetch(AsVm *vm, const char *url) {
 static Movie *vita_loader(AsVm *vm, const char *url) {
     const char *base = strrchr(url, '/');
     base = base ? base + 1 : url;
+    base = cc_player_file(base);   // the FRESH look's player file (paint_jr.h)
     Movie *m = cached_movie(base);
     if (m) return m;
     if (g_bg.state != BG_IDLE) {   // never two loads at once (the tessellator is shared)
@@ -998,10 +999,9 @@ static void help_input(Pause *ps, unsigned pressed, float dt) {
         settings_apply();
     }
     g_auto_potion = ps->hb.auto_potion;   // the game's VM picks it up (not mid Wi-Fi game)
-    if (ps->hb.fresh >= 0) {   // the FRESH look: from the next spawn (not in a Wi-Fi game)
-        g_fresh = ps->hb.fresh;
-        cc_fresh_set(g_fresh && !g_netgame);
-    }
+    // the FRESH look: from the next game (switching player files mid-game would have both in
+    // memory, too much); the title's sticker shows the setting at once
+    if (ps->hb.fresh >= 0) g_fresh = ps->hb.fresh;
     if (sound >= 0) audio_sfx_play(sound == 0 ? "sound_toggle_b.wav" : "sound_player_select.wav", 1, 0, 0, ps);
     if (open) return;
     if (ps->hb.changed) settings_save();
@@ -1637,7 +1637,7 @@ static int title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, siz
         if (lx < -80 && olx >= -80) pressed |= SCE_CTRL_LEFT;
         if (lx > 80 && olx <= 80) pressed |= SCE_CTRL_RIGHT;
         old = pad;
-        cc_menu_fresh(t, panel, cc_fresh());   // the FRESH sticker while the look is on (Settings)
+        cc_menu_fresh(t, panel, g_fresh && cc_fresh_available());   // the FRESH sticker while the look is on
 #ifdef CC_NET
         if (g_wifi.page != W_CLOSED || net.state != NET_OFF) {
             int w = wifi_update(pressed);
@@ -1870,6 +1870,7 @@ int main(void) {
         char path[256];
         int lvl;
         cc_paintjr_set_available(find_file("PLAYER_NEW.swf", path, sizeof path, &lvl),
+                                 find_file("PLAYER_PJ.swf", path, sizeof path, &lvl),
                                  find_file("PAINTJR.swf", path, sizeof path, &lvl));
         if (cc_paintjr_p_type()) log_line("Paint Jr. (character %d)", cc_paintjr_p_type());
     }
@@ -1964,6 +1965,7 @@ new_game:   // the title again after Exit to Main Menu
     cc_custom_set_active(!g_netgame);
 #endif
     cc_animal_set_active(!g_netgame);   // not in Wi-Fi games: the other machine may not have it
+    cc_paintjr_set_active(!g_netgame);  // nor Paint Jr.'s files
     cc_host_init(vm);
     as_render_init(vm);
     cc_set_auto_potion(vm, g_auto_potion);
