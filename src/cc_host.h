@@ -136,4 +136,5 @@ void cc_loading_attach(AsVm *vm);
 int cc_loading_cover(AsVm *vm);     // Exit to Main Menu: 1 once the loading screen covers the game
 void cc_loading_reveal(AsVm *vm);   // the title starts under it, and it plays its exit
 int cc_loading_busy(AsVm *vm);      // the loading screen is showing
+extern int cc_loading_hold;         // set: it stays covering (the app's own files still loading)
 #endif

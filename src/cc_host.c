@@ -1040,9 +1040,11 @@ static int hold_load(AsVm *vm, AsMc *target, const char *url) {
 
 // The loading screen plays its exit once the level is in and the files its first frames
 // asked for (sky, enemies, mounts) are in too: two frames with no load waiting.
+int cc_loading_hold;
+
 static void loading_exit_check(AsVm *vm) {
     if (exit_wait < 0) return;
-    if (vm->loads) { exit_wait = 0; return; }
+    if (vm->loads || cc_loading_hold) { exit_wait = 0; return; }
     if (++exit_wait < 2) return;
     exit_wait = -1;
     loading_shown = 0;

@@ -431,4 +431,7 @@ MENU_VIGNETTES.swf from the user's PC copy; with it in game/, title_screen puts 
 Red Knight in "body" 631 (cc_title_hide_backdrop) and draws "Vita Edition" with a dark rim. It's
 preloaded during the intro and freed when the game starts (video memory), read again on the way
 back under the loading screen. Without the file the title is the original's. hosttest: CC_VIGNETTES=1
-with MENU.swf. About 155k-195k triangles a frame (LEVEL7's load).
+with MENU.swf. Drawn at full size it was 15 fps (GPU: 80k-416k triangles, 46 MB of meshes), so:
+its curves are flattened coarser (swf.c g_curve_tolerance 45 twips for that file), it's drawn into a
+640x363 texture without MSAA once per tick and shown scaled up (main.c vignette_rt_draw), and on
+boot the knights' loading screen covers from the intro until it's read (cc_loading_hold).

@@ -235,12 +235,16 @@ static int64_t pkey(Pt p) {
     return (x << 32) ^ (y & 0xffffffff);
 }
 
+// how far a flattened curve may stray from the true one (twips), for the file being loaded
+// (one load at a time): a quarter pixel (5), more for art drawn much smaller than its stage
+static float g_curve_tolerance = 5.0f;
+
 static void flatten_quad(Pt p0, Pt c, Pt p1, PtVec *out) {
     // The curve strays at most |p0 - 2c + p1| / 4 from its chord, and n segments
-    // cut that by n^2. Aim for a quarter pixel (5 twips).
+    // cut that by n^2. Aim for g_curve_tolerance.
     float ex = p0.x - 2 * c.x + p1.x, ey = p0.y - 2 * c.y + p1.y;
     float dev = sqrtf(ex * ex + ey * ey) / 4;
-    int n = (int)ceilf(sqrtf(dev / 5.0f));
+    int n = (int)ceilf(sqrtf(dev / g_curve_tolerance));
     if (n < 1) n = 1;
     if (n > 16) n = 16;
     for (int i = 1; i <= n; i++) {
@@ -781,6 +785,9 @@ Movie *swf_load(const char *path, char *err, int errlen) {
     m->version = d[3];
     const char *base = strrchr(path, '/');
     m->is_player = !strcasecmp(base ? base + 1 : path, "PLAYER.swf");
+    // the PC title's scenes: a 1920x1080 stage drawn at a third of that (main.c VIGNETTE_W), so
+    // their curves needn't be finer than under a pixel there (fewer triangles, less memory)
+    g_curve_tolerance = !strcasecmp(base ? base + 1 : path, "MENU_VIGNETTES.swf") ? 45.0f : 5.0f;
     m->names = malloc(sizeof(char *));
     m->names[0] = strdup("");
     m->nnames = 1;
