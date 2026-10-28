@@ -1044,7 +1044,14 @@ int cc_loading_hold;
 
 static void loading_exit_check(AsVm *vm) {
     if (exit_wait < 0) return;
-    if (vm->loads || cc_loading_hold) { exit_wait = 0; return; }
+    if (cc_loading_hold) {   // stays covering: back to the covered frame should it run on
+        AsMc *ls = loading_screen(vm), *scr = ls ? as_mc_child(ls, as_atom(vm, "loadingScreen")) : NULL;
+        int f = scr ? as_mc_frame_of(scr, as_strv(as_str(vm, "loading"))) : -1;
+        if (f >= 0 && scr->frame != f) as_mc_goto(vm, scr, f, 0);
+        exit_wait = 0;
+        return;
+    }
+    if (vm->loads) { exit_wait = 0; return; }
     if (++exit_wait < 2) return;
     exit_wait = -1;
     loading_shown = 0;

@@ -1907,7 +1907,7 @@ static int title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, siz
             hide_sprite(t->root, 626);   // the news bar (no news on the Vita)
             if (vignette_file) cc_title_hide_backdrop(t->root);   // the painted one goes
             if (vignettes) {   // the PC's scenes are drawn on their own (below)
-                vignette_rt_draw(vignettes, mat_mul(screen, mat_mul(t->root->m, vignettes->m)), cache);
+                vignette_rt_draw(vignettes, mat_mul(screen, t->root->m), cache);   // (as_render_mc adds its own)
                 vignettes->visible = 0;
             }
             as_render_mc(t->root, screen, CX_IDENTITY, vb);
