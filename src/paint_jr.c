@@ -5,22 +5,18 @@
 #include <string.h>
 #include <strings.h>
 
-static int g_available, g_new_player, g_fresh;
-void cc_paintjr_set_available(int new_player, int pj_parts, int paint_jr) {
-    g_new_player = new_player;
+static int g_available, g_fresh_files, g_fresh;
+void cc_paintjr_set_available(int fresh_files, int pj_parts, int paint_jr) {
+    g_fresh_files = fresh_files;
     g_available = pj_parts && paint_jr;
 }
 
 static int g_off;   // a Wi-Fi game: off, so every Vita runs the same characters
 void cc_paintjr_set_active(int on) { g_off = !on; }
 int cc_paintjr_p_type(void) { return g_available && !g_off ? CC_PAINTJR_P_TYPE : 0; }
-int cc_fresh_available(void) { return g_new_player; }
+int cc_fresh_available(void) { return g_fresh_files; }
 void cc_fresh_set(int on) { g_fresh = on; }
-int cc_fresh(void) { return g_fresh && g_new_player; }
-
-const char *cc_player_file(const char *base) {
-    return cc_fresh() && !strcasecmp(base, "player.swf") ? "PLAYER_NEW.swf" : base;
-}
+int cc_fresh(void) { return g_fresh && g_fresh_files; }
 
 int cc_portrait_frame(int frame, int nframes) {
     int t = frame - 2;   // the character
@@ -43,12 +39,20 @@ static const char *const GROUP[] = {"helmet", "belt", "weapon", "shield"};
 static struct {
     const Movie *player;   // the PLAYER.swf the table is for
     int n;
-    uint16_t id[MAX_PARTS];     // its part clip
-    const Sprite *pj[MAX_PARTS];   // and PJPARTS.swf's version of it
+    uint16_t id[MAX_PARTS];     // its part clips
+    char name[MAX_PARTS][24];   // their export names in PJPARTS.swf and FRESHnn.swf
     uint8_t weapon[MAX_PARTS];
 } g_parts;
-static Movie *g_pjparts;
-static int g_pjparts_missing;
+
+// PJPARTS.swf (file 0) and FRESH01.swf.. (file nn: frame nn of each part clip), loaded the first
+// time a clip needs one and kept for the game (cc_movie_keep): their sprites are held here
+#define MAX_FILES 64
+static struct {
+    int tried;
+    Movie *m;
+    const Sprite *s[MAX_PARTS];
+} g_files[MAX_FILES];
+void (*cc_movie_keep)(Movie *m);
 
 static int calls(const Movie *m, const Sprite *s, const char *fn) {
     size_t l = strlen(fn) + 1;   // with its NUL: a whole name in the constant pool
@@ -67,28 +71,18 @@ static const Sprite *export_sprite(const Movie *m, const char *name) {
     return NULL;
 }
 
-static void index_parts(AsVm *vm, const Movie *player) {
+static void index_parts(const Movie *player) {
     memset(&g_parts, 0, sizeof g_parts);
     g_parts.player = player;
-    if (!g_pjparts && !g_pjparts_missing) {
-        g_pjparts = vm && vm->loader ? vm->loader(vm, "PJPARTS.swf") : NULL;
-        if (!g_pjparts) g_pjparts_missing = 1;
-    }
-    if (!g_pjparts) return;
     int nth[NGROUPS] = {0};
     for (int id = 0; id < 65536 && g_parts.n < MAX_PARTS; id++) {
         if (player->chars[id].type != CHAR_SPRITE) continue;
         const Sprite *s = player->chars[id].ptr;
         for (int g = 0; g < NGROUPS; g++) {
             if (!calls(player, s, SELECTOR[g])) continue;
-            char name[32];
-            snprintf(name, sizeof name, "pj_%s_%d", GROUP[g], nth[g]++);
-            const Sprite *pj = export_sprite(g_pjparts, name);
-            if (pj) {
-                g_parts.id[g_parts.n] = (uint16_t)id;
-                g_parts.pj[g_parts.n] = pj;
-                g_parts.weapon[g_parts.n++] = g == 2;
-            }
+            g_parts.id[g_parts.n] = (uint16_t)id;
+            snprintf(g_parts.name[g_parts.n], sizeof g_parts.name[0], "pj_%s_%d", GROUP[g], nth[g]++);
+            g_parts.weapon[g_parts.n++] = g == 2;
             break;
         }
     }
@@ -96,17 +90,45 @@ static void index_parts(AsVm *vm, const Movie *player) {
 
 static AsVm *g_vm;
 
+static int load_file(int f) {
+    if (f < 0 || f >= MAX_FILES) return 0;
+    if (!g_files[f].tried) {
+        g_files[f].tried = 1;
+        char name[16];
+        if (f) snprintf(name, sizeof name, "FRESH%02d.swf", f);
+        else snprintf(name, sizeof name, "PJPARTS.swf");
+        Movie *m = g_vm && g_vm->loader ? g_vm->loader(g_vm, name) : NULL;
+        if (m && cc_movie_keep) cc_movie_keep(m);
+        g_files[f].m = m;
+        for (int i = 0; m && i < g_parts.n; i++) g_files[f].s[i] = export_sprite(m, g_parts.name[i]);
+    }
+    return g_files[f].m != NULL;
+}
+
 int cc_paintjr_part(const Movie *m, const Sprite *s, int frame, int p_type, Movie **mv, const Frame **fr) {
-    if (!cc_paintjr_p_type() || !m->is_player) return 0;
-    if (g_parts.player != m) index_parts(g_vm, m);
+    if (!m->is_player || frame < 0) return 0;
+    if (g_parts.player != m) {
+        index_parts(m);
+        memset(g_files, 0, sizeof g_files);   // (a new PLAYER.swf: the names are looked up again)
+    }
     for (int i = 0; i < g_parts.n; i++) {
         if (g_parts.id[i] != s->id) continue;
-        const Sprite *pj = g_parts.pj[i];
-        int f = g_parts.weapon[i] ? (frame + 1 == PENCIL ? PENCIL - 1 : -1)
-                                  : (p_type == CC_PAINTJR_P_TYPE ? CC_PAINTJR_P_TYPE : -1);
-        if (f < 0 || f >= pj->nframes) return 0;
-        *mv = g_pjparts;
-        *fr = &pj->frames[f];
+        int file, f;
+        if (g_parts.weapon[i]) {   // the pencil, for whoever holds it
+            if (frame + 1 != PENCIL || !cc_paintjr_p_type()) return 0;
+            file = 0, f = PENCIL - 1;
+        } else if (p_type == CC_PAINTJR_P_TYPE && cc_paintjr_p_type()) {   // his frame
+            file = 0, f = CC_PAINTJR_P_TYPE;
+        } else if (p_type >= 1 && cc_fresh()) {   // the PC's version of the frame it shows
+            file = frame + 1, f = frame;
+        } else {
+            return 0;
+        }
+        if (!load_file(file)) return 0;
+        const Sprite *v = g_files[file].s[i];
+        if (!v || f >= v->nframes || !v->frames[f].count) return 0;
+        *mv = g_files[file].m;
+        *fr = &v->frames[f];
         return 1;
     }
     return 0;
@@ -159,8 +181,6 @@ void cc_paintjr_init(AsVm *vm) {
     g_grafted = 0;
     g_vm = vm;
     g_parts.player = NULL;   // a new VM: the files are looked up again
-    g_pjparts = NULL;
-    g_pjparts_missing = 0;
     if (!cc_paintjr_p_type()) return;
     as_override(vm, "f_ShootMagic", shoot_magic);
     as_override(vm, "f_MagicBulletDown", magic_bullet_down);
