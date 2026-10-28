@@ -1661,12 +1661,12 @@ static const int g_menu_order[] = {CC_MENU_PLAY, CC_MENU_OPTIONS, CC_MENU_QUIT};
 #endif
 #define MENU_N ((int)(sizeof g_menu_order / sizeof *g_menu_order))
 
-// The PC's title scenes are far too much for the GPU at the screen's size with 4x MSAA (15 fps:
-// 80k-335k triangles over many layers of 1920x1080 art): they're drawn into a texture of 2/3
-// the screen's size without MSAA once per game tick, and every frame shows that texture scaled
-// up under the menu (smooth, the art is soft anyway).
-#define VIGNETTE_W 640
-#define VIGNETTE_H 363
+// The PC's title scenes are far too much for the GPU with 4x MSAA (15 fps: 80k-335k triangles
+// over many layers of 1920x1080 art): they're drawn into a screen-sized texture without MSAA
+// once per game tick (as the heat haze's, the size vita2d's projection and viewport assume),
+// and every frame shows that texture under the menu.
+#define VIGNETTE_W SCREEN_W
+#define VIGNETTE_H SCREEN_H
 static vita2d_texture *g_vignette_rt;
 
 static void vignette_rt_draw(AsMc *vignettes, Mat m, RecolourCache *cache) {
@@ -1677,13 +1677,10 @@ static void vignette_rt_draw(AsMc *vignettes, Mat m, RecolourCache *cache) {
     }
     static DrawList dl;
     render_begin(&dl);
-    // vita2d's projection and viewport stay the screen's in any target: the list is drawn in
-    // the texture's own pixels, its top left VIGNETTE_W x VIGNETTE_H of "screen"
-    dl.view[2] = VIGNETTE_W;
-    dl.view[3] = VIGNETTE_H;
+    dl.view[2] = SCREEN_W;
+    dl.view[3] = SCREEN_H;
     dl.cache = cache;
-    as_render_mc(vignettes, mat_mul((Mat){(float)VIGNETTE_W / SCREEN_W, 0, 0, (float)VIGNETTE_H / SCREEN_H, 0, 0}, m),
-                 CX_IDENTITY, &dl);
+    as_render_mc(vignettes, m, CX_IDENTITY, &dl);
     vita2d_start_drawing_advanced(g_vignette_rt, 0);
     vita2d_set_clear_color(RGBA8(0, 0, 0, 255));
     vita2d_clear_screen();
@@ -1928,7 +1925,7 @@ static int title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, siz
         vita2d_start_drawing();
         vita2d_clear_screen();
         if (vignettes && g_vignette_rt)
-            vita2d_draw_texture_scale(g_vignette_rt, 0, 0, (float)SCREEN_W / VIGNETTE_W, (float)SCREEN_H / VIGNETTE_H);
+            vita2d_draw_texture(g_vignette_rt, 0, 0);
         draw_list(vb);
         if (panel && !modes) {   // the power button that stands for Quit
             static CcVert tris[4096];
