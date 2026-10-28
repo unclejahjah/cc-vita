@@ -585,13 +585,13 @@ static int cached_movie_peek(const char *base) {
 // select's on the title, the game's (effects, players, animals, the map) after that. Each took
 // the Vita seconds with the screen standing still (fx, player and animals 15 s). A file the
 // game asks for while another one is loading waits for it, so nothing is read ahead of its stage.
-// The PC title's scenes come last in the intro's: the title starts without waiting for them
-// (under the loading screen), so the files it reads itself at the start (MODEART, FRESHLOGO,
-// LOADING) are read before them.
-static const char *const g_preload[] = {"MENU.swf", "MODEART.swf", "FRESHLOGO.swf", "LOADING.swf", "MENU_VIGNETTES.swf",   // intro
-                                        "PAUSE.swf", "sounds.swf", "lobby.swf",                                         // title
-                                        "fx.swf", "player.swf", "animals.swf", "map.swf"};                              // game
-enum { PRELOAD_INTRO = 5, PRELOAD_TITLE = 8, PRELOAD_GAME = 12 };
+// The intro reads the files the title reads itself at its start (MODEART, FRESHLOGO, LOADING).
+// The PC title's scenes are read first thing on the title, under the loading screen: read during
+// the intro they slowed it down (a big file, parsed and tessellated beside it).
+static const char *const g_preload[] = {"MENU.swf", "MODEART.swf", "FRESHLOGO.swf", "LOADING.swf",          // intro
+                                        "MENU_VIGNETTES.swf", "PAUSE.swf", "sounds.swf", "lobby.swf",   // title
+                                        "fx.swf", "player.swf", "animals.swf", "map.swf"};              // game
+enum { PRELOAD_INTRO = 4, PRELOAD_TITLE = 8, PRELOAD_GAME = 12 };
 static int g_npreloaded;   // of g_preload, started
 
 static void preload_step(int upto) {   // upto: the PRELOAD_ stage
@@ -1718,9 +1718,9 @@ static int title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, siz
     cc_native_root_functions(t, &t->root->obj);
     // the PC's moving scenes behind the menu, when its MENU_VIGNETTES.swf is there (read during
     // the intro; back from a game, under the loading screen)
-    // the PC's moving scenes behind the menu, when its MENU_VIGNETTES.swf is there: read during
-    // the intro (the title doesn't wait for it: they come in once read, the painted scene is off
-    // from the start); back from a game, read now under the loading screen
+    // the PC's moving scenes behind the menu, when its MENU_VIGNETTES.swf is there: read in the
+    // background under the loading screen after the intro (they come in once read, the painted
+    // scene is off from the start); back from a game, read now under the loading screen
     AsMc *vignettes = NULL;
     int vignette_file = find_file("MENU_VIGNETTES.swf", art_path, sizeof art_path, &art_level);
     if (vignette_file && from_game) {
