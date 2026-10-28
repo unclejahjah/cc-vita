@@ -479,6 +479,11 @@ static int as_mode(int argc, char **argv) {
     AsMc *vignettes = NULL;   // CC_VIGNETTES=1 with MENU.swf: the PC's moving scenes (MENU_VIGNETTES.swf) under the title
     if (getenv("CC_VIGNETTES") && !strcasecmp(argv[3], "MENU.swf"))
         vignettes = cc_title_vignettes(vm, host_loader(vm, "MENU_VIGNETTES.swf"));
+    if (getenv("CC_BOOT_LOADING") && !strcasecmp(argv[3], "MENU.swf")) {   // the Vita's loading screen after the intro
+        cc_native_root_functions(vm, &vm->root->obj);
+        cc_loading_reveal(vm);
+        cc_loading_hold = atoi(getenv("CC_BOOT_LOADING"));   // =N: held until tick N
+    }
     W = SCREEN_W; H = SCREEN_H;
     if (getenv("CC_SCALE") && atoi(getenv("CC_SCALE")) == 2) { W = MAX_W; H = MAX_H; }
     DrawList vb = {0};
@@ -492,6 +497,7 @@ static int as_mode(int argc, char **argv) {
     const char *keys = getenv("CC_KEYS");
     int covering = 0;   // CC_RESTART_COVER: the loading screen comes in before the restart, as on the Vita
     for (int f = 0; f < frames; f++) {
+        if (cc_loading_hold > 1 && f >= cc_loading_hold) cc_loading_hold = 0;   // CC_BOOT_LOADING=N lets go
         if (getenv("CC_RESTART_AT") && f == atoi(getenv("CC_RESTART_AT")) && getenv("CC_RESTART_COVER") && !covering)
             covering = 1;
         if (covering == 1 && cc_loading_cover(vm)) covering = 2;
