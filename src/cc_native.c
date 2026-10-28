@@ -374,7 +374,6 @@ AsMc *cc_menu_attach(AsVm *vm, float x, float y) {
 // after Local Game; the hand's timeline has a move from each mode to each other one
 // ("storyarena", "arenaquaff", ...), each ending on a stop.
 static const char *MODE_NAME[CC_MODE_ITEMS] = {"story", "arena", "quaff", "story"};
-#define UNDER_HAND 0.25f   // of the way from Castle Crashers' heading down to Volleyball's
 
 // a shape's outline points through m, added to box (min x, min y, max x, max y; twips). The
 // Vita frees the outlines once the shapes are on the GPU: then its bounds' corners.
@@ -406,6 +405,7 @@ static void shape_box(Shape *sh, Mat m, float box[4]) {
 }
 
 static void modemenu_extras(AsVm *vm, AsMc *menu);
+static void modemenu_small_arena(AsMc *menu);
 
 AsMc *cc_modemenu_attach(AsVm *vm, float x, float y) {
     AsVal args[3] = {as_strv(as_str(vm, "modemenu")), as_strv(as_str(vm, "modepanel")), as_num(5001)};
@@ -436,6 +436,7 @@ AsMc *cc_modemenu_attach(AsVm *vm, float x, float y) {
     set_num(vm, menu, "_yscale", 100 * k);
     set_num(vm, menu, "_x", x - (bb[0] + bb[2]) / 40 * k);
     set_num(vm, menu, "_y", y - (bb[1] + bb[3]) / 40 * k);
+    modemenu_small_arena(menu);
     modemenu_extras(vm, menu);
     // the dark veil behind it was made for a 4:3 screen: over all of this one
     for (int i = 0; i < menu->ndisp; i++) {
@@ -483,85 +484,123 @@ static AsMc *place_art(AsVm *vm, AsMc *menu, const char *export, const char *nam
     return mc;
 }
 
-// The book as the Vita has it: All You Can Quaff on the top-left page with QUOFF.swf's banner
-// for it (the PC's picture there is Back Off Barbarian's, a later game); Volleyball under Castle
-// Crashers, where the right page's scribbles were (two lines of them: depths 18 and 19), with
-// the PS3 book's picture for it. Run on attaching and every tick after, as the book's timeline may put the
-// hidden art back. What's added goes at timeline depths the book leaves empty (16, 23, 24), so
-// the hand (27) stays over it.
-static void modemenu_extras(AsVm *vm, AsMc *menu) {
-    float sb[4] = {1e9f, 1e9f, -1e9f, -1e9f}, pb[4] = {1e9f, 1e9f, -1e9f, -1e9f}, hb[4];
-    int scribbles = 0;
-    for (int i = 0; i < menu->ndisp; i++) {
-        AsDisp *e = &menu->disp[i];
-        const Character *c = &menu->movie->chars[e->cid];
-        int scribble = e->depth == 18 - 16384 || e->depth == 19 - 16384, picture = e->depth == 14 - 16384;
-        if (!(scribble || picture) || e->kind != DISP_SHAPE || c->type != CHAR_SHAPE) continue;
-        if (e->m.a == 0 && e->m.b == 0 && e->m.c == 0 && e->m.d == 0) continue;   // hidden already
-        shape_box(c->ptr, e->m, scribble ? sb : pb);
-        e->m.a = e->m.b = e->m.c = e->m.d = 0;
-        scribbles += scribble;
-    }
-    if (pb[2] > pb[0] && !panel_path(vm, menu, "cc_quaffpic")) {
-        float got[4];
-        place_art(vm, menu, "quaff", "cc_quaffpic", 24 - 16384, pb, got);
-    }
-    if (panel_path(vm, menu, "txt4")) return;   // Volleyball's name is there already
-    AsMc *head = panel_path(vm, menu, "txt3");
-    if (!(sb[2] > sb[0] && head)) {
-        static int warned;
-        if (!warned++)
-            as_warn(vm, "mode book: no place for Volleyball yet (%d scribbles, heading %s, %d placed)", scribbles,
-                    head ? "found" : "missing", menu->ndisp);
-        return;
-    }
-    {
-        // (a text field: its box, through where it stands)
-        if (head->text) {
-            const int32_t *b = head->text->bounds;
-            hb[0] = head->m.a * b[0] + head->m.tx; hb[2] = head->m.a * b[1] + head->m.tx;
-            hb[1] = head->m.d * b[2] + head->m.ty; hb[3] = head->m.d * b[3] + head->m.ty;
-        } else {
-            render_mc_bounds(head, head->m, hb);
-        }
-        // Volleyball's picture where the scribbles were, at most as wide as them and three lines
-        // tall, and its name over it (the two together about the scribbles' middle)
-        float cy = (sb[1] + sb[3]) / 2, th = hb[3] - hb[1], banner_top = cy;
-        float room[4] = {sb[0], cy - th, sb[2], cy + 2 * th}, got[4];
-        if (place_art(vm, menu, "volleyball", "cc_volleypic", 23 - 16384, room, got)) banner_top = got[1];
-        AsMc *under = NULL;
-        for (int i = 0; i < menu->ndisp; i++)
-            if (menu->disp[i].mc == head) under = as_mc_place_char(vm, menu, menu->disp[i].cid, head->m, head->cx, "txt4", 16 - 16384);
-        const char *w = strtab_get("vita.mode.volleyball");
-        if (!w) w = "Volleyball";
-        if (under) {
-            as_set(vm, as_objv(&under->obj), as_atom(vm, "text"), as_strv(as_str(vm, w)));
-            // in the page's middle like Castle Crashers' (the fields are left-aligned)
-            float dx = 0;
-            AsVal ht = as_get(vm, as_objv(&head->obj), as_atom(vm, "text"));
-            if (head->text && ht.t == V_STR)
-                dx = (as_render_host_text_width(ht.s->s) - as_render_host_text_width(w)) / 2 * head->text->height / 20 *
-                     head->m.a;
-            set_num(vm, under, "_x", (head->m.tx + dx) / 20);
-            set_num(vm, under, "_y", (head->m.ty + banner_top - hb[3]) / 20);
-        }
-        // how far the hand goes down from Castle Crashers to point at it
-        AsMc *hand = panel_path(vm, menu, "hand");
-        if (hand) {
-            set_num(vm, menu, "cc_hand_y", hand->m.ty / 20);
-            set_num(vm, menu, "cc_hand_dy", (cy - (hb[1] + hb[3]) / 2) / 20 * UNDER_HAND);
-        }
+// a text field's box in its parent (twips), through where it stands
+static void field_box(AsMc *f, float b[4]) {
+    if (f->text) {
+        const int32_t *r = f->text->bounds;
+        b[0] = f->m.a * r[0] + f->m.tx; b[2] = f->m.a * r[1] + f->m.tx;
+        b[1] = f->m.d * r[2] + f->m.ty; b[3] = f->m.d * r[3] + f->m.ty;
+    } else {
+        render_mc_bounds(f, f->m, b);
     }
 }
 
-// Volleyball has no place of its own on the hand's timeline: the hand points at Castle
-// Crashers and slides down from there (cc_modemenu_tick)
+// QUOFF's banner is grey lines on a tan card (the card is left out of MODEART.swf): this takes
+// its line colour to the book's brown and its light fills to the page's colour
+static const CXform QUAFF_INK = {{0.094f, 0.6875f, 0.806f, 1}, {137, 50.6f, 0.4f, 0}};
+
+// The left page as the Vita has it: All You Can Quaff's banner (QUOFF.swf) at the top, where the
+// PC's picture is Back Off Barbarian's (a later game), Volleyball's name and the PS3 book's
+// picture for it under that, then Arena, its picture a little smaller to make room. The right
+// page's scribbles (depths 18 and 19) and the NEW! badge (15) go. Run on attaching and every
+// tick after, in case the book's timeline puts what's hidden back; what's added goes at
+// timeline depths the book leaves empty (16, 23, 24), so the hand (27) stays over it.
+static void modemenu_extras(AsVm *vm, AsMc *menu) {
+    float pb[4] = {1e9f, 1e9f, -1e9f, -1e9f}, sb[4] = {1e9f, 1e9f, -1e9f, -1e9f};
+    for (int i = 0; i < menu->ndisp; i++) {
+        AsDisp *e = &menu->disp[i];
+        if (e->depth == 15 - 16384 && e->mc) e->mc->visible = 0;
+        const Character *c = &menu->movie->chars[e->cid];
+        int picture = e->depth == 14 - 16384, scribble = e->depth == 18 - 16384 || e->depth == 19 - 16384;
+        if (!(picture || scribble) || e->kind != DISP_SHAPE || c->type != CHAR_SHAPE) continue;
+        if (e->m.a == 0 && e->m.b == 0 && e->m.c == 0 && e->m.d == 0) continue;   // hidden already
+        shape_box(c->ptr, e->m, picture ? pb : sb);
+        e->m.a = e->m.b = e->m.c = e->m.d = 0;
+    }
+    if (panel_path(vm, menu, "txt4")) return;   // laid out already
+    AsMc *quaff = panel_path(vm, menu, "txt1"), *arena = panel_path(vm, menu, "txt2");
+    if (!(pb[2] > pb[0] && quaff && arena)) {
+        static int warned;
+        if (!warned++)
+            as_warn(vm, "mode book: no room for Volleyball (picture %s, headings %s %s)", pb[2] > pb[0] ? "found" : "missing",
+                    quaff ? "found" : "missing", arena ? "found" : "missing");
+        return;
+    }
+    float qb[4], ab[4], got[4];
+    field_box(quaff, qb);
+    field_box(arena, ab);
+    float w = pb[2] - pb[0], th = qb[3] - qb[1], gap = th * 0.3f, mid = (pb[0] + pb[2]) / 2;
+    // the banner as wide as most of the page, from the picture's top
+    float top = pb[1], pq = top, vq = top;
+    float room[4] = {mid - w * 0.42f, top, mid + w * 0.42f, top + w};
+    AsMc *pic = place_art(vm, menu, "quaff", "cc_quaffpic", 24 - 16384, room, got);
+    if (pic) {
+        pic->cx = QUAFF_INK;
+        set_num(vm, pic, "_y", (pic->m.ty - (got[1] - top)) / 20);   // to the top
+        top = got[3] - (got[1] - pb[1]) + gap;
+        pq = (pb[1] + top - gap) / 2;
+    }
+    // Volleyball's name, as Quaff's heading is set
+    AsMc *name = NULL;
+    for (int i = 0; i < menu->ndisp; i++)
+        if (menu->disp[i].mc == quaff) name = as_mc_place_char(vm, menu, menu->disp[i].cid, quaff->m, quaff->cx, "txt4", 16 - 16384);
+    const char *word = strtab_get("vita.mode.volleyball");
+    if (!word) word = "Volleyball";
+    if (name) {
+        as_set(vm, as_objv(&name->obj), as_atom(vm, "text"), as_strv(as_str(vm, word)));
+        float dx = 0;   // in the middle where Quaff's heading is (the fields are left-aligned)
+        AsVal qt = as_get(vm, as_objv(&quaff->obj), as_atom(vm, "text"));
+        if (quaff->text && qt.t == V_STR)
+            dx = (as_render_host_text_width(qt.s->s) - as_render_host_text_width(word)) / 2 * quaff->text->height / 20 *
+                 quaff->m.a;
+        set_num(vm, name, "_x", (quaff->m.tx + dx) / 20);
+        set_num(vm, name, "_y", (quaff->m.ty + top - qb[1]) / 20);
+        top += th;
+    }
+    // its picture between there and Arena's heading
+    float vroom[4] = {mid - w * 0.4f, top, mid + w * 0.4f, ab[1] - gap};
+    if (vroom[3] > vroom[1] && place_art(vm, menu, "volleyball", "cc_volleypic", 23 - 16384, vroom, got))
+        vq = (got[1] + got[3]) / 2;
+    else
+        vq = top;
+    // the hand: its Quaff pose points at the old picture's middle; it slides to the banner, and
+    // down to Volleyball's picture (cc_modemenu_tick)
+    AsMc *hand = panel_path(vm, menu, "hand");
+    if (hand) {
+        float pc = (pb[1] + pb[3]) / 2;
+        set_num(vm, menu, "cc_hand_y", hand->m.ty / 20);
+        set_num(vm, menu, "cc_hand_dyq", (pq - pc) / 20);
+        set_num(vm, menu, "cc_hand_dyv", (vq - pc) / 20);
+    }
+}
+
+// Arena's picture (depth 25) a little smaller, its bottom where it was: room over it for
+// Volleyball. Once, on attaching.
+static void modemenu_small_arena(AsMc *menu) {
+    for (int i = 0; i < menu->ndisp; i++) {
+        AsDisp *e = &menu->disp[i];
+        const Character *c = &menu->movie->chars[e->cid];
+        if (e->depth != 25 - 16384 || e->kind != DISP_SHAPE || c->type != CHAR_SHAPE) continue;
+        float b[4] = {1e9f, 1e9f, -1e9f, -1e9f}, s = 0.85f;
+        shape_box(c->ptr, e->m, b);
+        float cx = (b[0] + b[2]) / 2, by = b[3];
+        e->m.a *= s; e->m.b *= s; e->m.c *= s; e->m.d *= s;
+        e->m.tx = cx + (e->m.tx - cx) * s;
+        e->m.ty = by + (e->m.ty - by) * s;
+    }
+}
+
+// Volleyball has no place of its own on the hand's timeline: the hand takes the Quaff pose and
+// slides down from there; for Quaff it slides up to the banner (cc_modemenu_tick)
 void cc_modemenu_point(AsVm *vm, AsMc *menu, int from, int to) {
     AsMc *hand = panel_path(vm, menu, "hand");
     if (!hand || from == to || from < 0 || to < 0 || from >= CC_MODE_ITEMS || to >= CC_MODE_ITEMS) return;
-    set_num(vm, menu, "cc_hand_to", to == 3);
-    if (from == 3) from = 0;
-    if (to == 3) to = 0;
+    AsVal o = as_objv(&menu->obj);
+    double dy = to == 2 ? as_tonum(vm, as_get(vm, o, as_atom(vm, "cc_hand_dyq")))
+              : to == 3 ? as_tonum(vm, as_get(vm, o, as_atom(vm, "cc_hand_dyv"))) : 0;
+    set_num(vm, menu, "cc_hand_to", dy == dy ? dy : 0);
+    if (from == 3) from = 2;
+    if (to == 3) to = 2;
     if (from == to) return;
     char label[16];
     snprintf(label, sizeof label, "%s%s", MODE_NAME[from], MODE_NAME[to]);
@@ -581,9 +620,9 @@ void cc_modemenu_tick(AsVm *vm, AsMc *menu) {
     if (to != to) to = 0;
     if (at == to) return;
     at += (to - at) * 0.35;   // as quick as the hand's own moves
-    if (fabs(to - at) < 0.01) at = to;
+    if (fabs(to - at) < 0.5) at = to;
     set_num(vm, menu, "cc_hand_at", at);
-    set_num(vm, hand, "_y", y.n + at * as_tonum(vm, as_get(vm, o, as_atom(vm, "cc_hand_dy"))));
+    set_num(vm, hand, "_y", y.n + at);
 }
 
 // the power button's square, in the panel's twips: on the (hidden) Quit button's bottom-left
