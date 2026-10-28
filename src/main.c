@@ -585,10 +585,13 @@ static int cached_movie_peek(const char *base) {
 // select's on the title, the game's (effects, players, animals, the map) after that. Each took
 // the Vita seconds with the screen standing still (fx, player and animals 15 s). A file the
 // game asks for while another one is loading waits for it, so nothing is read ahead of its stage.
-static const char *const g_preload[] = {"MENU.swf", "MENU_VIGNETTES.swf",                        // intro
-                                        "LOADING.swf", "PAUSE.swf", "sounds.swf", "lobby.swf",   // title
-                                        "fx.swf", "player.swf", "animals.swf", "map.swf"};       // game
-enum { PRELOAD_INTRO = 2, PRELOAD_TITLE = 6, PRELOAD_GAME = 10 };
+// The PC title's scenes come last in the intro's: the title starts without waiting for them
+// (under the loading screen), so the files it reads itself at the start (MODEART, FRESHLOGO,
+// LOADING) are read before them.
+static const char *const g_preload[] = {"MENU.swf", "MODEART.swf", "FRESHLOGO.swf", "LOADING.swf", "MENU_VIGNETTES.swf",   // intro
+                                        "PAUSE.swf", "sounds.swf", "lobby.swf",                                         // title
+                                        "fx.swf", "player.swf", "animals.swf", "map.swf"};                              // game
+enum { PRELOAD_INTRO = 5, PRELOAD_TITLE = 8, PRELOAD_GAME = 12 };
 static int g_npreloaded;   // of g_preload, started
 
 static void preload_step(int upto) {   // upto: the PRELOAD_ stage
@@ -1658,6 +1661,34 @@ static const int g_menu_order[] = {CC_MENU_PLAY, CC_MENU_OPTIONS, CC_MENU_QUIT};
 #endif
 #define MENU_N ((int)(sizeof g_menu_order / sizeof *g_menu_order))
 
+// The PC's title scenes are far too much for the GPU at the screen's size with 4x MSAA (15 fps:
+// 80k-335k triangles over many layers of 1920x1080 art): they're drawn into a texture of 2/3
+// the screen's size without MSAA once per game tick, and every frame shows that texture scaled
+// up under the menu (smooth, the art is soft anyway).
+#define VIGNETTE_W 640
+#define VIGNETTE_H 363
+static vita2d_texture *g_vignette_rt;
+
+static void vignette_rt_draw(AsMc *vignettes, Mat m, RecolourCache *cache) {
+    if (!g_vignette_rt) {
+        g_vignette_rt = vita2d_create_empty_texture_rendertarget(VIGNETTE_W, VIGNETTE_H, SCE_GXM_TEXTURE_FORMAT_A8B8G8R8);
+        if (!g_vignette_rt) return;
+        vita2d_texture_set_filters(g_vignette_rt, SCE_GXM_TEXTURE_FILTER_LINEAR, SCE_GXM_TEXTURE_FILTER_LINEAR);
+    }
+    static DrawList dl;
+    render_begin(&dl);
+    dl.view[2] = SCREEN_W;   // the list is in screen pixels; the texture takes the whole of it
+    dl.view[3] = SCREEN_H;
+    dl.cache = cache;
+    as_render_mc(vignettes, m, CX_IDENTITY, &dl);
+    vita2d_start_drawing_advanced(g_vignette_rt, 0);
+    vita2d_set_clear_color(RGBA8(0, 0, 0, 255));
+    vita2d_clear_screen();
+    draw_list(&dl);
+    vita2d_end_drawing();
+    vita2d_wait_rendering_done();   // the texture is read by the next scene (as the heat haze's)
+}
+
 // 1: a Wi-Fi game was started (net.state NET_PLAYING), 0: Local Game
 // from_game: back from Exit to Main Menu, under the loading screen, which then goes out over it
 static int title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, size_t cache_bytes, int from_game) {
@@ -1684,8 +1715,12 @@ static int title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, siz
     cc_native_root_functions(t, &t->root->obj);
     // the PC's moving scenes behind the menu, when its MENU_VIGNETTES.swf is there (read during
     // the intro; back from a game, under the loading screen)
+    // the PC's moving scenes behind the menu, when its MENU_VIGNETTES.swf is there: read during
+    // the intro (the title doesn't wait for it: they come in once read, the painted scene is off
+    // from the start); back from a game, read now under the loading screen
     AsMc *vignettes = NULL;
-    if (find_file("MENU_VIGNETTES.swf", art_path, sizeof art_path, &art_level)) {
+    int vignette_file = find_file("MENU_VIGNETTES.swf", art_path, sizeof art_path, &art_level);
+    if (vignette_file && from_game) {
         Movie *v = vita_loader(NULL, "MENU_VIGNETTES.swf");
         if (v) vignettes = cc_title_vignettes(t, v);
     }
@@ -1693,7 +1728,13 @@ static int title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, siz
         EXIT_TRACE("exit: title made");
         cc_loading_reveal(t);
         EXIT_TRACE("exit: loading screen on the title");
+    } else if (vignette_file && !cached_movie_peek("MENU_VIGNETTES.swf")) {
+        // after the intro, the knights' loading screen until the scenes are read, then it goes
+        // out over the title (Jah 2026-10-28: no hitch between the two)
+        cc_loading_reveal(t);
+        cc_loading_hold = 1;
     }
+    int hold_frames = 0;
     const char *prompt = strtab_number(1);   // the game's "Press START"
     if (!prompt) prompt = "Press START";
     const char *unavailable = strtab_get("vita.online.unavailable");
@@ -1711,6 +1752,10 @@ static int title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, siz
     unsigned frame = 0;
     for (;;) {
         preload_step(PRELOAD_TITLE);
+        if (vignette_file && !vignettes && cached_movie_peek("MENU_VIGNETTES.swf"))   // read: it's cached now
+            vignettes = cc_title_vignettes(t, vita_loader(NULL, "MENU_VIGNETTES.swf"));
+        // the loading screen lets go once they're in (or after 20 s: not read, the heap too full)
+        if (cc_loading_hold && (vignettes || ++hold_frames > 60 * 20)) cc_loading_hold = 0;
         sceCtrlPeekBufferPositive(0, &pad, 1);
         unsigned pressed = pad.buttons & ~old.buttons;
         int ly = pad.ly - 128, lx = pad.lx - 128, oly = old.ly - 128, olx = old.lx - 128;
@@ -1719,6 +1764,7 @@ static int title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, siz
         if (lx < -80 && olx >= -80) pressed |= SCE_CTRL_LEFT;
         if (lx > 80 && olx <= 80) pressed |= SCE_CTRL_RIGHT;
         old = pad;
+        if (cc_loading_busy(t)) pressed = 0;   // nothing to pick under the loading screen
         AsMc *fresh = cc_menu_fresh(t, panel, g_fresh && cc_fresh_available());   // the FRESH sticker while the look is on
 #ifdef CC_NET
         if (g_wifi.page != W_CLOSED || net.state != NET_OFF) {
@@ -1859,8 +1905,13 @@ static int title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, siz
             Mat screen = {k / 20, 0, 0, k / 20, 0, 0};
             render_begin(vb);
             hide_sprite(t->root, 626);   // the news bar (no news on the Vita)
-            if (vignettes) cc_title_hide_backdrop(t->root);   // the painted one, under the PC's scenes
+            if (vignette_file) cc_title_hide_backdrop(t->root);   // the painted one goes
+            if (vignettes) {   // the PC's scenes are drawn on their own (below)
+                vignette_rt_draw(vignettes, mat_mul(screen, mat_mul(t->root->m, vignettes->m)), cache);
+                vignettes->visible = 0;
+            }
             as_render_mc(t->root, screen, CX_IDENTITY, vb);
+            if (vignettes) vignettes->visible = 1;
             if (!panel && !cc_loading_busy(t) && (frame / 30) % 2 == 0 && as_render_host_line_height() > 0) {   // blinking, in the game's font, where the news bar was
                 Mat id = {1, 0, 0, 1, 0, 0};
                 CXform black = {{0, 0, 0, 1}, {0, 0, 0, 0}};
@@ -1873,6 +1924,8 @@ static int title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, siz
         vita2d_set_clear_color(RGBA8(m->bg[0], m->bg[1], m->bg[2], 255));
         vita2d_start_drawing();
         vita2d_clear_screen();
+        if (vignettes && g_vignette_rt)
+            vita2d_draw_texture_scale(g_vignette_rt, 0, 0, (float)SCREEN_W / VIGNETTE_W, (float)SCREEN_H / VIGNETTE_H);
         draw_list(vb);
         if (panel && !modes) {   // the power button that stands for Quit
             static CcVert tris[4096];
@@ -2056,6 +2109,11 @@ new_game:   // the title again after Exit to Main Menu
     // the title's moving scenes aren't wanted in the game: their meshes are video memory the
     // levels need (read again under the loading screen on the way back)
     free_movie_named("MENU_VIGNETTES.swf", &cache, cache_mem, cache_bytes);
+    if (g_vignette_rt) {   // and their texture
+        vita2d_wait_rendering_done();
+        vita2d_free_texture(g_vignette_rt);
+        g_vignette_rt = NULL;
+    }
     render_begin(&vb);
 #ifdef CC_NET
     if (g_netgame) cc_game_mode = net.mode;   // the host's pick, on every Vita
