@@ -1652,11 +1652,10 @@ static int title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, siz
             }
         } else if (modes && pressed) {
             // the hand goes where the pictures are: Castle Crashers on the right page and
-            // All You Can Quaff under it, Volleyball at the top of the left one and Arena under it
-            // (as the PS3's book has Volleyball; cc_native.c's modemenu_extras)
-            enum { M_STORY, M_ARENA, M_VOLLEY, M_QUAFF };
-            static const int left[] = {M_VOLLEY, M_ARENA, M_VOLLEY, M_ARENA}, right[] = {M_STORY, M_QUAFF, M_STORY, M_QUAFF},
-                             up[] = {M_STORY, M_VOLLEY, M_VOLLEY, M_STORY}, down[] = {M_QUAFF, M_ARENA, M_ARENA, M_QUAFF};
+            // Volleyball under it, All You Can Quaff at the top of the left one and Arena under it
+            enum { M_STORY, M_ARENA, M_QUAFF, M_VOLLEY };
+            static const int left[] = {M_QUAFF, M_ARENA, M_QUAFF, M_ARENA}, right[] = {M_STORY, M_VOLLEY, M_STORY, M_VOLLEY},
+                             up[] = {M_STORY, M_QUAFF, M_QUAFF, M_STORY}, down[] = {M_VOLLEY, M_ARENA, M_ARENA, M_VOLLEY};
             int to = mode;
             if (pressed & SCE_CTRL_LEFT) to = left[mode];
             if (pressed & SCE_CTRL_RIGHT) to = right[mode];
@@ -1677,7 +1676,7 @@ static int title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, siz
             }
             if (pressed & SCE_CTRL_CROSS) {
                 audio_sfx_play("sound_player_select.wav", 1, 0, 0, &controls);
-                static const int game_mode[CC_MODE_ITEMS] = {CC_MODE_STORY, CC_MODE_ARENA, CC_MODE_VOLLEYBALL, CC_MODE_QUAFF};
+                static const int game_mode[CC_MODE_ITEMS] = {CC_MODE_STORY, CC_MODE_ARENA, CC_MODE_QUAFF, CC_MODE_VOLLEYBALL};
                 cc_game_mode = game_mode[mode];
 #ifdef CC_NET
                 if (g_wifi.page == W_MODE) {   // the host's pick: everyone starts it now
