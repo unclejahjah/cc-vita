@@ -160,6 +160,24 @@ const BitmapFill *cc_custom_part(const Movie *m, const Sprite *s, int frame, int
     return NULL;
 }
 
+// The painting's weapon (weapon_look.c): whether sprite s is the weapon part clip it's drawn on,
+// and the drawing, for a player of any character
+int cc_custom_is_weapon_part(const Movie *m, const Sprite *s) {
+    if (!g.p_type || !m->is_player) return 0;
+    if (idx.movie != m) index_movie(m);
+    for (int i = 0; i < NPARTS; i++)
+        if (PARTS[i].kind == PART_WEAPON && PARTS[i].nth < idx.n[G_WEAPON] && idx.id[G_WEAPON][PARTS[i].nth] == s->id)
+            return 1;
+    return 0;
+}
+
+const BitmapFill *cc_custom_weapon(void) {
+    if (!cc_custom_p_type()) return NULL;
+    for (int i = 0; i < NPARTS; i++)
+        if (PARTS[i].kind == PART_WEAPON) return &g.fill[i];
+    return NULL;
+}
+
 const BitmapFill *cc_custom_named(int which) {
     if (!g.p_type) return NULL;
     for (int i = 0; i < NPARTS; i++)

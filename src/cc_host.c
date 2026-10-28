@@ -5,6 +5,7 @@
 #include "custom_char.h"
 #include "paint_jr.h"
 #include "custom_animal.h"
+#include "weapon_look.h"
 #include "strtab.h"
 
 #include <stdio.h>
@@ -1081,6 +1082,7 @@ void cc_host_init(AsVm *vm) {
     vm->after_frame_scripts = after_frame_scripts;
     cc_native_init(vm);
     cc_animal_init(vm);   // a custom animal orb, if there is one
+    cc_look_init(vm);     // weapon looks in the armoury (weapon_look.h)
     // console_version: the shipping executable's value is true. All the way, that hands the
     // front end (menus, profiles, QuitTo between files) to the executable, which isn't
     // reproduced yet; so the scripts' own front end runs, and the shipping behaviour is

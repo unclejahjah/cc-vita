@@ -18,6 +18,7 @@
 #include "../src/custom_char.h"
 #include "../src/paint_jr.h"
 #include "../src/custom_animal.h"
+#include "../src/weapon_look.h"
 #include "../src/pause_menu.h"
 #include "../src/help_book.h"
 #include "../src/strtab.h"
@@ -350,6 +351,7 @@ static int as_mode(int argc, char **argv) {
     if (getenv("CC_CUSTOM_DIR") && cc_custom_load(getenv("CC_CUSTOM_DIR")))
         printf("custom character \"%s\" (character %d, fights like %d)\n", cc_custom_name(), cc_custom_p_type(),
                cc_custom_base());
+    if (getenv("CC_LOOKS")) cc_look_load(getenv("CC_LOOKS"));   // CC_LOOKS=file: weapon_looks.txt
     if (getenv("CC_CUSTOM_ANIMAL"))   // CC_CUSTOM_ANIMAL=dir/ (with pet.png, pet.xml): a custom animal orb
         cc_animal_load(getenv("CC_CUSTOM_ANIMAL"));
     {   // Paint Jr. when GAME/game has PLAYER_NEW.swf and PAINTJR.swf, as on the Vita

@@ -4,6 +4,7 @@
 #include "custom_char.h"
 #include "custom_animal.h"
 #include "paint_jr.h"
+#include "weapon_look.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -295,6 +296,14 @@ void as_render_mc(AsMc *mc, Mat parent, CXform pcx, DrawList *out) {
             return;
         }
     }
+    const BitmapFill *look = cc_look_custom_part(mc);   // a weapon look of the painting's weapon
+    if (look) {
+        render_bitmap_fill(look, m, cx, out);
+        return;
+    }
+    Mat at;
+    const BitmapFill *spot = cc_look_custom_spot(mc, &at);   // the armoury's spot for it
+    if (spot) render_bitmap_fill(spot, mat_mul(m, at), cx, out);
     if (mc->def && cc_paintjr_is_part(mc->movie, mc->def)) {   // Paint Jr., the FRESH look (paint_jr.h)
         int t = 0;   // the player it's on (the nearest p_type up to 8 levels, as custom_part)
         AsMc *p = mc->parent;
