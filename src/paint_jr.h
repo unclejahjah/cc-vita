@@ -13,6 +13,9 @@
 #include "as.h"
 
 #define CC_PAINTJR_P_TYPE 32      // his character number (helmet, shield, magic type 33)
+// LOBBY.swf's portrait_top/mid/bot: character n shows frame n + 3, empty for him; the PC's newer
+// portraits ("player_new", frames 104-135) end with his, drawn instead (0-based)
+#define CC_PAINTJR_PORTRAIT 134
 
 // Whether the files are there (main.c / hosttest look before the game starts).
 void cc_paintjr_set_available(int on);
