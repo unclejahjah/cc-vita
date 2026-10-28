@@ -1581,6 +1581,10 @@ static const int g_menu_order[] = {CC_MENU_PLAY, CC_MENU_OPTIONS, CC_MENU_QUIT};
 static int title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, size_t cache_bytes, int from_game) {
     Movie *m = vita_loader(NULL, "MENU.swf");
     if (!m) return 0;
+    // the mode book's borrowed pictures, now rather than when Local Game opens it (a hitch)
+    char art_path[256];
+    int art_level;
+    if (find_file("MODEART.swf", art_path, sizeof art_path, &art_level)) host_movie("MODEART.swf");
     int wifi_game = 0;
 #ifdef CC_NET
     cc_menu_wifi = 1;

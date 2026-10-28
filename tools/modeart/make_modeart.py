@@ -4,7 +4,7 @@
   python3 make_modeart.py PS3_MENU.swf PC_QUOFF.swf MODEART.swf
 
 - "volleyball": the PS3 MENU.swf mode book's Volleyball picture (shape 548, its top-left page)
-- "quaff": QUOFF.swf's All You Can Quaff banner (sprite "aycqselect", 22)
+- "quaff": QUOFF.swf's All You Can Quaff banner (sprite "aycqselect", 22), without its card
 
 Each is a sprite of its own, exported by that name, with the characters it uses copied over
 under new ids. Made from your own files; the output is game art, never commit it.
@@ -55,14 +55,17 @@ class Source:
                 self.defs[struct.unpack_from('<H', body)[0]] = (code, body)
 
 
-def copy(src, cid, out, ids):
-    """cid and what it places, into out (tags) with new ids from ids; returns the new id"""
+def copy(src, cid, out, ids, skip_depths=()):
+    """cid and what it places (but not at skip_depths), into out (tags) with new ids from ids;
+    returns the new id"""
     if (id(src), cid) in ids:
         return ids[(id(src), cid)]
     code, body = src.defs[cid]
     if code == SPRITE:
         parts = b''
         for c2, b2 in tags(body, 4, len(body)):
+            if c2 == 26 and struct.unpack_from('<H', b2, 1)[0] in skip_depths:
+                continue
             if c2 == 26 and b2[0] & 2:   # PlaceObject2 with a character: its new id
                 new = copy(src, struct.unpack_from('<H', b2, 3)[0], out, ids)
                 b2 = b2[:3] + struct.pack('<H', new) + b2[5:]
@@ -96,7 +99,7 @@ def main():
     ps3, quoff = Source(sys.argv[1]), Source(sys.argv[2])
     out, ids = [], {}
     volley = wrap_shape(copy(ps3, 548, out, ids), out, ids)
-    quaff = copy(quoff, 22, out, ids)
+    quaff = copy(quoff, 22, out, ids, skip_depths=(1,))   # without its tan card (depth 1)
     exports = struct.pack('<H', 2)
     for cid, name in ((volley, b'volleyball'), (quaff, b'quaff')):
         exports += struct.pack('<H', cid) + name + b'\0'
