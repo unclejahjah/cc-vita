@@ -53,6 +53,7 @@ target_link_libraries(${PROJECT_NAME}
   SceCommonDialog_stub
   SceAppMgr_stub
   ScePower_stub
+  SceRtc_stub
   freetype
   png
   jpeg
