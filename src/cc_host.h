@@ -61,9 +61,8 @@ extern int cc_menu_wifi;
 AsMc *cc_menu_attach(AsVm *vm, float x, float y);
 // Local Game's mode menu (MENU.swf "modemenu") on _root at (x, y), its hand on Castle
 // Crashers; cc_modemenu_point moves the hand from one item to another (0 Castle Crashers,
-// 1 Arena, 2 Volleyball (top left, the PS3 book's place for it), 3 All You Can Quaff: under
-// Castle Crashers, where the right page's scribbles were); cc_modemenu_tick eases the hand down
-// to Quaff and back
+// 1 Arena, 2 All You Can Quaff, 3 Volleyball: under Castle Crashers, where the right page's
+// scribbles were); cc_modemenu_tick eases the hand down to Volleyball and back
 #define CC_MODE_ITEMS 4
 void cc_modemenu_tick(AsVm *vm, AsMc *menu);
 AsMc *cc_modemenu_attach(AsVm *vm, float x, float y);
