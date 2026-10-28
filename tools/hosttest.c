@@ -250,7 +250,6 @@ static Movie *host_loader(AsVm *vm, const char *url) {
     (void)vm;
     const char *base = strrchr(url, '/');
     base = base ? base + 1 : url;
-    base = cc_player_file(base);   // the FRESH look's player file (paint_jr.h)
     load_count++;
     for (int i = 0; i < nmovie_cache; i++)
         if (!strcasecmp(movie_cache[i].name, base)) return movie_cache[i].m;
@@ -354,7 +353,7 @@ static int as_mode(int argc, char **argv) {
         cc_animal_load(getenv("CC_CUSTOM_ANIMAL"));
     {   // Paint Jr. when GAME/game has PLAYER_NEW.swf and PAINTJR.swf, as on the Vita
         char a[700], b[700], c[700];
-        snprintf(a, sizeof a, "%s/game/PLAYER_NEW.swf", game_dir);
+        snprintf(a, sizeof a, "%s/game/FRESH01.swf", game_dir);
         snprintf(b, sizeof b, "%s/game/PJPARTS.swf", game_dir);
         snprintf(c, sizeof c, "%s/game/PAINTJR.swf", game_dir);
         cc_paintjr_set_available(access(a, R_OK) == 0, access(b, R_OK) == 0, access(c, R_OK) == 0);

@@ -625,7 +625,6 @@ static int vita_prefetch(AsVm *vm, const char *url) {
 static Movie *vita_loader(AsVm *vm, const char *url) {
     const char *base = strrchr(url, '/');
     base = base ? base + 1 : url;
-    base = cc_player_file(base);   // the FRESH look's player file (paint_jr.h)
     Movie *m = cached_movie(base);
     if (m) return m;
     if (g_bg.state != BG_IDLE) {   // never two loads at once (the tessellator is shared)
@@ -651,6 +650,18 @@ static Movie *vita_loader(AsVm *vm, const char *url) {
         return NULL;
     }
     return register_movie(base, path, m);
+}
+
+// a file kept for the rest of a game (paint_jr.c's part files: it holds their sprites); keep 3
+// goes back to 0 when the next game starts (release_game_movies)
+static void keep_for_game(Movie *m) {
+    for (int i = 0; i < g_nmovies; i++)
+        if (g_movies[i].m == m && !g_movies[i].keep) g_movies[i].keep = 3;
+}
+
+static void release_game_movies(void) {
+    for (int i = 0; i < g_nmovies; i++)
+        if (g_movies[i].keep == 3) g_movies[i].keep = 0;
 }
 
 // a file the port itself draws from (MAIN, the pause book): never freed
@@ -1869,7 +1880,7 @@ int main(void) {
     {   // optional: Paint Jr. from the PC's files (paint_jr.h)
         char path[256];
         int lvl;
-        cc_paintjr_set_available(find_file("PLAYER_NEW.swf", path, sizeof path, &lvl),
+        cc_paintjr_set_available(find_file("FRESH01.swf", path, sizeof path, &lvl),
                                  find_file("PJPARTS.swf", path, sizeof path, &lvl),
                                  find_file("PAINTJR.swf", path, sizeof path, &lvl));
         if (cc_paintjr_p_type()) log_line("Paint Jr. (character %d)", cc_paintjr_p_type());
@@ -1966,7 +1977,8 @@ new_game:   // the title again after Exit to Main Menu
 #endif
     cc_animal_set_active(!g_netgame);   // not in Wi-Fi games: the other machine may not have it
     cc_paintjr_set_active(!g_netgame);  // nor Paint Jr.'s files
-    if (cc_paintjr_p_type()) host_movie("PJPARTS.swf");   // his pieces: kept (paint_jr.h)
+    release_game_movies();              // the last game's part files (paint_jr.c) may go now
+    cc_movie_keep = keep_for_game;
     cc_host_init(vm);
     as_render_init(vm);
     cc_set_auto_potion(vm, g_auto_potion);

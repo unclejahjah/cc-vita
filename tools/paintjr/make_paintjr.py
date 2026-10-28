@@ -3,10 +3,11 @@
 
     make_paintjr.py --modtool "Castle Mod Tool/castlecrashers-main" --pc-data "CastleCrashers/data" --out GAME_DIR/game
 
-decrypts the PC's player_new.pak into PLAYER_NEW.swf (the FRESH look), makes PJPARTS.swf from it
-(Paint Jr.'s own pieces of the part clips, drawn over the original PLAYER.swf's: see PARTS) and
-PAINTJR.swf: one DoAction with Paint Jr.'s script functions copied out of the PC's MAIN.swf
-(main.pak), each with the constant pool it was written against. The decryption is the Castle Mod Tool's (decrypt_asset.py), which
+decrypts the PC's player_new.pak and makes from it PJPARTS.swf (Paint Jr.'s own pieces of the part
+clips, drawn over the original PLAYER.swf's: see PARTS) and FRESH01.swf.. (the FRESH look: one
+file per frame of the part clips), and PAINTJR.swf: one DoAction with Paint Jr.'s script
+functions copied out of the PC's MAIN.swf (main.pak), each with the constant pool it was written
+against. The decryption is the Castle Mod Tool's (decrypt_asset.py), which
 must be given; nothing here holds game data, and the outputs must never go into git.
 """
 import argparse, struct, sys
@@ -96,7 +97,8 @@ PARTS = [
 ]
 
 
-def make_parts(d):
+def make_parts(d, frame_of):
+    """the PARTS sprites, each showing only frame_of(group, its frame in PARTS) (None: left out)"""
     nb = d[8] >> 3
     st = 8 + (5 + nb * 4 + 7) // 8 + 4
     defs, sprites, order = {}, {}, []
@@ -107,10 +109,12 @@ def make_parts(d):
             order.append(cid)
             if c == 39:
                 sprites[cid] = placements(d, p + 4, p + l)
+    parts = [(g, n, sid, frame_of(g, f)) for g, n, sid, f in PARTS]
+    parts = [p for p in parts if p[3] is not None and p[3] <= len(sprites[p[2]])]
     keep, todo = set(), []
-    for _, _, sid, frame in PARTS:
+    for _, _, sid, frame in parts:
         keep.add(sid)
-        todo += list(sprites[sid].get(frame, sprites[sid][max(sprites[sid])]).values())
+        todo += list(sprites[sid][frame].values())
     while todo:   # what those frames show, all of it (nested clips play)
         c = todo.pop()
         if c in keep or c not in defs:
@@ -133,13 +137,13 @@ def make_parts(d):
             else:
                 body = body[:2] + b'\0' + (b'\0\0' if c == 83 else b'') + b'\0\0\0\0'
         out += struct.pack('<HI', c << 6 | 63, len(body)) + body
-    names = [('pj_%s_%d' % (g, n), sid) for g, n, sid, _ in PARTS]
+    names = [('pj_%s_%d' % (g, n), sid) for g, n, sid, _ in parts]
     exp = struct.pack('<H', len(names)) + b''.join(struct.pack('<H', s) + n.encode() + b'\0' for n, s in names)
     out += struct.pack('<HI', 56 << 6 | 63, len(exp)) + exp
     out += struct.pack('<H', 1 << 6) + struct.pack('<H', 0)
     struct.pack_into('<I', out, 4, len(out))
     struct.pack_into('<H', out, st - 2, 1)   # one root frame
-    return bytes(out), len(keep)
+    return bytes(out), len(parts)
 
 
 def main():
@@ -153,10 +157,19 @@ def main():
     game, out = Path(a.pc_data) / 'game', Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
     player_new = decrypt(da, game / 'player_new.pak')
-    (out / 'PLAYER_NEW.swf').write_bytes(player_new)
-    parts, n = make_parts(player_new)
+    parts, n = make_parts(player_new, lambda g, f: f)
     (out / 'PJPARTS.swf').write_bytes(parts)
-    print('PJPARTS.swf: %d parts, %d characters' % (len(PARTS), n))
+    print('PJPARTS.swf: %d parts' % n)
+    # the FRESH look: FRESHnn.swf, the PC's version of frame nn of every part clip (not the
+    # weapons), loaded for the frames the players' clips show
+    nfr = 0
+    for f in range(1, 64):
+        parts, n = make_parts(player_new, lambda g, _: None if g == 'weapon' else f)
+        if not n:
+            break
+        (out / ('FRESH%02d.swf' % f)).write_bytes(parts)
+        nfr = f
+    print('FRESH01.swf .. FRESH%02d.swf' % nfr)
 
     d = decrypt(da, game / 'main.pak')
     if d[:3] != b'FWS':
@@ -178,7 +191,7 @@ def main():
     body += struct.pack('<H', 1 << 6) + struct.pack('<H', 0)   # ShowFrame, End
     swf = b'FWS' + d[3:4] + struct.pack('<I', 8 + len(body)) + body
     (out / 'PAINTJR.swf').write_bytes(swf)
-    print('PLAYER_NEW.swf and PAINTJR.swf (%s) written to %s' % (', '.join(FUNCTIONS), out))
+    print('PAINTJR.swf (%s) written to %s' % (', '.join(FUNCTIONS), out))
 
 
 if __name__ == '__main__':
