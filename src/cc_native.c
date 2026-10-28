@@ -376,8 +376,22 @@ AsMc *cc_menu_attach(AsVm *vm, float x, float y) {
 static const char *MODE_NAME[CC_MODE_ITEMS] = {"story", "arena", "quaff", "story"};
 #define VOLLEY_HAND 0.25f   // of the way from Castle Crashers' heading down to Volleyball's
 
-// a shape's outline points through m, added to box (min x, min y, max x, max y; twips)
-static void shape_box(const Shape *sh, Mat m, float box[4]) {
+// a shape's outline points through m, added to box (min x, min y, max x, max y; twips). The
+// Vita frees the outlines once the shapes are on the GPU: then its bounds' corners.
+static void shape_box(Shape *sh, Mat m, float box[4]) {
+    if (!sh->nfills && !sh->nlines) {
+        const float *s = render_shape_bounds(sh);
+        if (s[2] < s[0]) return;
+        for (int k = 0; k < 4; k++) {
+            float px = s[k & 1 ? 2 : 0], py = s[k & 2 ? 3 : 1];
+            float x = m.a * px + m.c * py + m.tx, y = m.b * px + m.d * py + m.ty;
+            if (x < box[0]) box[0] = x;
+            if (y < box[1]) box[1] = y;
+            if (x > box[2]) box[2] = x;
+            if (y > box[3]) box[3] = y;
+        }
+        return;
+    }
     for (int f = 0; f < sh->nfills + sh->nlines; f++) {
         const float *pts = f < sh->nfills ? sh->fills[f].pts : sh->lines[f - sh->nfills].pts;
         int n = f < sh->nfills ? sh->fills[f].npoints : sh->lines[f - sh->nfills].npoints;
