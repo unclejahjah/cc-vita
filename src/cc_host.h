@@ -36,6 +36,9 @@ int cc_bind_is_default(void);
 enum { CC_MODE_STORY = 0, CC_MODE_QUAFF = 1, CC_MODE_ARENA = 3, CC_MODE_VOLLEYBALL = 10 };
 extern int cc_game_mode;
 void cc_volleyball_tick(AsVm *vm);   // before every game tick
+// All You Can Quaff: 1 while its title waits for Start (there the Vita's Cross is Start; the
+// title shows Cross); before every game tick too
+int cc_quaff_title(AsVm *vm);
 extern int cc_quit_requested;   // a mini game called QuitTo/ChangeMovie: back to the title
 extern int cc_net_port;
 extern char cc_net_names[4][32];
