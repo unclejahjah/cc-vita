@@ -263,6 +263,57 @@ void cc_volleyball_tick(AsVm *vm) {
     }
 }
 
+// All You Can Quaff's title asks for Start (PRESS START); in the mini games the Vita's Start is the
+// pause menu's, so there Cross goes on (main.c) and the title says so as the joining screen's
+// prompts do: their "Press" with the Cross button under it, in place of the words.
+static AsMc *child_mc(AsVm *vm, AsMc *mc, const char *name) {
+    AsVal v = get_member(vm, as_objv(&mc->obj), name);
+    return v.t == V_OBJ && v.o->type == OBJ_MC ? (AsMc *)v.o : NULL;
+}
+
+// the joining screen's prompt: a sprite with a "pressstart" text field and the Abutton
+static int quaff_press_sprite(const Movie *m) {
+    static const Movie *seen;
+    static int found;
+    if (m == seen) return found;
+    seen = m;
+    found = 0;
+    for (int c = 1; c < 65536 && !found; c++) {
+        if (m->chars[c].type != CHAR_SPRITE) continue;
+        const Sprite *sp = m->chars[c].ptr;
+        int field = 0, button = 0;
+        for (int i = 0; sp->nframes && i < sp->frames[0].count; i++) {
+            const Place *pl = &sp->frames[0].places[i];
+            const Character *pc = &m->chars[pl->cid];
+            if (pc->type == CHAR_EDITTEXT && pl->name && !strcmp(m->names[pl->name], "pressstart")) field = 1;
+            if (pc->export && !strcmp(m->names[pc->export], "Abutton")) button = 1;
+        }
+        if (field && button) found = c;
+    }
+    return found;
+}
+
+int cc_quaff_title(AsVm *vm) {
+    if (cc_game_mode != CC_MODE_QUAFF || !vm->root) return 0;
+    AsMc *root = vm->root;
+    for (int i = 0; i < root->ndisp; i++) {
+        AsMc *title = root->disp[i].mc, *prompt = title ? child_mc(vm, title, "pressstart") : NULL;
+        AsMc *words = prompt && !prompt->text ? child_mc(vm, prompt, "pressstart") : NULL;
+        if (!words || !words->text) continue;
+        if (!title->visible || !prompt->visible) return 0;
+        words->visible = 0;
+        int cid = quaff_press_sprite(root->movie);
+        if (cid && !child_mc(vm, prompt, "cc_press")) {
+            // its words where the title's were (the same size of type), the button under them
+            const int32_t *r = words->text->bounds;
+            Mat m = {1, 0, 0, 1, words->m.tx + (r[0] + r[1]) / 2.0f - 3 * 20, words->m.ty + (r[2] + r[3]) / 2.0f + 44 * 20};
+            as_mc_place_char(vm, prompt, cid, m, CX_IDENTITY, "cc_press", 100 - 16384);
+        }
+        return 1;
+    }
+    return 0;
+}
+
 // Volleyball's courts 2-5 (ReadStorage(26) on the PS3: bits 1, 2, 4, 8) open with the levels
 // the PS3 opens them with (its f_LoadLevelUnlocks): levels 40, 47, 21 and 31
 static int volley_courts(AsVm *vm, int port) {

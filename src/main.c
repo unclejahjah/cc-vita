@@ -759,6 +759,11 @@ static uint32_t pad_buttons(const SceCtrlData *pad, int in_game) {
     return k;
 }
 
+// the game's Start from Cross (and none from Start itself)
+static uint32_t cross_starts(uint32_t k) {
+    return (k & ~(1u << CCB_START)) | (k >> CCB_ACCEPT & 1) << CCB_START;
+}
+
 // ---- more controllers: a PS TV's paired pads, or a plugin's (ds34vita) ---------------
 // The ports as SDL reads them: port 0 is the Vita's own buttons (on a PS TV the first pad's
 // too), port 1 the first pad, ports 2-4 players 2-4. Player 1 is ports 0 and 1 together, in
@@ -1695,16 +1700,18 @@ static int title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, siz
                 cc_menu_highlight(t, panel, g_menu_order[item]);
             }
         } else if (modes && pressed) {
-            // the hand goes where the pictures are: Castle Crashers on the right page and
-            // Volleyball under it, All You Can Quaff at the top of the left one and Arena under it
+            // the hand goes where the pictures are: Castle Crashers on the right page, All You Can
+            // Quaff, Volleyball and Arena down the left one. Up and down go through them all in
+            // the book's order; left and right turn to the other page (left: where the hand last was)
             enum { M_STORY, M_ARENA, M_QUAFF, M_VOLLEY };
-            static const int left[] = {M_QUAFF, M_ARENA, M_QUAFF, M_ARENA}, right[] = {M_STORY, M_VOLLEY, M_STORY, M_VOLLEY},
-                             up[] = {M_STORY, M_QUAFF, M_QUAFF, M_STORY}, down[] = {M_VOLLEY, M_ARENA, M_ARENA, M_VOLLEY};
+            static const int down[] = {M_QUAFF, M_STORY, M_VOLLEY, M_ARENA}, up[] = {M_ARENA, M_VOLLEY, M_STORY, M_QUAFF};
+            static int left_page = M_QUAFF;
             int to = mode;
-            if (pressed & SCE_CTRL_LEFT) to = left[mode];
-            if (pressed & SCE_CTRL_RIGHT) to = right[mode];
+            if (pressed & SCE_CTRL_LEFT) to = mode == M_STORY ? left_page : mode;
+            if (pressed & SCE_CTRL_RIGHT) to = M_STORY;
             if (pressed & SCE_CTRL_UP) to = up[mode];
             if (pressed & SCE_CTRL_DOWN) to = down[mode];
+            if (to != M_STORY) left_page = to;
             if (to != mode) {
                 cc_modemenu_point(t, modes, mode, to);
                 mode = to;
@@ -2085,19 +2092,25 @@ new_game:   // the title again after Exit to Main Menu
         if (debug && (pressed & SCE_CTRL_UP)) overlay = !overlay;
         // in a level and on the map, Start is the pause menu's (the executable's in the original)
         int level = in_level(vm), on_map = !level && in_map(vm), select = !level && !on_map && in_select(vm);
-        // the mini games: Start is the pause menu's too, except at character select and on
-        // Volleyball's court picker (their own menus)
-        int mini = cc_game_mode != CC_MODE_STORY && !select && !in_loader(vm, "VMENU.swf");
+        // the mini games: Start is the pause menu's too (Volleyball's team and court picker reads
+        // only Cross, Circle and the directions), except at character select (its own menu)
+        int mini = cc_game_mode != CC_MODE_STORY && !select;
         uint32_t buttons = debug ? 0 : pad_buttons(&pad, level);
         // character select: the Cross or Start that closed the menu isn't a pick until let go
         if (select_eat && !(held & select_eat)) select_eat = 0;
         if (select_eat) buttons = 0;
         if (leaving) pressed = buttons = others_start = 0;
-        uint32_t no_start = (level || on_map || select || mini) ? ~(1u << CCB_START) : ~0u;
+        // All You Can Quaff's title: Cross is its Start (the Vita's Start is the pause menu's)
+        int quaff_title = cc_quaff_title(vm);
+        if (quaff_title) buttons = cross_starts(buttons);
+        uint32_t no_start = (level || on_map || select || mini) && !quaff_title ? ~(1u << CCB_START) : ~0u;
         memset(cc_keys, 0, sizeof cc_keys);
         cc_port_keys(1, buttons & no_start);
         for (int i = 1; i < LOCAL_PADS; i++)
-            if (g_pad_on[i] && !select_eat && !leaving) cc_port_keys(i + 1, pad_buttons(&g_pads[i], level) & no_start);
+            if (g_pad_on[i] && !select_eat && !leaving) {
+                uint32_t b = pad_buttons(&g_pads[i], level);
+                cc_port_keys(i + 1, (quaff_title ? cross_starts(b) : b) & no_start);
+            }
         int start_port = (pressed & SCE_CTRL_START) && !debug ? 1 : others_start;
         if (pause.open) {
             float dt = (sceKernelGetProcessTimeWide() - prev) / 1000000.0f;
