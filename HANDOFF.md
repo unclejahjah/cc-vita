@@ -409,3 +409,15 @@ hosttest: CC_AUTO_POTION=1; HB_ROW=2 with --help shows the row chosen.
   every/heal/gold run from a native fp_timer (f_CustomAnimalTimer). Off in Wi-Fi games (owner has none).
 - Engine: as_call_script() runs the script version of an as_override native; vm->text_field
   is the field text_for_number is asked about. hosttest: CC_CUSTOM_ANIMAL=dir/.
+
+## Weapon looks in the armoury (2026-10-28, branch claude/project-thread-xkqzp8, on claude/paint-jr)
+- src/weapon_look.c/.h. In LEVEL15 (f_CheckGetWeapon override, after the script's own), heavy
+  attack (Triangle) in front of a rack weapon gives your weapon its look (stats stay). f_Weapon
+  override shows the look's frame in PLAYER.swf's weapon part clip. Near the entrance the rope's
+  first section (pillar at x 338: pillar, rope, wraps, knot) is copied 230 px left; on it hang
+  w_look_reset (shows your own weapon, puts the look back) and, with a custom painting,
+  w_look_custom (the painting's weapon box drawn by as_render via cc_look_custom_spot; worn via
+  cc_look_custom_part). Looks per port and character in ux0:data/CastleCrashers/weapon_looks.txt;
+  Wi-Fi games start empty and don't save. hosttest: CC_LOOKS=file.
+- Not checked against the PC's LEVEL15_NEW.swf (Paint Jr.'s castle): needs its w3, counter and
+  the same rope layout; without them it does nothing.
