@@ -1058,6 +1058,11 @@ static int help_mode(int argc, char **argv) {
         else printf("font: %s\n", err);
     }
     if (getenv("CC_STRINGS")) printf("strings: %d\n", strtab_load(getenv("CC_STRINGS")));
+    if (getenv("CC_FRESHLOGO")) {   // CC_FRESHLOGO=FRESHLOGO.swf: its sticker on Settings' FRESH row
+        help_book_fresh_logo = swf_load(getenv("CC_FRESHLOGO"), err, sizeof err);
+        if (help_book_fresh_logo) render_tessellate_all(help_book_fresh_logo);
+        else printf("FRESHLOGO: %s\n", err);
+    }
     W = 960; H = 544;
     static uint8_t back[960 * 544 * 3];
     FILE *bf = argc > 4 ? fopen(argv[4], "rb") : NULL;

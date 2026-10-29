@@ -298,6 +298,29 @@ static void button(DrawList *out, Movie *mv, int cid, const float b[4], float k,
 
 static const uint32_t INK = 0xffffff, TITLE = 0xffffff;   // the book's text fields are all white
 
+// FRESHLOGO.swf's "fresh" sticker (the app sets help_book_fresh_logo): its id, or -1
+Movie *help_book_fresh_logo;
+static float g_logo_b[4], g_logo_w, g_logo_h;
+static int fresh_logo_cid(void) {
+    static Movie *seen;
+    static int cid = -1;
+    Movie *m = help_book_fresh_logo;
+    if (m != seen) {
+        seen = m;
+        cid = -1;
+        for (int c = 1; m && c < 65536 && cid < 0; c++)
+            if (m->chars[c].type == CHAR_SPRITE && m->chars[c].export && !strcmp(m->names[m->chars[c].export], "fresh"))
+                cid = c;
+        if (cid >= 0) {
+            clip_bounds(m, cid, g_logo_b);
+            g_logo_w = g_logo_b[2] - g_logo_b[0];
+            g_logo_h = g_logo_b[3] - g_logo_b[1];
+            if (g_logo_w <= 0 || g_logo_h <= 0) cid = -1;
+        }
+    }
+    return cid;
+}
+
 // ---- the pages -------------------------------------------------------------------------
 
 // How to Play: the clip's page (its own copy of the book included) and its words
@@ -530,8 +553,19 @@ static void settings_page(DrawList *out, Art *a, float k, const HelpBook *hb, fl
         float ls = (rows == 5 ? 26 : 30) * sc;   // the row's name
         if (r == 4) {   // FRESH Look is a beta: heavy on the Vita, so it says so
             char label[96];
-            snprintf(label, sizeof label, "%s %s", words(keys[r], fb[r]), words("help.settings.beta", "(BETA)"));
-            text(out, k, label, mx, y, ls, 2, c, alpha);
+            int logo = fresh_logo_cid();
+            if (logo >= 0) {   // the title's FRESH sticker in place of the word, then "Look (BETA)"
+                snprintf(label, sizeof label, "%s %s", words("help.settings.fresh_rest", "Look"),
+                         words("help.settings.beta", "(BETA)"));
+                float lh = ls * 1.4f, lw = lh * g_logo_w / g_logo_h, gap = ls * 0.3f;
+                float tw = as_render_host_text_width(label) * ls / 20;
+                float x0 = mx - (lw + gap + tw) / 2;
+                button(out, help_book_fresh_logo, logo, g_logo_b, k, x0 + lw / 2, y, fmaxf(lw, lh), alpha);
+                text(out, k, label, x0 + lw + gap, y, ls, 1, c, alpha);
+            } else {
+                snprintf(label, sizeof label, "%s %s", words(keys[r], fb[r]), words("help.settings.beta", "(BETA)"));
+                text(out, k, label, mx, y, ls, 2, c, alpha);
+            }
         } else {
             text(out, k, words(keys[r], fb[r]), mx, y, ls, 2, c, alpha);
         }
