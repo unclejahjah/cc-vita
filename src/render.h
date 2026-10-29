@@ -109,9 +109,11 @@ void render_mask_pop(DrawList *out);
 // Between push and apply: a rectangle (x0, y0)-(x1, y1) in twips, through m, as the mask
 void render_mask_rect(DrawList *out, Mat m, float x0, float y0, float x1, float y1);
 
-// Copies every tessellated mesh into one block from alloc (GPU-visible memory on
-// the Vita) as Vertex arrays and points Mesh.gpu at them. Returns the block, or
-// NULL if alloc failed (draws then fall back to recoloured copies).
+// Copies every tessellated mesh into blocks from alloc (GPU-visible memory on the
+// Vita; up to RENDER_CHUNK bytes each, so alloc is called more than once for a big
+// file) as Vertex arrays and points Mesh.gpu at them. Returns the first block, or
+// NULL if the first alloc failed (draws then fall back to recoloured copies).
+#define RENDER_CHUNK (2u * 1024 * 1024)
 void *render_upload(Movie *m, void *(*alloc)(size_t bytes, void *ctx), void *ctx);
 // After render_upload: frees the outlines and CPU-side vertices of uploaded shapes
 // (recolouring then reads the uploaded copy). Halves a movie's memory.
