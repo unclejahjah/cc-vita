@@ -532,8 +532,6 @@ static void settings_page(DrawList *out, Art *a, float k, const HelpBook *hb, fl
             char label[96];
             snprintf(label, sizeof label, "%s %s", words(keys[r], fb[r]), words("help.settings.beta", "(BETA)"));
             text(out, k, label, mx, y, ls, 2, c, alpha);
-            text(out, k, words("help.settings.fresh_note", "Overclocking recommended"), mx, y + 58 * sc, 18 * sc, 2,
-                 INK, alpha * 0.8f);
         } else {
             text(out, k, words(keys[r], fb[r]), mx, y, ls, 2, c, alpha);
         }
