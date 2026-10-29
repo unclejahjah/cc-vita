@@ -405,6 +405,9 @@ hosttest: CC_AUTO_POTION=1; HB_ROW=2 with --help shows the row chosen.
   shows its description (ntext 270-272 only on fields under "chalkboard": LEVEL2 uses 270-273).
 - Art: ANIMALS.swf's body sprite has 29 frames (gotoAndStop(_parent._parent.animal_type)); type 30
   clamps to the whale frame and the picture is drawn in its bounds instead (as_render.c).
+- Wagging tail (2026-10-29): tail.png (same template) is a second layer drawn behind the body and
+  turned about pet.xml wagpivot="x,y" (template px) by wag degrees, once per wagspeed seconds, from
+  vm->tick. Both layers are trimmed to their union so they stay lined up.
 - Ability: f_SetAnimalTimer override. like=N copies pet N's timer and stats; own stats on top;
   every/heal/gold run from a native fp_timer (f_CustomAnimalTimer). Off in Wi-Fi games (owner has none).
 - Engine: as_call_script() runs the script version of an as_override native; vm->text_field

@@ -2,6 +2,7 @@
 #include "custom_animal.h"
 #include "as_render.h"
 
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -44,6 +45,11 @@ static struct {
     float size, mirror;
     Bitmap bm;
     BitmapFill fill;         // the picture on the unit square
+    int has_tail;            // a tail layer (tail.png) that wags: drawn behind the picture,
+    Bitmap tail_bm;          // on the same square, turned about pivot (unit square coordinates)
+    BitmapFill tail_fill;
+    float pivot[2], wag;     // wag: how far it turns each way (radians)
+    int wag_frames;          // one wag there and back (30 a second)
 } g;
 
 int cc_animal_type(void) { return g.loaded && !g.off ? CC_CUSTOM_ANIMAL : 0; }
@@ -83,7 +89,7 @@ static void wrap(const char *text) {
     }
 }
 
-static void unit_quad(BitmapFill *bf) {
+static void unit_quad(BitmapFill *bf, Bitmap *bm) {
     static const float xy[12] = {0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1};
     Mesh *m = &bf->mesh;
     m->nverts = 6;
@@ -93,18 +99,18 @@ static void unit_quad(BitmapFill *bf) {
     memcpy(m->uv, xy, sizeof xy);
     m->bounds[0] = m->bounds[1] = 0;
     m->bounds[2] = m->bounds[3] = 1;
-    bf->bitmap = &g.bm;
+    bf->bitmap = bm;
     bf->clip = 1;
     bf->smooth = 1;
 }
 
-// The picture: painting.png on the animal template (TEMPLATE_SIZE square, the pet inside the
-// box; pixels still equal to stencil.png, the blank template, are its guides and are cleared, as
-// the character template's are), or else pet.png as it is. Trimmed to what's painted.
-static uint8_t *load_picture(const char *dir, int *w, int *h) {
+// A layer of the picture: painting.png (or tail.png) on the animal template (TEMPLATE_SIZE square,
+// the pet inside the box; pixels still equal to stencil.png, the blank template, are its guides
+// and are cleared, as the character template's are), or else pet.png (pet_tail.png) as it is.
+static uint8_t *load_layer(const char *dir, const char *painted, const char *plain, int *w, int *h) {
     char path[512];
     int ch;
-    snprintf(path, sizeof path, "%spainting.png", dir);
+    snprintf(path, sizeof path, "%s%s", dir, painted);
     uint8_t *px = stbi_load(path, w, h, &ch, 4);
     if (px && (*w != TEMPLATE_SIZE || *h != TEMPLATE_SIZE)) { stbi_image_free(px); px = NULL; }
     if (px) {
@@ -118,29 +124,30 @@ static uint8_t *load_picture(const char *dir, int *w, int *h) {
                 if (outside || (st && sw == *w && sh == *h && !memcmp(px + i, st + i, 4))) px[i + 3] = 0;
             }
         if (st) stbi_image_free(st);
-    } else {
-        snprintf(path, sizeof path, "%spet.png", dir);
-        px = stbi_load(path, w, h, &ch, 4);
-        if (!px) return NULL;
+        return px;
     }
-    // trim to the painted pixels
-    int x0 = *w, y0 = *h, x1 = -1, y1 = -1;
-    for (int y = 0; y < *h; y++)
-        for (int x = 0; x < *w; x++)
-            if (px[((size_t)y * *w + x) * 4 + 3] > 8) {
-                if (x < x0) x0 = x;
-                if (x > x1) x1 = x;
-                if (y < y0) y0 = y;
-                if (y > y1) y1 = y;
+    snprintf(path, sizeof path, "%s%s", dir, plain);
+    return stbi_load(path, w, h, &ch, 4);
+}
+
+// grows box (x0, y0, x1, y1) by a layer's painted pixels
+static void painted_box(const uint8_t *px, int w, int h, int box[4]) {
+    for (int y = 0; y < h; y++)
+        for (int x = 0; x < w; x++)
+            if (px[((size_t)y * w + x) * 4 + 3] > 8) {
+                if (x < box[0]) box[0] = x;
+                if (x > box[2]) box[2] = x;
+                if (y < box[1]) box[1] = y;
+                if (y > box[3]) box[3] = y;
             }
-    if (x1 < 0) { stbi_image_free(px); return NULL; }   // nothing painted
-    int tw = x1 - x0 + 1, th = y1 - y0 + 1;
+}
+
+static uint8_t *crop(const uint8_t *px, int w, const int box[4]) {
+    int tw = box[2] - box[0] + 1, th = box[3] - box[1] + 1;
     uint8_t *t = malloc((size_t)tw * th * 4);
     if (t)
-        for (int y = 0; y < th; y++) memcpy(t + (size_t)y * tw * 4, px + ((size_t)(y + y0) * *w + x0) * 4, (size_t)tw * 4);
-    stbi_image_free(px);
-    *w = tw;
-    *h = th;
+        for (int y = 0; y < th; y++)
+            memcpy(t + (size_t)y * tw * 4, px + ((size_t)(y + box[1]) * w + box[0]) * 4, (size_t)tw * 4);
     return t;
 }
 
@@ -207,6 +214,9 @@ int cc_animal_load(const char *dir) {
     snprintf(g.name, sizeof g.name, "Custom Pet");
     char desc[256] = "";
     int outline = 0;
+    float wag_pivot[2] = {0, 0};
+    g.wag = 12 * (float)M_PI / 180;
+    g.wag_frames = 24;
     g.size = 1;
     g.mirror = 0;
     snprintf(path, sizeof path, "%spet.xml", dir);
@@ -232,19 +242,55 @@ int cc_animal_load(const char *dir) {
         if (xml_attr(xml, "size", v, sizeof v) && atof(v) > 0.1 && atof(v) < 4) g.size = (float)atof(v);
         if (xml_attr(xml, "facing", v, sizeof v) && !strcmp(v, "left")) g.mirror = 1;
         if (xml_attr(xml, "outline", v, sizeof v) && atoi(v) > 0) outline = atoi(v) < 8 ? atoi(v) : 8;
+        if (xml_attr(xml, "wagpivot", v, sizeof v)) sscanf(v, "%f,%f", &wag_pivot[0], &wag_pivot[1]);
+        if (xml_attr(xml, "wag", v, sizeof v) && atof(v) >= 0 && atof(v) <= 90) g.wag = (float)(atof(v) * M_PI / 180);
+        if (xml_attr(xml, "wagspeed", v, sizeof v) && atof(v) >= 0.1 && atof(v) <= 10) g.wag_frames = (int)(atof(v) * 30);
     }
-    int w, h;
-    uint8_t *px = load_picture(dir, &w, &h);
+    int w, h, tw_, th_;
+    uint8_t *px = load_layer(dir, "painting.png", "pet.png", &w, &h);
     if (!px) return 0;
+    uint8_t *tail = load_layer(dir, "tail.png", "pet_tail.png", &tw_, &th_);
+    if (tail && (tw_ != w || th_ != h)) { stbi_image_free(tail); tail = NULL; }   // not a layer of it
+    // both trimmed to what's painted on either, so they stay lined up
+    int box[4] = {w, h, -1, -1};
+    painted_box(px, w, h, box);
+    if (tail) painted_box(tail, w, h, box);
+    if (box[2] < 0) { stbi_image_free(px); if (tail) stbi_image_free(tail); return 0; }   // nothing painted
+    int cw = box[2] - box[0] + 1, chh = box[3] - box[1] + 1;
+    uint8_t *body = crop(px, w, box);
+    stbi_image_free(px);
     int tw, th;
-    uint8_t *t = make_texture(px, w, h, outline, &tw, &th);
-    free(px);
-    if (!t) return 0;
+    uint8_t *t = body ? make_texture(body, cw, chh, outline, &tw, &th) : NULL;
+    free(body);
+    if (!t) { if (tail) stbi_image_free(tail); return 0; }
     g.bm.w = tw;
     g.bm.h = th;
     g.bm.rgba = t;
     if (swf_bitmap_loaded) swf_bitmap_loaded(&g.bm);
-    unit_quad(&g.fill);
+    unit_quad(&g.fill, &g.bm);
+    if (tail) {
+        uint8_t *tc = crop(tail, w, box);
+        stbi_image_free(tail);
+        int ttw, tth;
+        uint8_t *tt = tc ? make_texture(tc, cw, chh, outline, &ttw, &tth) : NULL;
+        free(tc);
+        if (tt && ttw == tw && tth == th) {
+            g.tail_bm.w = tw;
+            g.tail_bm.h = th;
+            g.tail_bm.rgba = tt;
+            if (swf_bitmap_loaded) swf_bitmap_loaded(&g.tail_bm);
+            unit_quad(&g.tail_fill, &g.tail_bm);
+            // the pivot in the picture's pixels, to the texture's unit square (texels are boxed
+            // down by whole steps and padded by the outline on every side)
+            int step = 1;
+            while (cw / step > MAX_TEXTURE || chh / step > MAX_TEXTURE) step++;
+            g.pivot[0] = ((wag_pivot[0] - box[0]) / step + outline) / tw;
+            g.pivot[1] = ((wag_pivot[1] - box[1]) / step + outline) / th;
+            g.has_tail = 1;
+        } else {
+            free(tt);
+        }
+    }
     if (!desc[0]) snprintf(desc, sizeof desc, "%s is a pet of your very own.", g.name);
     wrap(desc);
     g.loaded = 1;
@@ -263,7 +309,8 @@ static int animal_type_of(AsMc *mc) {
 // ANIMALS.swf's body clip: one frame per animal (29), on _parent._parent.animal_type; the
 // custom pet's number is past its end, so it stands on the last (the Golden Whale's) frame, and
 // the picture is drawn in that frame's place instead: as wide or tall as it, standing on its foot.
-const BitmapFill *cc_animal_art(AsMc *mc, Mat *box) {
+const BitmapFill *cc_animal_art(AsMc *mc, uint32_t tick, Mat *box, const BitmapFill **tail, Mat *tail_box) {
+    *tail = NULL;
     if (!cc_animal_type() || !mc->def || mc->def->nframes != CC_ANIMALS || !mc->parent) return NULL;
     if (animal_type_of(mc->parent->parent) != CC_CUSTOM_ANIMAL) return NULL;
     float b[4];
@@ -274,6 +321,15 @@ const BitmapFill *cc_animal_art(AsMc *mc, Mat *box) {
     float w = g.bm.w * k * g.size, h = g.bm.h * k * g.size;
     float cx = (b[0] + b[2]) / 2;
     *box = (Mat){g.mirror ? -w : w, 0, 0, h, g.mirror ? cx + w / 2 : cx - w / 2, b[3] - h};
+    if (g.has_tail) {
+        // the tail swings about its pivot, there and back once every wag_frames
+        float a = g.wag * sinf(2 * (float)M_PI * (float)(tick % (uint32_t)g.wag_frames) / g.wag_frames);
+        float px = box->a * g.pivot[0] + box->tx, py = box->d * g.pivot[1] + box->ty;
+        float c = cosf(a), s = sinf(a);
+        Mat turn = {c, s, -s, c, px - c * px + s * py, py - s * px - c * py};
+        *tail_box = mat_mul(turn, *box);
+        *tail = &g.tail_fill;
+    }
     return &g.fill;
 }
 
