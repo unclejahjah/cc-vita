@@ -114,6 +114,8 @@ void *render_upload(Movie *m, void *(*alloc)(size_t bytes, void *ctx), void *ctx
 // After render_upload: frees the outlines and CPU-side vertices of uploaded shapes
 // (recolouring then reads the uploaded copy). Halves a movie's memory.
 void render_release_cpu(Movie *m);
+// After the block at old (size bytes) was copied to new: points Mesh.gpu into new.
+void render_relocate(Movie *m, void *old, size_t size, void *new_block);
 
 // Vertex i of an item, transformed to the screen (for software rasterising).
 Vertex render_item_vertex(const DrawList *dl, const DrawItem *it, int i);   // bitmap items: colour = tint

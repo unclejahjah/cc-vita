@@ -287,6 +287,20 @@ static void release_cb(Shape *s, void *ctx) {
 
 void render_release_cpu(Movie *m) { each_shape(m, release_cb, NULL); }
 
+typedef struct { uint8_t *old, *new_block; size_t size; } Relocation;
+static void relocate_mesh(Mesh *mesh, const Relocation *r) {
+    uint8_t *p = (uint8_t *)mesh->gpu;
+    if (p >= r->old && p < r->old + r->size) mesh->gpu = (void *)(r->new_block + (p - r->old));
+}
+static void relocate_cb(Shape *s, void *ctx) {
+    relocate_mesh(&s->mesh, ctx);
+    for (int i = 0; i < s->nbfills; i++) relocate_mesh(&s->bfills[i].mesh, ctx);
+}
+void render_relocate(Movie *m, void *old, size_t size, void *new_block) {
+    Relocation r = {old, new_block, size};
+    each_shape(m, relocate_cb, &r);
+}
+
 // ---- per-frame draw list ----------------------------------------------------------
 
 // Start a new draw command unless the current one already has this state.
