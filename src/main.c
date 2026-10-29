@@ -84,6 +84,7 @@ typedef struct {
     SceUID uid;
     void *addr;
     size_t size;
+    int cdram;   // video memory (else main memory)
 } GpuBlock;
 
 static size_t g_gpu_bytes;   // for the overlay
@@ -101,6 +102,7 @@ static void *gpu_alloc(size_t bytes, void *ctx) {
         return NULL;
     }
     g_gpu_bytes += blk->size = size;
+    blk->cdram = 0;
     return blk->addr;
 }
 
@@ -124,6 +126,7 @@ static void *mesh_alloc(size_t bytes, void *ctx) {
         sceKernelGetMemBlockBase(blk->uid, &blk->addr);
         if (sceGxmMapMemory(blk->addr, size, SCE_GXM_MEMORY_ATTRIB_READ) >= 0) {
             g_gpu_bytes += blk->size = size;
+            blk->cdram = 1;
             return blk->addr;
         }
         sceKernelFreeMemBlock(blk->uid);
@@ -743,6 +746,34 @@ static void free_movie_named(const char *base, RecolourCache *cache, void *cache
         return;
     }
 }
+
+// Moves a kept file's meshes to video memory (to_cdram, when there's room) or to main memory.
+// Back from a game, PAUSE.swf (16 MB, kept since the game started) and lobby.swf filled the
+// video memory the title's scenes had on first boot, so those went to main memory and the
+// title ran at 21 fps (Jah 2026-10-28): they step aside for the scenes and come back after.
+// The GPU is let finish and the cache starts over; the caller builds a new frame.
+static void movie_meshes_move(const char *base, int to_cdram, RecolourCache *cache, void *cache_mem, size_t cache_bytes) {
+    for (int i = 0; i < g_nmovies; i++) {
+        GpuBlock *blk = &g_movies[i].gpu;
+        if (strcasecmp(g_movies[i].name, base) || blk->uid < 0 || blk->cdram == to_cdram) continue;
+        vita2d_wait_rendering_done();
+        recolour_cache_free(cache);
+        recolour_cache_init(cache, cache_mem, cache_bytes);
+        GpuBlock nb = {-1, NULL, 0, 0};
+        int in_main = g_mesh_in_main;
+        void *dst = to_cdram ? mesh_alloc(blk->size, &nb) : gpu_alloc(blk->size, &nb);
+        g_mesh_in_main = in_main;
+        if (dst && to_cdram && !nb.cdram) { gpu_free(&nb); dst = NULL; }   // no room: it stays
+        if (!dst) { log_line("%s: meshes stay in %s memory", base, blk->cdram ? "video" : "main"); return; }
+        memcpy(dst, blk->addr, blk->size < nb.size ? blk->size : nb.size);
+        render_relocate(g_movies[i].m, blk->addr, blk->size, dst);
+        gpu_free(blk);
+        *blk = nb;
+        log_line("%s: meshes to %s memory (video memory %d MB free)", base, to_cdram ? "video" : "main", cdram_free_mb());
+        return;
+    }
+}
+static const char *const g_title_movers[] = {"PAUSE.swf", "lobby.swf"};
 
 // ---- controls -> the game's buttons (cc_port_keys gives them port 1's key codes) -------
 
@@ -1721,6 +1752,8 @@ static int title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, siz
     AsMc *vignettes = NULL;
     int vignette_file = find_file("MENU_VIGNETTES.swf", art_path, sizeof art_path, &art_level);
     if (vignette_file && from_game) {
+        for (int i = 0; i < (int)(sizeof g_title_movers / sizeof *g_title_movers); i++)
+            movie_meshes_move(g_title_movers[i], 0, cache, cache_mem, cache_bytes);
         Movie *v = vita_loader(NULL, "MENU_VIGNETTES.swf");
         if (v) vignettes = cc_title_vignettes(t, v);
     }
@@ -2114,6 +2147,8 @@ new_game:   // the title again after Exit to Main Menu
         vita2d_free_texture(g_vignette_rt);
         g_vignette_rt = NULL;
     }
+    for (int i = 0; i < (int)(sizeof g_title_movers / sizeof *g_title_movers); i++)   // back where they were
+        movie_meshes_move(g_title_movers[i], 1, &cache, cache_mem, cache_bytes);
     render_begin(&vb);
 #ifdef CC_NET
     if (g_netgame) cc_game_mode = net.mode;   // the host's pick, on every Vita
