@@ -41,6 +41,8 @@ int help_book_update(HelpBook *hb, unsigned pressed, float dt, int *sound);
 // The book and its page through k (stage pixels -> screen pixels); the game font
 // (as_render_set_font) draws the words. pause_swf: PAUSE.swf or MENU.swf (both carry the art).
 void help_book_build(const HelpBook *hb, Movie *pause_swf, float k, DrawList *out);
+// FRESHLOGO.swf when the app has it: Settings shows its sticker in place of the word FRESH
+extern Movie *help_book_fresh_logo;
 
 // A page of the same book for other menus (the Wi-Fi lobby): a title, lines down the middle
 // (one chosen, pulsing like Settings' rows; the rest white), a big code in boxes (one box

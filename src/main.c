@@ -1790,7 +1790,7 @@ static int title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, siz
     int art_level;
     if (find_file("MODEART.swf", art_path, sizeof art_path, &art_level)) host_movie("MODEART.swf");
     // and the FRESH sticker's (FRESHLOGO.swf), else the menu's first frame hitched loading it
-    if (find_file("FRESHLOGO.swf", art_path, sizeof art_path, &art_level)) host_movie("FRESHLOGO.swf");
+    if (find_file("FRESHLOGO.swf", art_path, sizeof art_path, &art_level)) help_book_fresh_logo = host_movie("FRESHLOGO.swf");
     int wifi_game = 0;
 #ifdef CC_NET
     cc_menu_wifi = 1;
