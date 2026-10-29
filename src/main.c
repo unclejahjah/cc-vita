@@ -143,6 +143,34 @@ static void gpu_free(GpuBlock *blk) {
     blk->uid = -1;
 }
 
+// A file's meshes, in blocks of up to RENDER_CHUNK (render_upload): each one in video memory
+// when there's a hole for it, so the free video memory is usable however it's cut up.
+#define MESH_CHUNKS 96
+typedef struct { GpuBlock b[MESH_CHUNKS]; int n; } Meshes;
+
+static void *meshes_alloc(size_t bytes, void *ctx) {
+    Meshes *ms = ctx;
+    if (ms->n == MESH_CHUNKS) return NULL;
+    GpuBlock *b = &ms->b[ms->n];
+    b->uid = -1;
+    void *p = mesh_alloc(bytes, b);
+    if (p) ms->n++;
+    return p;
+}
+
+static void meshes_free(Meshes *ms) {
+    for (int i = 0; i < ms->n; i++) gpu_free(&ms->b[i]);
+    ms->n = 0;
+}
+
+// its bytes in video memory (cdram) or main memory
+static size_t meshes_bytes(const Meshes *ms, int cdram) {
+    size_t n = 0;
+    for (int i = 0; i < ms->n; i++)
+        if (ms->b[i].uid >= 0 && ms->b[i].cdram == cdram) n += ms->b[i].size;
+    return n;
+}
+
 static uint16_t *g_indices;   // 0, 1, 2, ... for sceGxmDraw
 static GpuBlock g_index_block;
 
@@ -348,7 +376,7 @@ static void show_message(const char *line1, const char *line2) {
 // player.swf into every player slot and fx.swf into every effect. Files nothing uses any
 // more (levels left behind, the title's menu) are freed by free_unused_movies.
 #define MAX_MOVIES 160
-static struct { char name[64]; Movie *m; GpuBlock gpu; int keep; } g_movies[MAX_MOVIES];   // keep: 1 always, 2 until first used (preloaded)
+static struct { char name[64]; Movie *m; Meshes gpu; int keep; } g_movies[MAX_MOVIES];   // keep: 1 always, 2 until first used (preloaded)
 static int g_nmovies;
 static char g_last_error[256];
 
@@ -498,13 +526,16 @@ static Movie *register_movie(const char *base, const char *path, Movie *m) {
     log_line("load %s%s (heap %u KB used)", path, m->truncated ? " (cut short)" : "",
              (unsigned)(mallinfo().uordblks >> 10));
     log_flush();   // loads and frees go to the writer at once: a crash right after keeps them
-    GpuBlock *blk = &g_movies[g_nmovies].gpu;
-    blk->uid = -1;
-    blk->size = 0;
+    Meshes *ms = &g_movies[g_nmovies].gpu;
+    ms->n = 0;
     g_mesh_in_main = 0;
-    if (render_upload(m, mesh_alloc, blk)) render_release_cpu(m);
-    log_line("  video memory %d MB free%s (meshes %u KB)", cdram_free_mb(), g_mesh_in_main ? ", its meshes in main memory (slow)" : "",
-             (unsigned)(blk->size >> 10));
+    if (render_upload(m, meshes_alloc, ms)) render_release_cpu(m);
+    size_t in_main = meshes_bytes(ms, 0);
+    if (in_main)
+        log_line("  video memory %d MB free, %u of its %u KB of meshes in main memory (slow)", cdram_free_mb(),
+                 (unsigned)(in_main >> 10), (unsigned)((in_main + meshes_bytes(ms, 1)) >> 10));
+    else
+        log_line("  video memory %d MB free (meshes %u KB)", cdram_free_mb(), (unsigned)(meshes_bytes(ms, 1) >> 10));
     snprintf(g_movies[g_nmovies].name, sizeof g_movies[0].name, "%s", base);
     g_movies[g_nmovies].keep = 0;
     g_movies[g_nmovies++].m = m;
@@ -705,7 +736,7 @@ static void movie_free_at(int i) {   // g_movies[i]'s file, its textures and vid
             vita2d_free_texture(((Bitmap *)m->chars[c].ptr)->tex);
     as_forget_movie(m);
     swf_free(m);
-    gpu_free(&g_movies[i].gpu);
+    meshes_free(&g_movies[i].gpu);
 }
 
 // Frees the files no clip or script function of the game belongs to any more. Their meshes
@@ -749,64 +780,54 @@ static void free_movie_named(const char *base, RecolourCache *cache, void *cache
     }
 }
 
-// Moves a kept file's meshes to video memory (to_cdram, when there's room) or to main memory.
-// Back from a game, PAUSE.swf (16 MB, kept since the game started) and lobby.swf filled the
-// video memory the title's scenes had on first boot, so those went to main memory and the
-// title ran at 21 fps (Jah 2026-10-28): they step aside for the scenes and come back after.
-// The GPU is let finish and the cache starts over; the caller builds a new frame.
+// Moves a kept file's meshes to video memory (to_cdram, block by block while there's room) or
+// to main memory. Back from a game, PAUSE.swf (16 MB, kept since the game started) and
+// lobby.swf filled the video memory the title's scenes had on first boot, so those went to
+// main memory and the title ran at 21 fps (Jah 2026-10-28): they step aside for the scenes and
+// come back after. The GPU is let finish and the cache starts over; the caller builds a new
+// frame. Returns the blocks moved.
 static int movie_meshes_move(const char *base, int to_cdram, RecolourCache *cache, void *cache_mem, size_t cache_bytes) {
     for (int i = 0; i < g_nmovies; i++) {
-        GpuBlock *blk = &g_movies[i].gpu;
-        if (strcasecmp(g_movies[i].name, base) || blk->uid < 0 || blk->cdram == to_cdram) continue;
+        Meshes *ms = &g_movies[i].gpu;
+        if (strcasecmp(g_movies[i].name, base) || !meshes_bytes(ms, !to_cdram)) continue;
         vita2d_wait_rendering_done();
         recolour_cache_free(cache);
         recolour_cache_init(cache, cache_mem, cache_bytes);
-        GpuBlock nb = {-1, NULL, 0, 0};
-        int in_main = g_mesh_in_main;
-        void *dst = to_cdram ? mesh_alloc(blk->size, &nb) : gpu_alloc(blk->size, &nb);
+        int moved = 0, in_main = g_mesh_in_main;
+        for (int c = 0; c < ms->n; c++) {
+            GpuBlock *blk = &ms->b[c];
+            if (blk->uid < 0 || blk->cdram == to_cdram) continue;
+            GpuBlock nb = {-1, NULL, 0, 0};
+            void *dst = to_cdram ? mesh_alloc(blk->size, &nb) : gpu_alloc(blk->size, &nb);
+            if (dst && to_cdram && !nb.cdram) { gpu_free(&nb); dst = NULL; }   // no room: the rest stay
+            if (!dst) break;
+            memcpy(dst, blk->addr, blk->size < nb.size ? blk->size : nb.size);
+            render_relocate(g_movies[i].m, blk->addr, blk->size, dst);
+            gpu_free(blk);
+            *blk = nb;
+            moved++;
+        }
         g_mesh_in_main = in_main;
-        if (dst && to_cdram && !nb.cdram) { gpu_free(&nb); dst = NULL; }   // no room: it stays
-        if (!dst) { log_line("%s: meshes stay in %s memory", base, blk->cdram ? "video" : "main"); return 0; }
-        memcpy(dst, blk->addr, blk->size < nb.size ? blk->size : nb.size);
-        render_relocate(g_movies[i].m, blk->addr, blk->size, dst);
-        gpu_free(blk);
-        *blk = nb;
-        log_line("%s: meshes to %s memory (video memory %d MB free)", base, to_cdram ? "video" : "main", cdram_free_mb());
-        return 1;
+        size_t left = meshes_bytes(ms, !to_cdram);
+        if (!moved) log_line("%s: meshes stay in %s memory", base, to_cdram ? "main" : "video");
+        else
+            log_line("%s: meshes to %s memory%s (video memory %d MB free)", base, to_cdram ? "video" : "main",
+                     left ? ", some stay" : "", cdram_free_mb());
+        return moved;
     }
     return 0;
 }
 static const char *const g_title_movers[] = {"PAUSE.swf", "lobby.swf"};
 
-// In a game, files whose meshes went to main memory come over to video memory once there's
-// room. player.swf and fx.swf load while PAUSE.swf and lobby.swf fill it, so every knight,
-// enemy and effect was drawn from main memory for the whole game (alien ship dips with the
-// FRESH look on, Jah 2026-10-29). Those two come first, and if they still don't fit, the
-// pause menu and the lobby (drawn only now and then) step out to main memory for them.
+// In a game, meshes that went to main memory come over to video memory once there's room
+// (each time the files kept change): player.swf and fx.swf first, as every knight, enemy and
+// effect draws from them (alien ship dips, Jah 2026-10-29), then the rest.
 static int game_meshes_to_video(RecolourCache *cache, void *cache_mem, size_t cache_bytes) {
     static const char *const first[] = {"player.swf", "fx.swf"};
     int moved = 0;
-    for (int pass = 0; pass < 2; pass++) {
-        int stuck = 0;
-        for (int j = 0; j < (int)(sizeof first / sizeof *first); j++)
-            for (int i = 0; i < g_nmovies; i++)
-                if (!strcasecmp(g_movies[i].name, first[j]) && g_movies[i].gpu.uid >= 0 && !g_movies[i].gpu.cdram) {
-                    if (movie_meshes_move(first[j], 1, cache, cache_mem, cache_bytes)) moved++;
-                    else stuck = 1;
-                    break;
-                }
-        if (!stuck || pass) break;
-        int made = 0;
-        for (int i = 0; i < (int)(sizeof g_title_movers / sizeof *g_title_movers); i++)
-            made += movie_meshes_move(g_title_movers[i], 0, cache, cache_mem, cache_bytes);
-        if (!made) break;
-    }
-    for (int i = 0; i < g_nmovies; i++) {   // then the rest (a level loaded while it was full)
-        if (g_movies[i].gpu.uid < 0 || g_movies[i].gpu.cdram) continue;
-        int mover = 0;
-        for (int j = 0; j < (int)(sizeof g_title_movers / sizeof *g_title_movers); j++)
-            mover |= !strcasecmp(g_movies[i].name, g_title_movers[j]);
-        if (mover || cdram_free_mb() * 1024 * 1024 < (int)g_movies[i].gpu.size) continue;
+    for (int j = 0; j < (int)(sizeof first / sizeof *first); j++) moved += movie_meshes_move(first[j], 1, cache, cache_mem, cache_bytes);
+    for (int i = 0; i < g_nmovies && cdram_free_mb() > 2; i++) {
+        if (!meshes_bytes(&g_movies[i].gpu, 0)) continue;
         char name[64];
         snprintf(name, sizeof name, "%s", g_movies[i].name);
         moved += movie_meshes_move(name, 1, cache, cache_mem, cache_bytes);
@@ -2436,7 +2457,7 @@ new_game:   // the title again after Exit to Main Menu
             // meshes in main memory: to video memory, once per change in the files kept
             if (g_nmovies != last_move_count) {
                 int any = 0;
-                for (int i = 0; i < g_nmovies; i++) any |= g_movies[i].gpu.uid >= 0 && !g_movies[i].gpu.cdram;
+                for (int i = 0; i < g_nmovies; i++) any |= meshes_bytes(&g_movies[i].gpu, 0) != 0;
                 if (any && game_meshes_to_video(&cache, cache_mem, cache_bytes)) hitch_what = " (meshes to video memory)";
                 last_move_count = g_nmovies;
             }
@@ -2586,7 +2607,7 @@ new_game:   // the title again after Exit to Main Menu
             if (g_movies[i].m->chars[c].type == CHAR_BITMAP && ((Bitmap *)g_movies[i].m->chars[c].ptr)->tex)
                 vita2d_free_texture(((Bitmap *)g_movies[i].m->chars[c].ptr)->tex);
         swf_free(g_movies[i].m);
-        gpu_free(&g_movies[i].gpu);
+        meshes_free(&g_movies[i].gpu);
     }
     recolour_cache_free(&cache);
     gpu_free(&cache_gpu);

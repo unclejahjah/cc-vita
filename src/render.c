@@ -253,15 +253,40 @@ static void upload_cb(Shape *s, void *ctx) {
     }
 }
 
+// The meshes go up in blocks of at most RENDER_CHUNK bytes (a shape bigger than that gets one
+// of its own): one block for a whole file (fx.swf is 31 MB) found no hole that big in a video
+// memory that files had come and gone from, though there was more than that free.
+typedef struct {
+    void *(*alloc)(size_t bytes, void *ctx);
+    void *ctx;
+    uint8_t *p, *end, *first;
+    size_t left;
+    int failed;
+} Upload;
+
+static void chunk_upload_cb(Shape *s, void *ctx) {
+    Upload *u = ctx;
+    size_t bytes = 0;
+    count_cb(s, &bytes);
+    if (!bytes || u->failed) return;
+    if (!u->p || u->p + bytes > u->end) {
+        size_t want = u->left < RENDER_CHUNK ? u->left : RENDER_CHUNK;
+        if (want < bytes) want = bytes;
+        u->p = u->alloc(want, u->ctx);
+        if (!u->p) { u->failed = 1; return; }
+        if (!u->first) u->first = u->p;
+        u->end = u->p + want;
+    }
+    u->left -= bytes;
+    upload_cb(s, &u->p);
+}
+
 void *render_upload(Movie *m, void *(*alloc)(size_t bytes, void *ctx), void *ctx) {
-    size_t total = 0;
-    each_shape(m, count_cb, &total);
-    if (!total) return NULL;
-    uint8_t *block = alloc(total, ctx);
-    if (!block) return NULL;
-    uint8_t *p = block;
-    each_shape(m, upload_cb, &p);
-    return block;
+    Upload u = {alloc, ctx, NULL, NULL, NULL, 0, 0};
+    each_shape(m, count_cb, &u.left);
+    if (!u.left) return NULL;
+    each_shape(m, chunk_upload_cb, &u);
+    return u.first;   // (after a failed block, the shapes before it are uploaded and the rest aren't)
 }
 
 static void release_cb(Shape *s, void *ctx) {
