@@ -347,6 +347,22 @@ void as_render_mc(AsMc *mc, Mat parent, CXform pcx, DrawList *out) {
             heat_here = 1;
         }
     }
+    int box_cid;   // the armoury's reset spot: its box without the level square (weapon_look.h)
+    Mat box_m;
+    CXform box_cx;
+    if (cc_look_box(mc, &box_cid, &box_m, &box_cx) && mc->movie->chars[box_cid].type == CHAR_SHAPE) {
+        Shape *sh = mc->movie->chars[box_cid].ptr;
+        const float *b = render_shape_bounds(sh);
+        Mat flip = {-1, 0, 0, 1, 0, 0};   // the bubble's tail is at its x 0
+        for (int side = 0; side < 2; side++) {
+            Mat bm = mat_mul(m, side ? mat_mul(box_m, flip) : box_m);
+            render_mask_push(out);
+            render_mask_rect(out, bm, b[0] - 40, b[1] - 40, 0, b[3] + 40);
+            render_mask_apply(out);
+            render_char((Movie *)mc->movie, box_cid, bm, cx_mul(cx, box_cx), 0, out);
+            render_mask_pop(out);
+        }
+    }
     // a mask entry covers the entries after it up to its clip depth
     int open = 0, mask_end[16];
     for (int i = 0; i < mc->ndisp; i++) {

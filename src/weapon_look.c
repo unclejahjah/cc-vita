@@ -45,7 +45,7 @@ void cc_look_set_active(int on) {
 }
 
 static AsStr *A_p_type, *A_hud_pt, *A_port, *A_weapon, *A_cc_look, *A_alive, *A_x, *A_y, *A_n_weapon,
-    *A_button_punch2, *A_body_y, *A_locked, *A_spot_reset, *A_spot_custom, *A_spark, *A_counter, *A_blank;
+    *A_button_punch2, *A_body_y, *A_locked, *A_spot_reset, *A_spot_custom, *A_spark, *A_counter, *A_blank, *A_cc_box, *A_cc_rows;
 
 static double num(AsVm *vm, AsVal o, AsStr *k) { return as_tonum(vm, as_get(vm, o, k)); }
 
@@ -159,8 +159,8 @@ static int prev_down[PORTS + 1], prev_square[PORTS + 1];
 #define PROMPT_ROWS 2
 static const char *const PROMPT_TEXT[PROMPT_ROWS] = {"Take Look", "Reset Look"};
 static const int PROMPT_BUTTON[PROMPT_ROWS] = {2, 1};   // f_GetButtonArt: 2 heavy attack, 1 light
-static const float PROMPT_Y[PROMPT_ROWS] = {-132, -100};   // in the marker, as its stat rows
-#define PROMPT_X (-46)
+static const float PROMPT_Y[PROMPT_ROWS] = {-134, -102};   // in the marker, as its stat rows
+#define PROMPT_X (-33)
 #define TEXT_SCALE 0.8f
 #define TEXT_GAP 34   // from the icon's middle to the field (its text starts a little in)
 #define BOX_WIDEN 1.45f
@@ -169,12 +169,11 @@ static void prompt_box(AsVm *vm, AsMc *spot, int show) {
     AsMc *marker = child(spot, as_atom(vm, "marker"));
     if (!marker) return;
     AsVal mv = as_objv(&marker->obj);
-    AsStr *A_rows = as_atom(vm, "cc_rows");
-    int on = as_tobool(vm, as_get(vm, mv, A_rows));
+    int on = as_tobool(vm, as_get(vm, mv, A_cc_rows));
     if (show == on) return;
     AsVal label = as_strv(as_atom(vm, show ? "on" : "off"));
     as_call_method(vm, mv, "gotoAndStop", 1, &label);
-    as_set(vm, mv, A_rows, as_bool(show));
+    as_set(vm, mv, A_cc_rows, as_bool(show));
     char nm[16];
     if (!show) {
         for (int r = 0; r < PROMPT_ROWS; r++) {
@@ -193,23 +192,27 @@ static void prompt_box(AsVm *vm, AsMc *spot, int show) {
         if (!e->mc) continue;
         const char *n = e->mc->name ? e->mc->name->s : "";
         if (!strcmp(n, "level")) level = *e;
-        else if (!strncmp(n, "stat", 4)) {
-            AsVal b = as_strv(A_blank);
-            as_call_method(vm, as_objv(&e->mc->obj), "gotoAndStop", 1, &b);
-        } else if (!e->mc->text && e->uid && (!*n || !strncmp(n, "instance", 8))) {
+        else if (!strncmp(n, "stat", 4))
+            e->mc->visible = 0;   // the stat rows (the last one's blank frame is a box of its own)
+        else if (!e->mc->text && e->uid && (!*n || !strncmp(n, "instance", 8))) {
             if (e->mc->ndisp && e->mc->disp[0].mc && e->mc->disp[0].mc->def &&
                 e->mc->disp[0].mc->def->nframes == 8)
                 icon = *e;   // the clip around the 8-frame prompt icon
         }
     }
     if (!icon.mc || !level.mc) return;
-    // the bubble (the box's first shape), made wider for the words
+    // the box's shapes: the bubble (made wider for the words) and a frame; both drawn by
+    // cc_look_box instead
+    int shapes = 0;
     for (int i = 0; i < marker->ndisp; i++) {
         AsDisp *e = &marker->disp[i];
         if (e->kind != DISP_SHAPE) continue;
-        e->m.a *= BOX_WIDEN;
-        e->m.c *= BOX_WIDEN;
-        break;
+        if (shapes++ == 0) {   // drawn by cc_look_box instead
+            e->m.a *= BOX_WIDEN;
+            e->m.c *= BOX_WIDEN;
+            as_set(vm, mv, A_cc_box, as_num(e->cid));
+        }
+        e->cx.mul[3] = e->cx.add[3] = 0;
     }
     icon.mc->visible = 0;     // the box's own prompt (light attack: take the weapon)
     level.mc->visible = 0;    // and its level number
@@ -309,6 +312,21 @@ static void armoury(AsVm *vm) {
     if (spot[0] && shown > 0 && spot[0]->frame != shown - 1) as_mc_goto(vm, spot[0], shown - 1, 0);
 }
 
+int cc_look_box(AsMc *mc, int *cid, Mat *m, CXform *cx) {
+    if (!A_spot_reset || !mc->parent || mc->parent->name != A_spot_reset) return 0;
+    AsProp *b = as_own(&mc->obj, A_cc_box), *on = as_own(&mc->obj, A_cc_rows);
+    if (!b || b->v.t != V_NUM || !on || on->v.t != V_BOOL || !on->v.b) return 0;
+    for (int i = 0; i < mc->ndisp; i++)
+        if (mc->disp[i].kind == DISP_SHAPE && mc->disp[i].cid == (int)b->v.n) {
+            *cid = mc->disp[i].cid;
+            *m = mc->disp[i].m;
+            *cx = mc->disp[i].cx;
+            cx->mul[3] = 1, cx->add[3] = 0;
+            return 1;
+        }
+    return 0;
+}
+
 static AsVal native_check_get_weapon(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
     AsVal r = as_call_script(vm, this_, argc, argv);
     armoury(vm);
@@ -341,6 +359,8 @@ void cc_look_init(AsVm *vm) {
     A_spark = as_atom(vm, "spark");
     A_counter = as_atom(vm, "counter");
     A_blank = as_atom(vm, "blank");
+    A_cc_box = as_atom(vm, "cc_box");
+    A_cc_rows = as_atom(vm, "cc_rows");
     memset(prev_down, 0, sizeof prev_down);
     memset(prev_square, 0, sizeof prev_square);
     as_override(vm, "f_Weapon", native_weapon);
