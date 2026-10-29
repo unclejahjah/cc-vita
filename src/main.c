@@ -500,9 +500,11 @@ static Movie *register_movie(const char *base, const char *path, Movie *m) {
     log_flush();   // loads and frees go to the writer at once: a crash right after keeps them
     GpuBlock *blk = &g_movies[g_nmovies].gpu;
     blk->uid = -1;
+    blk->size = 0;
     g_mesh_in_main = 0;
     if (render_upload(m, mesh_alloc, blk)) render_release_cpu(m);
-    log_line("  video memory %d MB free%s", cdram_free_mb(), g_mesh_in_main ? ", its meshes in main memory (slow)" : "");
+    log_line("  video memory %d MB free%s (meshes %u KB)", cdram_free_mb(), g_mesh_in_main ? ", its meshes in main memory (slow)" : "",
+             (unsigned)(blk->size >> 10));
     snprintf(g_movies[g_nmovies].name, sizeof g_movies[0].name, "%s", base);
     g_movies[g_nmovies].keep = 0;
     g_movies[g_nmovies++].m = m;
@@ -752,7 +754,7 @@ static void free_movie_named(const char *base, RecolourCache *cache, void *cache
 // video memory the title's scenes had on first boot, so those went to main memory and the
 // title ran at 21 fps (Jah 2026-10-28): they step aside for the scenes and come back after.
 // The GPU is let finish and the cache starts over; the caller builds a new frame.
-static void movie_meshes_move(const char *base, int to_cdram, RecolourCache *cache, void *cache_mem, size_t cache_bytes) {
+static int movie_meshes_move(const char *base, int to_cdram, RecolourCache *cache, void *cache_mem, size_t cache_bytes) {
     for (int i = 0; i < g_nmovies; i++) {
         GpuBlock *blk = &g_movies[i].gpu;
         if (strcasecmp(g_movies[i].name, base) || blk->uid < 0 || blk->cdram == to_cdram) continue;
@@ -764,16 +766,53 @@ static void movie_meshes_move(const char *base, int to_cdram, RecolourCache *cac
         void *dst = to_cdram ? mesh_alloc(blk->size, &nb) : gpu_alloc(blk->size, &nb);
         g_mesh_in_main = in_main;
         if (dst && to_cdram && !nb.cdram) { gpu_free(&nb); dst = NULL; }   // no room: it stays
-        if (!dst) { log_line("%s: meshes stay in %s memory", base, blk->cdram ? "video" : "main"); return; }
+        if (!dst) { log_line("%s: meshes stay in %s memory", base, blk->cdram ? "video" : "main"); return 0; }
         memcpy(dst, blk->addr, blk->size < nb.size ? blk->size : nb.size);
         render_relocate(g_movies[i].m, blk->addr, blk->size, dst);
         gpu_free(blk);
         *blk = nb;
         log_line("%s: meshes to %s memory (video memory %d MB free)", base, to_cdram ? "video" : "main", cdram_free_mb());
-        return;
+        return 1;
     }
+    return 0;
 }
 static const char *const g_title_movers[] = {"PAUSE.swf", "lobby.swf"};
+
+// In a game, files whose meshes went to main memory come over to video memory once there's
+// room. player.swf and fx.swf load while PAUSE.swf and lobby.swf fill it, so every knight,
+// enemy and effect was drawn from main memory for the whole game (alien ship dips with the
+// FRESH look on, Jah 2026-10-29). Those two come first, and if they still don't fit, the
+// pause menu and the lobby (drawn only now and then) step out to main memory for them.
+static int game_meshes_to_video(RecolourCache *cache, void *cache_mem, size_t cache_bytes) {
+    static const char *const first[] = {"player.swf", "fx.swf"};
+    int moved = 0;
+    for (int pass = 0; pass < 2; pass++) {
+        int stuck = 0;
+        for (int j = 0; j < (int)(sizeof first / sizeof *first); j++)
+            for (int i = 0; i < g_nmovies; i++)
+                if (!strcasecmp(g_movies[i].name, first[j]) && g_movies[i].gpu.uid >= 0 && !g_movies[i].gpu.cdram) {
+                    if (movie_meshes_move(first[j], 1, cache, cache_mem, cache_bytes)) moved++;
+                    else stuck = 1;
+                    break;
+                }
+        if (!stuck || pass) break;
+        int made = 0;
+        for (int i = 0; i < (int)(sizeof g_title_movers / sizeof *g_title_movers); i++)
+            made += movie_meshes_move(g_title_movers[i], 0, cache, cache_mem, cache_bytes);
+        if (!made) break;
+    }
+    for (int i = 0; i < g_nmovies; i++) {   // then the rest (a level loaded while it was full)
+        if (g_movies[i].gpu.uid < 0 || g_movies[i].gpu.cdram) continue;
+        int mover = 0;
+        for (int j = 0; j < (int)(sizeof g_title_movers / sizeof *g_title_movers); j++)
+            mover |= !strcasecmp(g_movies[i].name, g_title_movers[j]);
+        if (mover || cdram_free_mb() * 1024 * 1024 < (int)g_movies[i].gpu.size) continue;
+        char name[64];
+        snprintf(name, sizeof name, "%s", g_movies[i].name);
+        moved += movie_meshes_move(name, 1, cache, cache_mem, cache_bytes);
+    }
+    return moved;
+}
 
 // ---- controls -> the game's buttons (cc_port_keys gives them port 1's key codes) -------
 
@@ -2209,6 +2248,7 @@ new_game:   // the title again after Exit to Main Menu
     int saving_timer = 0;               // game frames left of the "Saving..." note
     uint32_t last_free = 0;
     int last_free_count = -1;   // the files kept after the last pass
+    int last_move_count = -1;   // the files kept when meshes last tried for video memory
     const SceUInt64 tick_us = 1000000 / 30;   // the game's frame rate
     int exit_to_title = 0;
     int leaving = 0;   // Exit to Main Menu: the loading screen is coming in over the game
@@ -2392,6 +2432,13 @@ new_game:   // the title again after Exit to Main Menu
                 free_unused_movies(vm, &cache, cache_mem, cache_bytes);
                 last_free_count = g_nmovies;
                 hitch_what = " (freed files)";
+            }
+            // meshes in main memory: to video memory, once per change in the files kept
+            if (g_nmovies != last_move_count) {
+                int any = 0;
+                for (int i = 0; i < g_nmovies; i++) any |= g_movies[i].gpu.uid >= 0 && !g_movies[i].gpu.cdram;
+                if (any && game_meshes_to_video(&cache, cache_mem, cache_bytes)) hitch_what = " (meshes to video memory)";
+                last_move_count = g_nmovies;
             }
             // a full recolour cache stops helping: start it over (after the GPU is done with it)
             if (cache.used > cache.cap * 9 / 10 || cache.entries * 4 >= cache.table_size * 3) {
