@@ -251,9 +251,11 @@ void as_render_mc(AsMc *mc, Mat parent, CXform pcx, DrawList *out) {
     Mat m = mat_mul(parent, mc->m);
     CXform cx = cx_mul(pcx, cx_with_alpha(mc->cx, mc->alpha));
     if (cx.mul[3] <= 0 && cx.add[3] <= 0 && !out->masking) return;
-    Mat box;
-    const BitmapFill *pet = cc_animal_art(mc, &box);   // a custom animal orb's picture
+    Mat box, tail_box;
+    const BitmapFill *tail;
+    const BitmapFill *pet = cc_animal_art(mc, g_vm ? g_vm->tick : 0, &box, &tail, &tail_box);   // a custom animal orb
     if (pet) {
+        if (tail) render_bitmap_fill(tail, mat_mul(m, tail_box), cx, out);
         render_bitmap_fill(pet, mat_mul(m, box), cx, out);
         return;
     }
