@@ -415,7 +415,8 @@ hosttest: CC_AUTO_POTION=1; HB_ROW=2 with --help shows the row chosen.
   attack (Triangle) in front of a rack weapon gives your weapon its look (stats stay). f_Weapon
   override shows the look's frame in PLAYER.swf's weapon part clip. Near the entrance the rope's
   first section (pillar at x 338: pillar, rope, wraps, knot) is copied 230 px left; on it hang
-  w_look_reset (shows your own weapon, puts the look back) and, with a custom painting,
+  w_look_reset (shows your own weapon, puts the look back with Triangle or Square; only its
+  stat box shows prompts "Take Look"/"Reset Look", prompt_box) and, with a custom painting,
   w_look_custom (the painting's weapon box drawn by as_render via cc_look_custom_spot; worn via
   cc_look_custom_part). Looks per port and character in ux0:data/CastleCrashers/weapon_looks.txt;
   Wi-Fi games start empty and don't save. hosttest: CC_LOOKS=file.

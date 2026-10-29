@@ -106,6 +106,8 @@ const float *render_shape_bounds(Shape *s);   // min x, min y, max x, max y in t
 void render_mask_push(DrawList *out);
 void render_mask_apply(DrawList *out);
 void render_mask_pop(DrawList *out);
+// Between push and apply: a rectangle (x0, y0)-(x1, y1) in twips, through m, as the mask
+void render_mask_rect(DrawList *out, Mat m, float x0, float y0, float x1, float y1);
 
 // Copies every tessellated mesh into one block from alloc (GPU-visible memory on
 // the Vita) as Vertex arrays and points Mesh.gpu at them. Returns the block, or

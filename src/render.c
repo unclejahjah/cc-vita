@@ -500,6 +500,13 @@ static void emit_shape(Shape *s, Mat m, CXform cx, DrawList *out) {
 
 void render_shape(Shape *s, Mat m, CXform cx, DrawList *out) { emit_shape(s, m, cx, out); }
 
+void render_mask_rect(DrawList *out, Mat m, float x0, float y0, float x1, float y1) {
+    if (!out->masking) return;
+    Mat b = {x1 - x0, 0, 0, y1 - y0, x0, y0};
+    DrawItem it = {&box_quad, mat_mul(m, b), NULL, -1, NULL, {0, 0, 0, 0}};
+    add_item(out, &it);
+}
+
 static void emit_char(Movie *mv, int cid, Mat m, CXform cx, int tick, DrawList *out);
 
 // Draws places in order until one is deeper than max_depth. A clip place masks

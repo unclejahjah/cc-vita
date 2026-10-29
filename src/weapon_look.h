@@ -25,4 +25,9 @@ const BitmapFill *cc_look_custom_part(AsMc *mc);
 // as_render.c: the armoury's custom spot draws the painting's weapon (placed by *at) under its own
 const BitmapFill *cc_look_custom_spot(AsMc *mc, Mat *at);
 
+// as_render.c: the reset spot's box bubble (its marker clip mc), drawn as its left half and that
+// half mirrored (the bubble's art has the level number's square on the right): its shape's
+// character id, placement and colour; 0 for any other clip
+int cc_look_box(AsMc *mc, int *cid, Mat *m, CXform *cx);
+
 #endif
