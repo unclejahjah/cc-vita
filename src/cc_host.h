@@ -89,7 +89,7 @@ int cc_menu_power_button(AsMc *panel, Mat screen, CcVert *out, int max);
 // The "BETA" sticker on the Multiplayer button: set CC_BETA_STICKER to 0 to take it off.
 // cc_menu_beta_place gives its matrix (sticker twips -> screen, through screen as above);
 // 0 when there's nothing to draw. The shape is cc_menu_beta_sticker (cc_buttons.h).
-#define CC_BETA_STICKER 1
+#define CC_BETA_STICKER 0
 
 // The public games list's server (tools/lobby/, src/lobby.h): "" for none.
 // ux0:data/CastleCrashers/lobby.txt overrides it.
