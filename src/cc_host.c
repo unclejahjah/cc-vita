@@ -101,6 +101,12 @@ static AsVal ret_false(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
     (void)vm; (void)this_; (void)argc; (void)argv;
     return as_bool(0);
 }
+static AsVal set_targets(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
+    (void)this_; (void)argc; (void)argv;
+    AsVal f = as_get(vm, as_objv(&vm->root->obj), as_atom(vm, "f_SetTargets"));
+    if (f.t == V_OBJ) as_call(vm, f, as_objv(&vm->root->obj), 0, NULL);
+    return as_undef();
+}
 static AsVal ret_zero(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
     (void)vm; (void)this_; (void)argc; (void)argv;
     return as_num(0);
@@ -1089,6 +1095,13 @@ static void on_loaded(AsVm *vm, AsMc *target) {
     AsStr *fsp = as_atom(vm, "f_SafePlayerType");
     if (as_get(vm, as_objv(&vm->root->obj), fsp).t == V_UNDEF)
         as_def_fn(vm, &vm->root->obj, "f_SafePlayerType", safe_player_type);
+    // EBEE.swf calls _root.s_SetTargets() when a bee finishes spawning, a typo for
+    // f_SetTargets. A bee whose spawn wait spans a target refresh (another enemy dying) was
+    // left out of the enemy list with no prey: it hung where it spawned (often off screen),
+    // couldn't be hit, and Flowery Field's kill count never finished.
+    AsStr *sst = as_atom(vm, "s_SetTargets");
+    if (as_get(vm, as_objv(&vm->root->obj), sst).t == V_UNDEF)
+        as_def_fn(vm, &vm->root->obj, "s_SetTargets", set_targets);
     as_set(vm, as_objv(&target->obj), as_atom(vm, "b_loaded"), as_bool(1));
     if (is_level_slot(vm, target) && loading_shown) exit_wait = 0;   // its exit is next
 }

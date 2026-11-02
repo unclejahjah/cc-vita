@@ -647,10 +647,12 @@ static int as_mode(int argc, char **argv) {
             AsVal dmg = as_resolve_path(vm, vm->root, "f_Damage", &found);
             AsVal p1 = as_resolve_path(vm, vm->root, "loader.game.game.p1", &found);
             int to = getenv("CC_AUTOKILL_TO") ? atoi(getenv("CC_AUTOKILL_TO")) : 1 << 30;   // and stop there
+            // CC_AUTOKILL_KIND=bee: e_bee1..30 instead
+            const char *kind = getenv("CC_AUTOKILL_KIND") ? getenv("CC_AUTOKILL_KIND") : "human";
             if (f >= from && f < to && (f - from) % kev == 0 && dmg.t == V_OBJ && found) {
                 for (int i = 1; i <= 30; i++) {
                     char path[64];
-                    snprintf(path, sizeof path, "loader.game.game.e_human%d", i);
+                    snprintf(path, sizeof path, "loader.game.game.e_%s%d", kind, i);
                     AsVal e = as_resolve_path(vm, vm->root, path, &found);
                     if (!found || e.t != V_OBJ) continue;
                     if (!as_tobool(vm, as_get(vm, e, as_str(vm, "active"))) || !as_tobool(vm, as_get(vm, e, as_str(vm, "alive"))) ||
@@ -659,7 +661,7 @@ static int as_mode(int argc, char **argv) {
                     as_set(vm, e, as_atom(vm, "hitby"), p1);
                     AsVal av[6] = {e, as_num(9999), as_num(1), as_num(0), as_num(5), as_num(-20)};
                     as_call(vm, dmg, as_objv(&vm->root->obj), 6, av);
-                    printf("  [autokill] e_human%d at frame %d\n", i, f);
+                    printf("  [autokill] e_%s%d at frame %d\n", kind, i, f);
                 }
             }
         }
