@@ -1760,12 +1760,17 @@ static const int g_menu_order[] = {CC_MENU_PLAY, CC_MENU_OPTIONS, CC_MENU_QUIT};
 #define VIGNETTE_H SCREEN_H
 static vita2d_texture *g_vignette_rt;
 
-static void vignette_rt_draw(AsMc *vignettes, Mat m, RecolourCache *cache) {
+static int vignette_rt_make(void) {
     if (!g_vignette_rt) {
         g_vignette_rt = vita2d_create_empty_texture_rendertarget(VIGNETTE_W, VIGNETTE_H, SCE_GXM_TEXTURE_FORMAT_A8B8G8R8);
-        if (!g_vignette_rt) return;
+        if (!g_vignette_rt) return 0;
         vita2d_texture_set_filters(g_vignette_rt, SCE_GXM_TEXTURE_FILTER_LINEAR, SCE_GXM_TEXTURE_FILTER_LINEAR);
     }
+    return 1;
+}
+
+static void vignette_rt_draw(AsMc *vignettes, Mat m, RecolourCache *cache) {
+    if (!vignette_rt_make()) return;
     static DrawList dl;
     render_begin(&dl);
     dl.view[2] = SCREEN_W;
@@ -1999,12 +2004,14 @@ static int title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, siz
             render_begin(vb);
             hide_sprite(t->root, 626);   // the news bar (no news on the Vita)
             if (vignette_file) cc_title_hide_backdrop(t->root);   // the painted one goes
-            if (vignettes) {   // the PC's scenes are drawn on their own (below)
+            // the PC's scenes are drawn on their own (below); with no texture for them, with the menu
+            int vig_rt = vignettes && vignette_rt_make();
+            if (vig_rt) {
                 vignette_rt_draw(vignettes, mat_mul(screen, t->root->m), cache);   // (as_render_mc adds its own)
                 vignettes->visible = 0;
             }
             as_render_mc(t->root, screen, CX_IDENTITY, vb);
-            if (vignettes) vignettes->visible = 1;
+            if (vig_rt) vignettes->visible = 1;
             if (!panel && !cc_loading_busy(t) && (frame / 30) % 2 == 0 && as_render_host_line_height() > 0) {   // blinking, in the game's font, where the news bar was
                 Mat id = {1, 0, 0, 1, 0, 0};
                 CXform black = {{0, 0, 0, 1}, {0, 0, 0, 0}};
@@ -2202,11 +2209,8 @@ new_game:   // the title again after Exit to Main Menu
     // the title's moving scenes aren't wanted in the game: their meshes are video memory the
     // levels need (read again under the loading screen on the way back)
     free_movie_named("MENU_VIGNETTES.swf", &cache, cache_mem, cache_bytes);
-    if (g_vignette_rt) {   // and their texture
-        vita2d_wait_rendering_done();
-        vita2d_free_texture(g_vignette_rt);
-        g_vignette_rt = NULL;
-    }
+    // (their 2 MB texture stays: made again after a game, it found no hole that size in the
+    // video memory the levels' 2 MB mesh blocks had cut up, and the title was white)
     for (int i = 0; i < (int)(sizeof g_title_movers / sizeof *g_title_movers); i++)   // back where they were
         movie_meshes_move(g_title_movers[i], 1, &cache, cache_mem, cache_bytes);
     render_begin(&vb);
