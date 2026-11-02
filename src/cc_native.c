@@ -127,6 +127,116 @@ static AsVal native_check_line_hit(AsVm *vm, AsVal this_, int argc, AsVal *argv)
     return as_num(check_line_hit(&b, as_tonum(vm, ARG(0))));
 }
 
+// ---- f_HitWallGroupH/V(zone, speed, group_total, group_min, name): moving walls --------
+// Every character's every step asks each clip name1..nameN (walls, towers, big enemies
+// that block) whether the step runs into its zone box; with a crowd on screen (the troll
+// mother's eighteen trolls) the two were a seventh of the script work. Same tests as the
+// script, in the same order (NaN compares false as in the script).
+
+static AsStr *A_loader, *A_game, *A_active, *A_angle, *A_zone, *A_top, *A_bottom, *A_left, *A_right, *A_w, *A_h,
+    *A_x, *A_y, *A_collide, *A_wall_x, *A_wall_y, *A_body_y, *A_hitzone, *A_height, *A_abs_bottom, *A_abs_top,
+    *A_depth_mod, *A_current_depth, *A_y_prop;
+
+static AsVal game_clip(AsVm *vm) {
+    AsVal l = as_get(vm, as_objv(&vm->root->obj), A_loader);
+    return as_get(vm, as_get(vm, l, A_game), A_game);
+}
+
+static double num_of(AsVm *vm, AsVal o, AsStr *k) { return as_tonum(vm, as_get(vm, o, k)); }
+
+static AsVal group_member(AsVm *vm, AsVal game, AsVal name, double i) {
+    char buf[96];
+    snprintf(buf, sizeof buf, "%s%d", as_tostr(vm, name)->s, (int)i);
+    return as_get(vm, game, as_atom(vm, buf));
+}
+
+static AsVal native_hit_wall_group_v(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
+    (void)this_;
+    AsVal zone = ARG(0), name = ARG(4), game = game_clip(vm);
+    double speed = as_tonum(vm, ARG(1)), total = as_tonum(vm, ARG(2));
+    double zx = num_of(vm, zone, A_x), zy = num_of(vm, zone, A_y), ny = zy + speed;
+    for (double i = as_tonum(vm, ARG(3)); !(i > total); i++) {
+        AsVal r1 = group_member(vm, game, name, i);
+        if (!as_tobool(vm, as_get(vm, r1, A_active))) continue;
+        AsVal z = as_get(vm, r1, A_zone);
+        double top = num_of(vm, z, A_top), bottom = num_of(vm, z, A_bottom), w = num_of(vm, z, A_w);
+        double dx = fabs(zx - num_of(vm, z, A_x));
+        if (as_tobool(vm, as_get(vm, r1, A_angle))) {
+            if (!(ny < top) && !(ny > bottom)) {
+                if (dx > w) continue;
+                double r6 = (num_of(vm, z, A_right) - zx) / (w * 2);
+                double r4 = bottom - num_of(vm, z, A_h) * 2 * r6;
+                if ((speed > 0 && !(zy > r4) && !(ny < r4)) || (speed < 0 && !(zy < r4) && !(ny > r4))) {
+                    as_set(vm, zone, A_collide, r1);
+                    return as_bool(1);
+                }
+            }
+        } else if (dx < w) {
+            if (zy < top && !(ny < top)) return as_bool(1);
+            if (zy > bottom && !(ny > bottom)) return as_bool(1);
+        }
+    }
+    return as_bool(0);
+}
+
+static AsVal native_hit_wall_group_h(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
+    (void)this_;
+    AsVal zone = ARG(0), name = ARG(4), game = game_clip(vm);
+    double speed = as_tonum(vm, ARG(1)), total = as_tonum(vm, ARG(2));
+    double zx = num_of(vm, zone, A_x), zy = num_of(vm, zone, A_y), nx = zx + speed;
+    for (double i = as_tonum(vm, ARG(3)); !(i > total); i++) {
+        AsVal r1 = group_member(vm, game, name, i);
+        if (!as_tobool(vm, as_get(vm, r1, A_active)) || (r1.t == V_OBJ && zone.t == V_OBJ && r1.o == zone.o)) continue;
+        AsVal z = as_get(vm, r1, A_zone);
+        double top = num_of(vm, z, A_top), bottom = num_of(vm, z, A_bottom);
+        if (zy < top || zy > bottom) continue;
+        double left = num_of(vm, z, A_left), right = num_of(vm, z, A_right);
+        int hit = 0;
+        if (as_tobool(vm, as_get(vm, r1, A_angle))) {
+            if (!(nx < left) && !(nx > right)) {
+                double r6 = 1 - (bottom - zy) / (num_of(vm, z, A_h) * 2);
+                double r4 = left + num_of(vm, z, A_w) * 2 * r6;
+                hit = (speed > 0 && !(zx > r4) && !(nx < r4)) || (speed < 0 && !(zx < r4) && !(nx > r4));
+            }
+        } else {
+            double cx = num_of(vm, z, A_x);
+            if ((zx < cx && !(nx < left) && speed > 0) || (zx > cx && !(nx > right) && speed < 0)) {
+                double hh = num_of(vm, as_get(vm, r1, A_hitzone), A_height);
+                hit = num_of(vm, zone, A_body_y) > 0 - hh;
+            }
+        }
+        if (hit) {
+            as_set(vm, r1, A_wall_x, as_get(vm, z, A_x));
+            as_set(vm, r1, A_wall_y, as_get(vm, z, A_y));
+            as_set(vm, zone, A_collide, r1);
+            return as_bool(1);
+        }
+    }
+    return as_bool(0);
+}
+
+// ---- f_Depth(zone, u_depth): a character's place in the drawing order by its y ---------
+static double to_int(double v) { return isnan(v) || isinf(v) ? 0 : trunc(v); }
+
+static AsVal native_depth(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
+    (void)this_;
+    AsVal zone = ARG(0);
+    if (!as_tobool(vm, zone)) return as_undef();
+    double u = as_tonum(vm, ARG(1)), mod = num_of(vm, zone, A_depth_mod), d;
+    AsVal game = game_clip(vm), ab = as_get(vm, game, A_abs_bottom);
+    if (as_tobool(vm, ab)) {
+        double dist = fabs(num_of(vm, ab, A_y_prop) - u);
+        if (as_tobool(vm, as_get(vm, game, A_abs_top))) dist /= 2;
+        d = 1000000 - (to_int(dist) * 1000 + mod);
+    } else {
+        d = to_int(10000000 - fabs(u - 200) * 1000 + mod);
+    }
+    as_set(vm, zone, A_current_depth, as_num(d));
+    AsVal a = as_num(to_int(d));
+    as_call_method(vm, zone, "swapDepths", 1, &a);
+    return as_undef();
+}
+
 // ---- f_SpawnBear(x, y, enemy_level): bears start inside the walls ----------------------
 // Tall Grass Field's bear boss sends helpers in from main.right + 150 at the boss's _y
 // (-346) + random(200). During the boss's entrance the camera stands so that this lands
@@ -942,8 +1052,19 @@ void cc_native_init(AsVm *vm) {
     A_n_type = as_atom(vm, "n_type");
     A_n_index = as_atom(vm, "n_index");
     A_n_slope = as_atom(vm, "n_slope");
+    static const struct { AsStr **a; const char *s; } atoms[] = {
+        {&A_loader, "loader"}, {&A_game, "game"}, {&A_active, "active"}, {&A_angle, "angle"}, {&A_zone, "zone"},
+        {&A_top, "top"}, {&A_bottom, "bottom"}, {&A_left, "left"}, {&A_right, "right"}, {&A_w, "w"}, {&A_h, "h"},
+        {&A_x, "x"}, {&A_y, "y"}, {&A_collide, "collide"}, {&A_wall_x, "wall_x"}, {&A_wall_y, "wall_y"},
+        {&A_body_y, "body_y"}, {&A_hitzone, "hitzone"}, {&A_height, "_height"}, {&A_abs_bottom, "abs_bottom"},
+        {&A_abs_top, "abs_top"}, {&A_depth_mod, "depth_mod"}, {&A_current_depth, "current_depth"}, {&A_y_prop, "_y"},
+    };
+    for (size_t i = 0; i < sizeof atoms / sizeof atoms[0]; i++) *atoms[i].a = as_atom(vm, atoms[i].s);
     if (getenv("CC_NO_NATIVE")) return;   // run the scripts' own versions (for comparing)
     as_override(vm, "f_BSPHitTest", native_bsp_hit_test);
     as_override(vm, "f_CheckNode", native_check_node);
     as_override(vm, "f_CheckLineHit", native_check_line_hit);
+    as_override(vm, "f_HitWallGroupH", native_hit_wall_group_h);
+    as_override(vm, "f_HitWallGroupV", native_hit_wall_group_v);
+    as_override(vm, "f_Depth", native_depth);
 }
