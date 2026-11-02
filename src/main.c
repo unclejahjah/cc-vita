@@ -2584,7 +2584,12 @@ new_game:   // the title again after Exit to Main Menu
         // Nothing loads while the files go: a file still loading is taken in first. The title's
         // own files stay (as if just preloaded), so the title loads nothing in the background:
         // a background load there (lobby.swf) froze the Vita in the title's drawing, ~3 s in.
+        // The game's preloads that the game never asked for (fx, player, animals: left from the
+        // map, before any level) go too: kept, fx.swf alone held 32 MB of video memory, the title
+        // had to draw from main memory and ran slow (Jah 2026-11-02, only after a short game).
         if (g_bg.state != BG_IDLE) bg_finish();
+        for (int i = 0; i < g_nmovies; i++)
+            if (g_movies[i].keep == 2) g_movies[i].keep = 0;
         for (int i = 0; i < g_nmovies; i++)
             for (int j = 0; j < PRELOAD_TITLE; j++)
                 if (!g_movies[i].keep && !strcasecmp(g_movies[i].name, g_preload[j])) g_movies[i].keep = 2;
