@@ -2373,6 +2373,8 @@ new_game:   // the title again after Exit to Main Menu
 #endif
         int ticked = 0, stalled = 0;
         float hitch_script = 0, hitch_gc = 0, hitch_build = 0;   // this pass, for the slow-frame log
+        int hitch_ticks = 0;
+        long long hitch_ops = vm->ops;
         const char *hitch_what = "";
         // leaving: only the loading screen moves; once it covers the screen the game goes
         while (leaving && acc >= tick_us) {
@@ -2406,6 +2408,7 @@ new_game:   // the title again after Exit to Main Menu
             SceUInt64 t2 = sceKernelGetProcessTimeWide();
             hitch_script += (t1 - t0) / 1000.0f;
             hitch_gc += (t2 - t1) / 1000.0f;
+            hitch_ticks++;
             tick_ms += (t2 - t0) / 1000.0f;
             ticks++;
             acc -= tick_us;
@@ -2545,9 +2548,10 @@ new_game:   // the title again after Exit to Main Menu
         // goes to the log with where the time went, to find what stalls on the Vita.
         static SceUInt64 last_shown;
         if (ticked && !pause.open && last_shown && now - last_shown > 50000)
-            log_line("[%u] slow frame %.0f ms: script %.1f gc %.1f build %.1f draw %.1f swap %.1f ms, %d tris "
+            log_line("[%u] slow frame %.0f ms: script %.1f (%d ticks, %lld actions) gc %.1f build %.1f draw %.1f swap %.1f ms, %d tris "
                      "%d draws %d cpu-coloured%s",
-                     (unsigned)vm->tick, (now - last_shown) / 1000.0f, hitch_script, hitch_gc, hitch_build,
+                     (unsigned)vm->tick, (now - last_shown) / 1000.0f, hitch_script, hitch_ticks, vm->ops - hitch_ops,
+                     hitch_gc, hitch_build,
                      (swap_t0 - draw_t0) / 1000.0f, (now - swap_t0) / 1000.0f, render_stats.triangles,
                      render_stats.draws, render_stats.cx_tris, hitch_what);
         if (ticked && !pause.open && last_shown && now - last_shown > 50000 && audio_sfx_pending())

@@ -27,7 +27,7 @@
 #define NET_MAX_DELAY 15       // the most, however far away someone is (half a second)
 #define NET_CODE_LEN 7
 #define NET_NAME 32
-#define NET_VERSION 5         // both sides must have the same: the frame format and the game code
+#define NET_VERSION 6        // both sides must have the same: the frame format and the game code
 
 // One player's part of a frame.
 typedef struct {
