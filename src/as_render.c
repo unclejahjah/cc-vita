@@ -262,14 +262,15 @@ static int p_type_of(AsMc *mc) {
 }
 
 static const BitmapFill *custom_part(AsMc *mc) {
-    if (!cc_custom_p_type() || !mc->def || !A_p_type) return NULL;
-    if (mc->name && !strncmp(mc->name->s, "portrait_", 9) && mc->frame == CC_CUSTOM_P_TYPE + 2)
-        return cc_custom_named(CC_PORTRAIT);
+    if (!cc_custom_count() || !mc->def || !A_p_type) return NULL;
+    // the portrait goes to frame p_type + 3: past its last frame for most custom characters, so
+    // the frame asked for is what tells
+    if (mc->name && !strncmp(mc->name->s, "portrait_", 9))
+        return cc_custom_named(CC_PORTRAIT, (mc->frame == mc->goto_got ? mc->goto_want : mc->frame) - 2);
     if (named(mc, "pic") && named(mc->parent, "pic") && mc->parent->parent) {
         AsProp *pp = as_own(&mc->parent->parent->obj, A_player_pt);
         AsVal v = pp ? pp->v : (AsVal){0};
-        if (v.t == V_OBJ && v.o->type == OBJ_MC && p_type_of((AsMc *)v.o) == CC_CUSTOM_P_TYPE)
-            return cc_custom_named(CC_ICON);
+        if (v.t == V_OBJ && v.o->type == OBJ_MC) return cc_custom_named(CC_ICON, p_type_of((AsMc *)v.o));
         return NULL;
     }
     if (!mc->movie->is_player) return NULL;

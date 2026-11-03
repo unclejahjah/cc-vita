@@ -288,8 +288,10 @@ static void apply_frame(AsVm *vm, AsMc *mc, int frame) {
 
 void as_mc_goto(AsVm *vm, AsMc *mc, int frame, int play) {
     if (!mc->def || !mc->def->nframes || mc->removed) return;
+    mc->goto_want = frame;
     if (frame < 0) frame = 0;
     if (frame >= mc->def->nframes) frame = mc->def->nframes - 1;
+    mc->goto_got = frame;
     if (AS_ENV("AS_GOTO") && mc->name && !strcasecmp(mc->name->s, AS_ENV("AS_GOTO")))
         as_warn(vm, "tick %u: %s goto frame %d (%s) from %d%s", vm->tick, mc->name->s, frame + 1,
                 play ? "play" : "stop", mc->frame + 1,

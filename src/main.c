@@ -491,6 +491,24 @@ static void bitmap_to_texture(Bitmap *bm) {
     bm->rgba = NULL;
 }
 
+// A custom character's whole painting (custom_char.h), read from its cache file straight into
+// a texture; and let go of one (its last draw may still be on the GPU)
+static int custom_texture_from_file(Bitmap *bm, FILE *f) {
+    vita2d_texture *tex = vita2d_create_empty_texture_format(bm->w, bm->h, SCE_GXM_TEXTURE_FORMAT_U8U8U8U8_ABGR);
+    if (!tex) return 0;
+    uint8_t *dst = vita2d_texture_get_datap(tex);
+    unsigned stride = vita2d_texture_get_stride(tex);
+    for (int y = 0; y < bm->h; y++)
+        if (fread(dst + y * stride, 4, bm->w, f) != (size_t)bm->w) { vita2d_free_texture(tex); return 0; }
+    bm->tex = tex;
+    return 1;
+}
+
+static void custom_free_texture(Bitmap *bm) {
+    vita2d_wait_rendering_done();
+    vita2d_free_texture(bm->tex);
+}
+
 // ux0:data/CastleCrashers/{game,levels}/<base>: 1 and the path if it's there
 static int find_file(const char *base, char *path, size_t n, int *is_level) {
     static const char *dirs[] = {"game", "levels"};
@@ -2139,8 +2157,11 @@ int main(void) {
     sceTouchSetSamplingState(SCE_TOUCH_PORT_BACK, SCE_TOUCH_SAMPLING_STATE_START);
     log_open();
     log_line("cc_vita started");
-    if (cc_custom_load(DATA_DIR "custom/"))   // optional: a painted character (custom_char.h)
-        log_line("custom character \"%s\" (fights like character %d)", cc_custom_name(), cc_custom_base());
+    cc_custom_texture_from_file = custom_texture_from_file;
+    cc_custom_free_texture = custom_free_texture;
+    for (int i = 0, n = cc_custom_load_all(DATA_DIR "custom/"); i < n; i++)   // optional: painted characters
+        log_line("custom character %d \"%s\" (fights like character %d)", CC_CUSTOM_P_TYPE + i, cc_custom_name(i),
+                 cc_custom_base(CC_CUSTOM_P_TYPE + i));
     cc_look_load(DATA_DIR "weapon_looks.txt");   // weapon looks from the armoury (weapon_look.h)
     if (cc_animal_load(DATA_DIR "custom/animal/"))   // optional: a custom animal orb (custom_animal.h)
         log_line("custom animal orb \"%s\"", cc_animal_name());
@@ -2512,6 +2533,7 @@ new_game:   // the title again after Exit to Main Menu
 #ifdef CC_NET
             netplay_hud_names(vm);
 #endif
+            cc_custom_new_frame();
             as_render_mc(vm->root, screen, CX_IDENTITY, &vb);
             if (saving_timer > 0) {
                 saving_timer--;

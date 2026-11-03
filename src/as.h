@@ -145,6 +145,7 @@ struct AsMc {
     AsStr *name;               // atom; NULL for unnamed
     int depth;
     int frame;                 // 0-based current frame
+    int goto_want, goto_got;   // the last goto's frame as asked for (maybe past the end) and as went to
     uint8_t playing;
     uint8_t removed;
     uint32_t gotos;            // frame changes by a goto (as_mc_parent)

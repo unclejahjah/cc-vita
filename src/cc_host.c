@@ -410,9 +410,9 @@ double *cc_storage(int port) { return port >= 0 && port < 4 ? storage[port] : NU
 // profile, as owning the DLC did. Everyone else is still earned through the game.
 void cc_own_dlc_characters(void) {
     for (int p = 0; p < 4; p++)
-        for (int t = 29; t <= CC_CUSTOM_P_TYPE; t++) {   // 32 Paint Jr. (paint_jr.h), 33 a custom
-            if (t == CC_PAINTJR_P_TYPE && !cc_paintjr_p_type()) continue;   // character (custom_char.h)
-            if (t == CC_CUSTOM_P_TYPE && !cc_custom_p_type()) continue;
+        for (int t = 29; t < CC_CUSTOM_P_TYPE + CC_CUSTOM_MAX; t++) {   // 32 Paint Jr. (paint_jr.h),
+            if (t == CC_PAINTJR_P_TYPE && !cc_paintjr_p_type()) continue;   // 33 on the custom
+            if (t >= CC_CUSTOM_P_TYPE && cc_custom_slot(t) < 0) continue;   // characters (custom_char.h)
             double *b = &storage[p][64 + 48 * (t - 1)];
             if (!((int)*b & 128)) *b = (int)*b | 128;
         }
@@ -500,7 +500,7 @@ int cc_storage_load(const char *path) {
     // over 0x62 (level 99) is clamped. (Characters played while the levels' developer
     // settings were on saved magic/strength 9999; this heals them.)
     for (int p = 0; p < 4; p++)
-        for (int t = 1; t <= CC_CUSTOM_P_TYPE; t++) {
+        for (int t = 1; t < CC_CUSTOM_P_TYPE + CC_CUSTOM_MAX; t++) {
             double *c = &storage[p][64 + 48 * (t - 1)];
             if (c[1] > 0x62) c[1] = 0x62;
             for (int s = 8; s <= 11; s++)
@@ -1089,7 +1089,7 @@ static AsVal hide_loading_screen(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
 static AsVal safe_player_type(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
     (void)this_;
     int t = argc > 0 ? (int)as_tonum(vm, argv[0]) : 1;
-    return as_num(t >= 1 && (t <= CC_CHARACTERS || t == cc_paintjr_p_type() || t == cc_custom_p_type()) ? t : 1);
+    return as_num(t >= 1 && (t <= CC_CHARACTERS || t == cc_paintjr_p_type() || cc_custom_slot(t) >= 0) ? t : 1);
 }
 
 static void on_loaded(AsVm *vm, AsMc *target) {

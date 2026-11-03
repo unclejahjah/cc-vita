@@ -350,9 +350,9 @@ static int as_mode(int argc, char **argv) {
     vm->trace = host_trace;
     if (getenv("CC_PREFETCH")) vm->prefetch = fake_prefetch;
     // CC_CUSTOM_DIR=dir/: a painted character, as ux0:data/CastleCrashers/custom/ on the Vita
-    if (getenv("CC_CUSTOM_DIR") && cc_custom_load(getenv("CC_CUSTOM_DIR")))
-        printf("custom character \"%s\" (character %d, fights like %d)\n", cc_custom_name(), cc_custom_p_type(),
-               cc_custom_base());
+    for (int i = 0, n = getenv("CC_CUSTOM_DIR") ? cc_custom_load_all(getenv("CC_CUSTOM_DIR")) : 0; i < n; i++)
+        printf("custom character \"%s\" (character %d, fights like %d)\n", cc_custom_name(i), CC_CUSTOM_P_TYPE + i,
+               cc_custom_base(CC_CUSTOM_P_TYPE + i));
     if (getenv("CC_LOOKS")) cc_look_load(getenv("CC_LOOKS"));   // CC_LOOKS=file: weapon_looks.txt
     if (getenv("CC_CUSTOM_ANIMAL"))   // CC_CUSTOM_ANIMAL=dir/ (with pet.png, pet.xml): a custom animal orb
         cc_animal_load(getenv("CC_CUSTOM_ANIMAL"));
