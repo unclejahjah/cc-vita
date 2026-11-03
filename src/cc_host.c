@@ -897,6 +897,7 @@ static void loading_exit_check(AsVm *vm);
 
 static void after_frame_scripts(AsVm *vm) {
     loading_exit_check(vm);
+    cc_enemies_back_inside(vm);
     if (!bsp_pending) return;
     bsp_pending = 0;
     as_call_method(vm, as_objv(&vm->root->obj), "f_InitLevelBSP", 0, NULL);

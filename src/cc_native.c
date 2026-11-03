@@ -268,6 +268,41 @@ static AsVal native_spawn_bear(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
     return r;
 }
 
+// ---- enemies back inside the Necromancer's room -----------------------------------------
+// A beefy enemy there walked out over the back wall into the sky now and then (Jah
+// 2026-11-03; not caught on the PC). Players outside the walls are warped back in by
+// f_CheckInsideBSP; enemies never are. Here, twice a second, an enemy with no wall above it
+// and one below (over the top wall) is put just under that wall. This room's waves all
+// appear inside it, so nobody walking in from off screen is caught.
+void cc_enemies_back_inside(AsVm *vm) {
+    static int tick;
+    if (++tick % 15) return;
+    if (as_tonum(vm, as_get(vm, as_objv(&vm->root->obj), as_atom(vm, "level"))) != 56) return;
+    AsVal game = game_clip(vm), set_xy = as_get(vm, as_objv(&vm->root->obj), as_atom(vm, "f_SetXY"));
+    if (set_xy.t != V_OBJ) return;
+    Bsp b;
+    bsp_begin(vm, &b);
+    b.wl = as_undef();   // the scripts' bsp_working_line stays as it was
+    if (!b.bsp) return;
+    for (int i = 1; i <= 30; i++) {
+        char name[32];
+        snprintf(name, sizeof name, "e_human%d", i);
+        AsVal e = as_get(vm, game, as_atom(vm, name));
+        if (e.t != V_OBJ || !as_tobool(vm, as_get(vm, e, A_active)) ||
+            !as_tobool(vm, as_get(vm, e, as_atom(vm, "alive"))))
+            continue;
+        double x = num_of(vm, e, A_x), y = num_of(vm, e, A_y);
+        if (isnan(x) || isnan(y)) continue;
+        b.x1 = b.x2 = x, b.y1 = y, b.y2 = y - 1000;
+        if (truthy(check_node(&b, 0, 0))) continue;   // a wall above: inside
+        b.y2 = y + 1000;
+        double r = check_node(&b, 0, 0);
+        if (!truthy(r)) continue;
+        AsVal a[3] = {e, as_num(x), as_num(y + r * 1000 + 10)};
+        as_call(vm, set_xy, as_objv(&vm->root->obj), 3, a);
+    }
+}
+
 // ---- f_GetDefaultWeapon(hud): the weapon each character starts with --------------------
 // Same table as the script. One addition: f_LoadCharacterData calls it right after
 // reading the saved weapon and just before the four stats, and a character that was

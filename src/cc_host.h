@@ -53,6 +53,7 @@ void cc_set_auto_potion(AsVm *vm, int on);
 AsVal cc_flash_global(AsVm *vm, const char *name);
 void cc_set_flash_global(AsVm *vm, const char *name, AsVal v);
 void cc_native_init(AsVm *vm);   // native versions of hot game functions (cc_native.c); called by cc_host_init
+void cc_enemies_back_inside(AsVm *vm);   // each tick: the Necromancer's room's enemies over its back wall
 // For files shown without MAIN.swf (the title menu): the _root functions their prompt icons
 // call (f_GetButtonArt), defined on that root.
 void cc_native_root_functions(AsVm *vm, AsObj *root);
