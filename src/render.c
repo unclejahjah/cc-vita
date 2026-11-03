@@ -312,6 +312,20 @@ static void release_cb(Shape *s, void *ctx) {
 
 void render_release_cpu(Movie *m) { each_shape(m, release_cb, NULL); }
 
+static void pending_cb(Shape *s, void *ctx) {
+    size_t *bytes = ctx;
+    if (s->mesh.nverts && s->mesh.xy && !s->mesh.gpu) *bytes += s->mesh.nverts * sizeof(Vertex);
+    for (int i = 0; i < s->nbfills; i++) {
+        const Mesh *bm = &s->bfills[i].mesh;
+        if (bm->nverts && bm->xy && !bm->gpu) *bytes += bm->nverts * sizeof(TexVertex);
+    }
+}
+size_t render_pending_bytes(Movie *m) {
+    size_t n = 0;
+    each_shape(m, pending_cb, &n);
+    return n;
+}
+
 typedef struct { uint8_t *old, *new_block; size_t size; } Relocation;
 static void relocate_mesh(Mesh *mesh, const Relocation *r) {
     uint8_t *p = (uint8_t *)mesh->gpu;

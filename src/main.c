@@ -530,6 +530,10 @@ static Movie *register_movie(const char *base, const char *path, Movie *m) {
     ms->n = 0;
     g_mesh_in_main = 0;
     if (render_upload(m, meshes_alloc, ms)) render_release_cpu(m);
+    size_t pending = render_pending_bytes(m);
+    if (pending)
+        log_line("  %u KB of meshes found no room in either memory: drawn by the CPU for now (slow)",
+                 (unsigned)(pending >> 10));
     size_t in_main = meshes_bytes(ms, 0);
     if (in_main)
         log_line("  video memory %d MB free, %u of its %u KB of meshes in main memory (slow)", cdram_free_mb(),
@@ -825,6 +829,25 @@ static const char *const g_title_movers[] = {"PAUSE.swf", "lobby.swf"};
 static int game_meshes_to_video(RecolourCache *cache, void *cache_mem, size_t cache_bytes) {
     static const char *const first[] = {"player.swf", "fx.swf"};
     int moved = 0;
+    // First the meshes that found no room at all when their file came in (Flowery Field's
+    // level, behind the title's files after a trip back to the menu: drawn by the CPU, 12 fps)
+    for (int i = 0; i < g_nmovies; i++) {
+        Movie *m = g_movies[i].m;
+        size_t pending = render_pending_bytes(m);
+        if (!pending) continue;
+        vita2d_wait_rendering_done();
+        recolour_cache_free(cache);
+        recolour_cache_init(cache, cache_mem, cache_bytes);
+        int n0 = g_movies[i].gpu.n;
+        render_upload(m, meshes_alloc, &g_movies[i].gpu);
+        if (g_movies[i].gpu.n > n0) {
+            render_release_cpu(m);
+            moved++;
+        }
+        log_line("%s: %u KB of meshes uploaded, %u KB still not (video memory %d MB free)", g_movies[i].name,
+                 (unsigned)((pending - render_pending_bytes(m)) >> 10), (unsigned)(render_pending_bytes(m) >> 10),
+                 cdram_free_mb());
+    }
     for (int j = 0; j < (int)(sizeof first / sizeof *first); j++) moved += movie_meshes_move(first[j], 1, cache, cache_mem, cache_bytes);
     for (int i = 0; i < g_nmovies && cdram_free_mb() > 2; i++) {
         if (!meshes_bytes(&g_movies[i].gpu, 0)) continue;
@@ -1788,11 +1811,14 @@ static void vignette_rt_draw(AsMc *vignettes, Mat m, RecolourCache *cache) {
 // 1: a Wi-Fi game was started (net.state NET_PLAYING), 0: Local Game
 // from_game: back from Exit to Main Menu, under the loading screen, which then goes out over it
 static int title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, size_t cache_bytes, int from_game) {
+    // the scenes' texture before anything else loads: made after the menu and the scenes, it
+    // found no hole its size in video memory the 2 MB mesh blocks had cut up (a white title)
+    char art_path[256];
+    int art_level;
+    if (from_game && find_file("MENU_VIGNETTES.swf", art_path, sizeof art_path, &art_level)) vignette_rt_make();
     Movie *m = vita_loader(NULL, "MENU.swf");
     if (!m) return 0;
     // the mode book's borrowed pictures, now rather than when Local Game opens it (a hitch)
-    char art_path[256];
-    int art_level;
     if (find_file("MODEART.swf", art_path, sizeof art_path, &art_level)) host_movie("MODEART.swf");
     // and the FRESH sticker's (FRESHLOGO.swf), else the menu's first frame hitched loading it
     if (find_file("FRESHLOGO.swf", art_path, sizeof art_path, &art_level)) help_book_fresh_logo = host_movie("FRESHLOGO.swf");
@@ -2209,8 +2235,11 @@ new_game:   // the title again after Exit to Main Menu
     // the title's moving scenes aren't wanted in the game: their meshes are video memory the
     // levels need (read again under the loading screen on the way back)
     free_movie_named("MENU_VIGNETTES.swf", &cache, cache_mem, cache_bytes);
-    // (their 2 MB texture stays: made again after a game, it found no hole that size in the
-    // video memory the levels' 2 MB mesh blocks had cut up, and the title was white)
+    if (g_vignette_rt) {   // and their texture (made again first thing on the way back)
+        vita2d_wait_rendering_done();
+        vita2d_free_texture(g_vignette_rt);
+        g_vignette_rt = NULL;
+    }
     for (int i = 0; i < (int)(sizeof g_title_movers / sizeof *g_title_movers); i++)   // back where they were
         movie_meshes_move(g_title_movers[i], 1, &cache, cache_mem, cache_bytes);
     render_begin(&vb);
@@ -2464,7 +2493,8 @@ new_game:   // the title again after Exit to Main Menu
             // meshes in main memory: to video memory, once per change in the files kept
             if (g_nmovies != last_move_count) {
                 int any = 0;
-                for (int i = 0; i < g_nmovies; i++) any |= meshes_bytes(&g_movies[i].gpu, 0) != 0;
+                for (int i = 0; i < g_nmovies; i++)
+                    any |= meshes_bytes(&g_movies[i].gpu, 0) != 0 || render_pending_bytes(g_movies[i].m) != 0;
                 if (any && game_meshes_to_video(&cache, cache_mem, cache_bytes)) hitch_what = " (meshes to video memory)";
                 last_move_count = g_nmovies;
             }

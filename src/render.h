@@ -118,6 +118,9 @@ void *render_upload(Movie *m, void *(*alloc)(size_t bytes, void *ctx), void *ctx
 // After render_upload: frees the outlines and CPU-side vertices of uploaded shapes
 // (recolouring then reads the uploaded copy). Halves a movie's memory.
 void render_release_cpu(Movie *m);
+// Bytes of meshes not uploaded yet (no room when the file came in): drawn from the CPU, slow.
+// render_upload again uploads just those (the rest were released).
+size_t render_pending_bytes(Movie *m);
 // After the block at old (size bytes) was copied to new: points Mesh.gpu into new.
 void render_relocate(Movie *m, void *old, size_t size, void *new_block);
 
