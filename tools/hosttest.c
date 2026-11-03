@@ -9,6 +9,7 @@
 #include <time.h>
 
 #include <dirent.h>
+#include <malloc.h>
 #include <strings.h>
 
 #include "../src/as_render.h"
@@ -742,6 +743,10 @@ static int as_mode(int argc, char **argv) {
                 int found;
                 AsVal v = as_resolve_path(vm, vm->root, t, &found);
                 printf(" %s", found ? as_tostr(vm, v)->s : "-");
+            }
+            if (getenv("CC_HEAP")) {   // CC_HEAP=1: malloc'd KB and script objects, for leaks over a session
+                struct mallinfo2 mi = mallinfo2();
+                printf(" | heap %zu KB, %zu objects, %d files", mi.uordblks >> 10, (size_t)vm->heap_count, nmovie_cache);
             }
             printf("\n");
         }
