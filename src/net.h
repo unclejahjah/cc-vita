@@ -27,7 +27,7 @@
 #define NET_MAX_DELAY 15       // the most, however far away someone is (half a second)
 #define NET_CODE_LEN 7
 #define NET_NAME 32
-#define NET_VERSION 6        // both sides must have the same: the frame format and the game code
+#define NET_VERSION 7        // both sides must have the same: the frame format and the game code
 
 // One player's part of a frame.
 typedef struct {
@@ -49,7 +49,11 @@ typedef struct {
     int age;                   // polls since its last beacon
 } NetHost;
 
-enum { NET_RULE_AUTO_POTION = 1 };   // net.rules bits (the host sets them before net_start)
+enum { NET_RULE_AUTO_POTION = 1,      // net.rules bits (the host sets them before net_start)
+       NET_RULE_PAINT_JR = 2 };       // net_start adds it: every Vita has Paint Jr.'s files
+// What this Vita has, told to the host when joining (set before net_host / net_join)
+enum { NET_CAP_PAINT_JR = 1 };        // Paint Jr.'s files and his castle (paint_jr.h)
+extern int net_my_caps;
 enum { NET_OFF, NET_HOSTING, NET_SCANNING, NET_CONNECTING, NET_JOINING, NET_LOBBY, NET_PLAYING, NET_LOST };
 
 typedef struct {

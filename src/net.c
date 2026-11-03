@@ -232,7 +232,10 @@ typedef struct {
     int npings;
     uint8_t *profile;
     int nprofile;
+    int caps;                  // its NET_CAP_* bits
 } Peer;
+
+int net_my_caps;
 
 static int g_ready;
 static int s_listen = -1, s_udp = -1, s_beacon = -1;
@@ -444,7 +447,7 @@ static void host_lobby(void) {
         int type, len;
         uint8_t *m;
         while (conn_recv(&pe->c, &type, &m, &len)) {
-            if (type == MSG_HELLO && len >= 4 + NET_NAME && !pe->used) {
+            if (type == MSG_HELLO && len >= 4 + NET_NAME + 1 && !pe->used) {
                 if (get32(m) != NET_VERSION) {
                     const char *why = "The host's Castle Crashers is a different version";
                     conn_send(&pe->c, MSG_REFUSE, why, strlen(why) + 1, NULL, 0);
@@ -454,9 +457,10 @@ static void host_lobby(void) {
                 }
                 memcpy(net.names[p], m + 4, NET_NAME);
                 net.names[p][NET_NAME - 1] = 0;
-                pe->nprofile = len - 4 - NET_NAME;
+                pe->caps = m[4 + NET_NAME];
+                pe->nprofile = len - 4 - NET_NAME - 1;
                 pe->profile = malloc(pe->nprofile + 1);
-                memcpy(pe->profile, m + 4 + NET_NAME, pe->nprofile);
+                memcpy(pe->profile, m + 4 + NET_NAME + 1, pe->nprofile);
                 pe->used = 1;
                 uint8_t port = p + 1;
                 conn_send(&pe->c, MSG_WELCOME, &port, 1, NULL, 0);
@@ -517,6 +521,11 @@ static int start_game(void) {
     if (net.slowest > NET_MAX_DELAY) net.slowest = NET_MAX_DELAY;
     if (getenv("NET_DELAY")) net.first = net.slowest = atoi(getenv("NET_DELAY"));
     net.delay = net.first;
+    // Paint Jr. when every Vita in the game has his files
+    int caps = net_my_caps;
+    for (int p = 1; p < NET_PLAYERS; p++)
+        if (peers[p].used) caps &= peers[p].caps;
+    net.rules = (net.rules & ~NET_RULE_PAINT_JR) | (caps & NET_CAP_PAINT_JR ? NET_RULE_PAINT_JR : 0);
     // the start: seed, delay, who's in, rules, the game mode, names, then each port's profile
     int total = 4 + 2 + 1 + 1 + 1 + sizeof net.names;
     for (int p = 0; p < NET_PLAYERS; p++) total += 4 + (p == 0 ? g_my_nprofile : peers[p].used ? peers[p].nprofile : 0);
@@ -796,9 +805,10 @@ static void client_connecting(void) {
     g_host.s = s;
     s_udp = udp_open(getenv("NET_PORT") ? 0 : base_port(1), 0);
     if (s_udp < 0) s_udp = udp_open(0, 0);
-    uint8_t head[4 + NET_NAME] = {0};
+    uint8_t head[4 + NET_NAME + 1] = {0};   // version, name, what this Vita has (NET_CAP_*)
     put32(head, NET_VERSION);
     snprintf((char *)head + 4, NET_NAME, "%s", net_local_name());
+    head[4 + NET_NAME] = (uint8_t)net_my_caps;
     conn_send(&g_host, MSG_HELLO, head, sizeof head, g_my_profile, g_my_nprofile);
     conn_flush(&g_host);
     net.state = NET_JOINING;

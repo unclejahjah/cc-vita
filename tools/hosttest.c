@@ -364,6 +364,8 @@ static int as_mode(int argc, char **argv) {
         cc_paintjr_set_available(access(a, R_OK) == 0, access(b, R_OK) == 0, access(c, R_OK) == 0);
         snprintf(a, sizeof a, "%s/levels/LEVEL15_NEW.swf", game_dir);
         cc_paintjr_set_castle(access(a, R_OK) == 0);
+        // NET_NO_PJ=1: this copy tells a Wi-Fi game it hasn't Paint Jr.'s files
+        net_my_caps = cc_paintjr_p_type() && access(a, R_OK) == 0 && !getenv("NET_NO_PJ") ? NET_CAP_PAINT_JR : 0;
         if (cc_paintjr_p_type()) printf("Paint Jr. (character %d)\n", cc_paintjr_p_type());
         if (getenv("CC_FRESH")) cc_fresh_set(atoi(getenv("CC_FRESH")));   // CC_FRESH=1: the FRESH look
         if (cc_fresh()) printf("FRESH look\n");
@@ -471,6 +473,8 @@ static int as_mode(int argc, char **argv) {
         }
         if (net.state != NET_PLAYING) { printf("net: no game (%s)\n", net.error); return 1; }
         cc_game_mode = net.mode;
+        cc_paintjr_set_active(net.rules & NET_RULE_PAINT_JR);   // as the Vita: only when every copy has him
+        printf("net: Paint Jr. %s\n", net.rules & NET_RULE_PAINT_JR ? "on" : "off");
         printf("net: playing as port %d, seed %u, delay %d (host %d, joiners %d)\n", net.port, net.seed, net.delay, net.first, net.slowest);
         netplay_begin(vm);
         vm->prefetch = netplay_prefetch;

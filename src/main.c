@@ -2171,7 +2171,11 @@ int main(void) {
         cc_paintjr_set_available(find_file("FRESH01.swf", path, sizeof path, &lvl),
                                  find_file("PJPARTS.swf", path, sizeof path, &lvl),
                                  find_file("PAINTJR.swf", path, sizeof path, &lvl));
-        cc_paintjr_set_castle(find_file("LEVEL15_NEW.swf", path, sizeof path, &lvl));
+        int castle = find_file("LEVEL15_NEW.swf", path, sizeof path, &lvl);
+        cc_paintjr_set_castle(castle);
+#ifdef CC_NET
+        net_my_caps = cc_paintjr_p_type() && castle ? NET_CAP_PAINT_JR : 0;   // he can play in Wi-Fi games
+#endif
         if (cc_paintjr_p_type()) log_line("Paint Jr. (character %d)", cc_paintjr_p_type());
         // the PC's moving title scenes: "Vita Edition" then has no painted cloud behind it
         cc_menu_badge_outline = find_file("MENU_VIGNETTES.swf", path, sizeof path, &lvl);
@@ -2279,7 +2283,7 @@ new_game:   // the title again after Exit to Main Menu
 #endif
     cc_look_set_active(!g_netgame);     // nor the looks kept on this one
     cc_animal_set_active(!g_netgame);   // not in Wi-Fi games: the other machine may not have it
-    cc_paintjr_set_active(!g_netgame);  // nor Paint Jr.'s files
+    cc_paintjr_set_active(!g_netgame || (net.rules & NET_RULE_PAINT_JR));   // Paint Jr. when every Vita has his files
     release_game_movies();              // the last game's part files (paint_jr.c) may go now
     cc_movie_keep = keep_for_game;
     cc_host_init(vm);
