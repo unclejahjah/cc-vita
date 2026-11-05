@@ -302,7 +302,11 @@ static Mat hud_placed(AsMc *mc, Mat parent, Mat m) {
     if (seen[i] != mc || seen_frame[i] != mc->frame) {
         Mat at = {mc->m.a, mc->m.b, mc->m.c, mc->m.d, 0, 0};
         float b[4];
+        AsMc *tally = g_vm ? as_mc_child(mc, as_atom(g_vm, "tally")) : NULL;   // the level's end totals: not its box
+        int tv = tally ? tally->visible : 0;
+        if (tally) tally->visible = 0;
         render_mc_bounds(mc, at, b);   // twips, from its point
+        if (tally) tally->visible = tv;
         if (b[2] <= b[0]) return m;
         seen[i] = mc;
         seen_frame[i] = mc->frame;
@@ -310,8 +314,11 @@ static Mat hud_placed(AsMc *mc, Mat parent, Mat m) {
     }
     float s = as_render_hud_scale, e = HUD_EDGE * 20, w = (box[i][2] - box[i][0]) * s;
     float left = e + i * (848 * 20 - 2 * e - w) / 3;   // where its box's left goes
-    // the box's top-left (stage twips) is at mc->m.t + box; scaled about it, then moved
-    float ax = mc->m.tx + box[i][0], ay = mc->m.ty + box[i][1];
+    // scaled about the box's top-left at the corner's usual place (MAIN.swf puts them at
+    // x 141, 330, 518, 707, y 70), then moved: when the game moves a corner away (off the
+    // screen on the map) it goes away by the same amount
+    static const float HOME_X[4] = {141, 330, 518, 707};
+    float ax = HOME_X[i] * 20 + box[i][0], ay = 70 * 20 + box[i][1];
     Mat z = {s, 0, 0, s, ax * (1 - s) + left - ax, ay * (1 - s) + e - ay};
     return mat_mul(parent, mat_mul(z, mc->m));
 }
@@ -320,7 +327,12 @@ void as_render_mc(AsMc *mc, Mat parent, CXform pcx, DrawList *out) {
     if (mc->removed || !mc->visible) return;
     if (mc->is_mask && !out->masking) return;   // a setMask mask only draws as its clip's mask
     Mat m = mat_mul(parent, mc->m);
-    if (mc->parent && !mc->parent->parent) m = hud_placed(mc, parent, m);
+    Mat unplaced = m;   // a HUD corner's own place: its end-of-level totals ("tally") stay there
+    int hud = 0;
+    if (mc->parent && !mc->parent->parent) {
+        m = hud_placed(mc, parent, m);
+        hud = memcmp(&m, &unplaced, sizeof m) != 0;
+    }
     CXform cx = cx_mul(pcx, cx_with_alpha(mc->cx, mc->alpha));
     if (cx.mul[3] <= 0 && cx.add[3] <= 0 && !out->masking) return;
     // select portraits (paint_jr.h): Paint Jr.'s (his slot's frame is empty), and everyone's newer
@@ -411,7 +423,7 @@ void as_render_mc(AsMc *mc, Mat parent, CXform pcx, DrawList *out) {
         if (e->kind == DISP_SHAPE) {
             render_char((Movie *)mc->movie, e->cid, mat_mul(m, e->m), cx_mul(cx, e->cx), 0, out);
         } else if (e->kind == DISP_MC && e->mc) {
-            as_render_mc(e->mc, m, cx, out);
+            as_render_mc(e->mc, hud && named(e->mc, "tally") ? unplaced : m, cx, out);
         } else if (e->kind == DISP_TEXT && e->mc && e->mc->text && e->mc->visible && !e->mc->removed) {
             AsMc *tf = e->mc;
             draw_text(tf, mat_mul(m, tf->m), cx_mul(cx, cx_with_alpha(tf->cx, tf->alpha)), out);
