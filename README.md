@@ -29,8 +29,8 @@ You'll need these from your copy:
 | `game/*.swf` | `data/game/*.pak`, unpacked | The game itself (`MAIN.swf`, `MENU.swf`, `PLAYER.swf`, ...) |
 | `levels/*.swf` | `data/levels/*.pak`, unpacked | The levels (`LEVEL1.swf`, ...) |
 | `fonts/synjUnicode_20.fnt` and `fonts/synjUnicode_20_0.dds` | `data/fonts/` | All menu text |
-| `sfx/*.mp3` | The game's sound effects, as MP3 | Sound effects |
-| `music/*.mp3` | The game's music, as MP3 | Music |
+| `sfx/*.mp3` | `data/sounds/*.xma`, with [`tools/convert_audio.py`](tools/convert_audio.py) | Sound effects |
+| `music/*.mp3` | `data/music/*.xma`, with [`tools/convert_audio.py`](tools/convert_audio.py) | Music |
 | `strings_en.txt` | `castle.exe`, with [`tools/extract_strings.py`](tools/extract_strings.py) | Menu and map text |
 | `strings_help_en.txt` | `castle.exe`, with [`tools/extract_help.py`](tools/extract_help.py) | Help & Options pages |
 
@@ -42,6 +42,16 @@ python tools/extract_help.py --exe "<your copy>/castle.exe" --out strings_help_e
 ```
 
 `extract_strings.py` writes one `strings_<language>.txt` per language. You need `strings_en.txt`.
+
+#### Make the sound files
+
+You need Python 3 and ffmpeg (`winget install Gyan.FFmpeg` on Windows, `sudo apt install ffmpeg` on Debian or Ubuntu, `brew install ffmpeg` on macOS). Then run:
+
+```
+python tools/convert_audio.py --data "<your copy>/data" --out <folder>
+```
+
+This writes `<folder>/sfx/` and `<folder>/music/`, 466 MP3 files in all, keeping each file's name. Copy both folders to the Vita in the next step. The 17 `PBP_*.mp3` files aren't used yet, so you can leave them out.
 
 ### 3. Copy the data to the Vita
 
