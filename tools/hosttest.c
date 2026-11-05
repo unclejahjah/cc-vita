@@ -993,7 +993,7 @@ static int help_mode(int argc, char **argv) {
         pages[3] = (HbPage){.title = "Join on this Wi-Fi", .nlines = 2, .chosen = 1, .code_chosen = -1, .accept = "Join",
                             .back = "Back"};
         pages[3].line[0] = "Jah   1/4";
-        pages[3].line[1] = "Alex   2/4";
+        pages[3].line[1] = "Friend   2/4";
         for (int i = 0; i < 4; i++) {
             pages[i].alpha = 1;
             pages[i].time = 0.4f;
