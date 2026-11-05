@@ -53,3 +53,7 @@ Masks (clip layers) use the stencil buffer. Each mask is drawn with alpha 0 to i
 - Gradients are evaluated per vertex, so large gradients can look banded.
 - No bitmap fills (PLAYER.swf has none).
 - Nested sprites advance on one global tick. The game engine drives some of them explicitly.
+
+## License
+
+The source code is under the MIT License, see `LICENSE`. That does not cover Castle Crashers or any of its art, audio, data or names, which belong to The Behemoth.
