@@ -1,0 +1,13 @@
+# The public games list (see src/worker.js). Put online with: npx wrangler deploy
+name = "cc-vita-lobby"
+main = "src/worker.js"
+compatibility_date = "2025-01-01"
+workers_dev = true
+
+[[durable_objects.bindings]]
+name = "LOBBY"
+class_name = "Lobby"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Lobby"]

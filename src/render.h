@@ -97,6 +97,7 @@ void render_display_list(Movie *m, const Frame *f, Mat mtx, CXform cx, int tick,
 void render_char(Movie *m, int cid, Mat mtx, CXform cx, int tick, DrawList *out);
 void render_shape(Shape *s, Mat mtx, CXform cx, DrawList *out);   // one shape (e.g. a font glyph)
 void render_bitmap_fill(const BitmapFill *bf, Mat mtx, CXform cx, DrawList *out);   // one textured mesh
+extern int (*render_thread_slot)(void);   // 0/1: the tessellator for the calling thread (NULL: one)
 void render_tessellate_all(Movie *m);   // optional warm-up so the first frames don't stall
 const float *render_shape_bounds(Shape *s);   // min x, min y, max x, max y in twips (tessellates if needed)
 
@@ -105,14 +106,23 @@ const float *render_shape_bounds(Shape *s);   // min x, min y, max x, max y in t
 void render_mask_push(DrawList *out);
 void render_mask_apply(DrawList *out);
 void render_mask_pop(DrawList *out);
+// Between push and apply: a rectangle (x0, y0)-(x1, y1) in twips, through m, as the mask
+void render_mask_rect(DrawList *out, Mat m, float x0, float y0, float x1, float y1);
 
-// Copies every tessellated mesh into one block from alloc (GPU-visible memory on
-// the Vita) as Vertex arrays and points Mesh.gpu at them. Returns the block, or
-// NULL if alloc failed (draws then fall back to recoloured copies).
+// Copies every tessellated mesh into blocks from alloc (GPU-visible memory on the
+// Vita; up to RENDER_CHUNK bytes each, so alloc is called more than once for a big
+// file) as Vertex arrays and points Mesh.gpu at them. Returns the first block, or
+// NULL if the first alloc failed (draws then fall back to recoloured copies).
+#define RENDER_CHUNK (2u * 1024 * 1024)
 void *render_upload(Movie *m, void *(*alloc)(size_t bytes, void *ctx), void *ctx);
 // After render_upload: frees the outlines and CPU-side vertices of uploaded shapes
 // (recolouring then reads the uploaded copy). Halves a movie's memory.
 void render_release_cpu(Movie *m);
+// Bytes of meshes not uploaded yet (no room when the file came in): drawn from the CPU, slow.
+// render_upload again uploads just those (the rest were released).
+size_t render_pending_bytes(Movie *m);
+// After the block at old (size bytes) was copied to new: points Mesh.gpu into new.
+void render_relocate(Movie *m, void *old, size_t size, void *new_block);
 
 // Vertex i of an item, transformed to the screen (for software rasterising).
 Vertex render_item_vertex(const DrawList *dl, const DrawItem *it, int i);   // bitmap items: colour = tint

@@ -225,6 +225,33 @@ static AsMc *place(AsVm *vm, AsMc *parent, const Place *p, int depth) {
     return mc;
 }
 
+AsMc *as_mc_place_char(AsVm *vm, AsMc *parent, int cid, Mat m, CXform cx, const char *name, int depth) {
+    Place p;
+    memset(&p, 0, sizeof p);
+    p.cid = cid;
+    p.m = m;
+    p.cx = cx;
+    AsMc *mc = place(vm, parent, &p, depth);
+    if (mc && name) mc->name = as_atom(vm, name);
+    return mc;
+}
+
+AsMc *as_mc_place_foreign(AsVm *vm, AsMc *parent, const Movie *m, int cid, Mat mat, const char *name, int depth) {
+    if (!m || m->chars[cid].type != CHAR_SPRITE) return NULL;
+    AsDisp *e = disp_insert(parent, depth);
+    e->cid = 0;   // (the clip's own file is m, not the parent's)
+    e->m = mat;
+    e->cx = CX_IDENTITY;
+    e->kind = DISP_MC;
+    AsMc *mc = as_mc_new(vm, m, m->chars[cid].ptr, parent, depth);
+    mc->m = mat;
+    decompose(mc);
+    mc->name = name ? as_atom(vm, name) : NULL;
+    e->mc = mc;
+    as_mc_goto(vm, mc, 0, 1);
+    return mc;
+}
+
 static void apply_frame(AsVm *vm, AsMc *mc, int frame) {
     const Frame *fr = &mc->def->frames[frame];
     // drop or update what the timeline placed
@@ -261,8 +288,10 @@ static void apply_frame(AsVm *vm, AsMc *mc, int frame) {
 
 void as_mc_goto(AsVm *vm, AsMc *mc, int frame, int play) {
     if (!mc->def || !mc->def->nframes || mc->removed) return;
+    mc->goto_want = frame;
     if (frame < 0) frame = 0;
     if (frame >= mc->def->nframes) frame = mc->def->nframes - 1;
+    mc->goto_got = frame;
     if (AS_ENV("AS_GOTO") && mc->name && !strcasecmp(mc->name->s, AS_ENV("AS_GOTO")))
         as_warn(vm, "tick %u: %s goto frame %d (%s) from %d%s", vm->tick, mc->name->s, frame + 1,
                 play ? "play" : "stop", mc->frame + 1,
@@ -270,6 +299,7 @@ void as_mc_goto(AsVm *vm, AsMc *mc, int frame, int play) {
     mc->playing = play;
     if (frame == mc->frame) return;
     mc->frame = frame;
+    mc->gotos++;
     // a timeline's frame script runs before the scripts of the children it places
     enqueue(mc, Q_FRAME, frame);
     apply_frame(vm, mc, frame);
@@ -316,6 +346,7 @@ static void mc_unload(AsVm *vm, AsMc *mc) {
     AsVal f = as_get(vm, as_objv(&mc->obj), as_atom(vm, "onUnload"));
     if (f.t == V_OBJ) as_call(vm, f, as_objv(&mc->obj), 0, NULL);
     mc->removed = 1;
+    if (mc->parent) mc->parent_gotos = mc->parent->gotos;
     for (int i = 0; i < mc->ndisp; i++)
         if (mc->disp[i].mc) mc_unload(vm, mc->disp[i].mc);
 }
@@ -536,6 +567,7 @@ void as_mc_get_url(AsVm *vm, AsMc *base, AsVal url, AsVal target, int flags) {
 static void do_loads(AsVm *vm) {
     while (vm->loads) {
         AsLoad *l = vm->loads;
+        if (vm->hold_load && !l->target->removed && l->url[0] && vm->hold_load(vm, l->target, l->url)) return;
         vm->loads = l->next;
         if (AS_ENV("AS_LOADS"))
             as_warn(vm, "load '%s' into %s%s", l->url, as_mc_target_path(vm, l->target)->s, l->target->removed ? " (removed)" : "");
@@ -640,12 +672,23 @@ void as_mc_set_prop(AsVm *vm, AsMc *mc, int i, AsVal v) {
     }
 }
 
+// _parent. A clip a goto of its parent has just removed still has it, until that parent goes to
+// another frame or goes too: the Wizard's crystals call f_CheckShardShatter(_parent) right after
+// the _parent.gotoAndStop that removed the clip running the script. A death frame that calls
+// _root.f_X(_parent._parent) after its enemy went "blank" and was sent on by a spawn reusing it
+// (Sand Castle Interior's second wave) reaches nothing.
+AsVal as_mc_parent(const AsMc *mc) {
+    AsMc *p = mc->parent;
+    if (!p || (mc->removed && (p->removed || p->gotos != mc->parent_gotos))) return as_undef();
+    return as_objv(&p->obj);
+}
+
 int as_mc_get_member(AsVm *vm, AsMc *mc, AsStr *atom, AsVal *out) {
     const char *s = atom->s;
     if (s[0] == '_') {
         int i = as_mc_prop_index(s);
         if (i >= 0) { *out = as_mc_get_prop(vm, mc, i); return 1; }
-        if (!strcasecmp(s, "_parent")) { *out = mc->parent ? as_objv(&mc->parent->obj) : as_undef(); return 1; }
+        if (!strcasecmp(s, "_parent")) { *out = as_mc_parent(mc); return 1; }
         if (!strcasecmp(s, "_root") || !strcasecmp(s, "_level0")) { *out = as_objv(&vm->root->obj); return 1; }
         if (!strcasecmp(s, "_global")) { *out = as_objv(vm->global); return 1; }
     }
@@ -658,7 +701,9 @@ int as_mc_get_member(AsVm *vm, AsMc *mc, AsStr *atom, AsVal *out) {
 int as_mc_set_member(AsVm *vm, AsMc *mc, AsStr *atom, AsVal v) {
     // text fields: "ntext = N" asks the executable for its string N (the field's words)
     if (mc->text && vm->text_for_number && !strcasecmp(atom->s, "ntext")) {
+        vm->text_field = mc;
         const char *s = vm->text_for_number(vm, as_toint32(vm, v));
+        vm->text_field = NULL;
         if (s) as_set(vm, as_objv(&mc->obj), as_atom(vm, "text"), as_strv(as_str(vm, s)));
         return 0;   // and the variable is set as usual
     }
@@ -720,8 +765,22 @@ void as_tick(AsVm *vm) {
     do_loads(vm);
 }
 
+void as_drain(AsVm *vm) { drain_queue(vm); }
+
+// one frame of a single clip and what's in it, the rest of the tree standing still
+void as_tick_clip(AsVm *vm, AsMc *mc) {
+    if (!A_onEnterFrame) A_onEnterFrame = as_atom(vm, "onEnterFrame");
+    if (!mc || mc->removed) return;
+    vm->tick++;
+    advance(vm, mc);
+    drain_queue(vm);
+    enter_frame(vm, mc);
+    drain_queue(vm);
+}
+
 void as_mc_mark(AsVm *vm, AsMc *mc) {
     if (mc->parent) as_mark_obj(vm, &mc->parent->obj);
+    if (mc->mask) as_mark_obj(vm, &mc->mask->obj);
     for (int i = 0; i < mc->ndisp; i++)
         if (mc->disp[i].mc) as_mark_obj(vm, &mc->disp[i].mc->obj);
 }

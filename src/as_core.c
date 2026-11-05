@@ -273,14 +273,6 @@ static AsProp *props_insert(AsProps *p, AsStr *atom) {
 
 AsProp *as_own(AsObj *o, AsStr *atom) { return props_find(&o->props, atom); }
 
-static void props_delete(AsProps *p, AsStr *atom) {
-    AsProp *s = props_find(p, atom);
-    if (!s) return;
-    s->key = DELETED;
-    s->v = as_undef();
-    p->count--;
-}
-
 // ---- objects ----------------------------------------------------------------------
 
 AsObj *as_obj_new(AsVm *vm, int type, AsObj *proto) {
@@ -450,8 +442,25 @@ void as_pin(AsVm *vm, const char *name, AsVal v, const char *only_in) {
     if (vm->npinned < (int)(sizeof vm->pinned / sizeof vm->pinned[0])) {
         vm->pinned[vm->npinned].name = as_atom(vm, name);
         vm->pinned[vm->npinned].only_in = only_in ? as_atom(vm, only_in) : NULL;
+        vm->pinned[vm->npinned].in_levels = 0;
+        vm->pinned[vm->npinned].get = NULL;
         vm->pinned[vm->npinned++].v = v;
     }
+}
+
+void as_pin_in_levels(AsVm *vm, const char *name, AsVal v) {
+    if (vm->npinned < (int)(sizeof vm->pinned / sizeof vm->pinned[0])) {
+        vm->pinned[vm->npinned].name = as_atom(vm, name);
+        vm->pinned[vm->npinned].only_in = NULL;
+        vm->pinned[vm->npinned].in_levels = 1;
+        vm->pinned[vm->npinned].get = NULL;
+        vm->pinned[vm->npinned++].v = v;
+    }
+}
+
+void as_pin_fn(AsVm *vm, const char *name, const char *only_in, AsVal (*get)(AsVm *vm)) {
+    as_pin(vm, name, as_undef(), only_in);
+    if (vm->npinned && vm->pinned[vm->npinned - 1].name == as_atom(vm, name)) vm->pinned[vm->npinned - 1].get = get;
 }
 
 void as_override(AsVm *vm, const char *name, AsNative fn) {
@@ -540,8 +549,22 @@ AsVal as_call(AsVm *vm, AsVal fv, AsVal this_, int argc, AsVal *argv) {
 
 static AsVal as_call_body(AsVm *vm, AsVal fv, AsVal this_, int argc, AsVal *argv) {
     AsObj *f = fv.o;
-    if (f->native) return f->native(vm, this_, argc, argv);
+    if (f->native) {
+        AsObj *prev = vm->native_fn;
+        vm->native_fn = f;
+        AsVal r = f->native(vm, this_, argc, argv);
+        vm->native_fn = prev;
+        return r;
+    }
     if (vm->depth > 200) { as_warn(vm, "call depth limit"); return as_undef(); }
+    if (AS_ENV("AS_ARGS") && f->fname && strstr(AS_ENV("AS_ARGS"), f->fname->s)) {   // AS_ARGS="f_Damage,f_Exp"
+        char buf[400];
+        int n = snprintf(buf, sizeof buf, "args %s(", f->fname->s);
+        for (int i = 0; i < argc && n < (int)sizeof buf - 40; i++)
+            n += snprintf(buf + n, sizeof buf - n, "%s%s%.30s", i ? ", " : "",
+                          argv[i].t == V_STR ? "'" : "", as_tostr(vm, argv[i])->s);
+        printf("  [%u] %s)\n", vm->tick, buf);   // every call, not deduplicated like as_warn
+    }
     vm->depth++;
 
     AsObj *act = call_alloc(&g_free_acts, sizeof(AsObj), GC_OBJ);
@@ -555,6 +578,7 @@ static AsVal as_call_body(AsVm *vm, AsVal fv, AsVal this_, int argc, AsVal *argv
     c.movie = f->code_movie;
     c.pc = f->code_off;
     c.end = f->code_off + f->code_len;
+    if (c.end > f->code_movie->len) c.end = (uint32_t)f->code_movie->len;
     c.pool = f->pool;
     c.scope = scope;
     c.this_ = this_;
@@ -578,7 +602,7 @@ static AsVal as_call_body(AsVm *vm, AsVal fv, AsVal this_, int argc, AsVal *argv
         if (fl & 0x0080) {
             AsMc *t = mc_of(this_);
             if (!t) t = f->target;
-            regs[r++] = t && t->parent ? as_objv(&t->parent->obj) : as_undef();
+            regs[r++] = t ? as_mc_parent(t) : as_undef();
         }
         if (fl & 0x0100) regs[r++] = as_objv(vm->global);
         for (int i = 0; i < f->nparams; i++) {
@@ -596,9 +620,15 @@ static AsVal as_call_body(AsVm *vm, AsVal fv, AsVal this_, int argc, AsVal *argv
     }
     int sp0 = vm->sp;
     AsObj *prev_fn = vm->cur_fn;
+    int prev_argc = vm->cur_argc;
+    AsVal *prev_argv = vm->cur_argv;
     vm->cur_fn = f;
+    vm->cur_argc = argc;
+    vm->cur_argv = argv;
     run(vm, &c);
     vm->cur_fn = prev_fn;
+    vm->cur_argc = prev_argc;
+    vm->cur_argv = prev_argv;
     vm->sp = sp0;
     vm->depth--;
     if (c.captured) {
@@ -614,6 +644,16 @@ static AsVal as_call_body(AsVm *vm, AsVal fv, AsVal this_, int argc, AsVal *argv
 AsVal as_call_method(AsVm *vm, AsVal obj, const char *name, int argc, AsVal *argv) {
     AsVal f = as_get(vm, obj, as_atom(vm, name));
     return as_call(vm, f, obj, argc, argv);
+}
+
+AsVal as_call_script(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
+    AsObj *f = vm->native_fn;
+    if (!f || !f->code_len) return as_undef();   // a built-in native has no script version
+    AsNative self = f->native;
+    f->native = NULL;
+    AsVal r = as_call(vm, as_objv(f), this_, argc, argv);
+    f->native = self;
+    return r;
 }
 
 // ---- variables --------------------------------------------------------------------
@@ -635,6 +675,13 @@ static int lookup_in(AsVm *vm, AsObj *o, AsStr *atom, AsVal *out) {
     return 0;
 }
 
+// Does pinned[i] answer for the script running in c?
+static int pin_applies(AsVm *vm, Ctx *c, int i) {
+    if (vm->pinned[i].get && vm->pinned[i].get(vm).t == V_UNDEF) return 0;
+    if (vm->pinned[i].in_levels) return c->movie && c->movie->is_level;
+    return !vm->pinned[i].only_in || (vm->cur_fn && vm->cur_fn->fname == vm->pinned[i].only_in);
+}
+
 static AsVal get_variable(AsVm *vm, Ctx *c, AsStr *name) {
     AsStr *atom = as_intern(vm, name);
     if (atom == A_this) {
@@ -645,9 +692,8 @@ static AsVal get_variable(AsVm *vm, Ctx *c, AsStr *name) {
     if (atom == A_root || atom == A_level0) return as_objv(&vm->root->obj);
     if (atom == A_global) return as_objv(vm->global);
     for (int i = 0; i < vm->npinned; i++)
-        if (vm->pinned[i].name == atom &&
-            (!vm->pinned[i].only_in || (vm->cur_fn && vm->cur_fn->fname == vm->pinned[i].only_in)))
-            return vm->pinned[i].v;
+        if (vm->pinned[i].name == atom && pin_applies(vm, c, i))
+            return vm->pinned[i].get ? vm->pinned[i].get(vm) : vm->pinned[i].v;
     if (atom == A_parent) {
         AsVal v;
         if (c->target && as_mc_get_member(vm, c->target, atom, &v)) return v;
@@ -690,7 +736,8 @@ static void set_variable(AsVm *vm, Ctx *c, AsStr *name, AsVal val) {
     }
     AsStr *atom = as_intern(vm, name);
     for (int i = 0; i < vm->npinned; i++)
-        if (vm->pinned[i].name == atom && !vm->pinned[i].only_in) return;   // the host decides this one
+        if (vm->pinned[i].name == atom && !vm->pinned[i].only_in && pin_applies(vm, c, i))
+            return;   // the host decides this one
     for (AsScope *s = c->scope; s; s = s->parent) {
         if (!s->obj) continue;
         if (props_find(&s->obj->props, atom) ||
@@ -873,6 +920,7 @@ static void run(AsVm *vm, Ctx *c) {
         if (op >= 0x80) { len = rd16(d + c->pc); c->pc += 2; }
         const uint8_t *body = d + c->pc;
         uint32_t next = c->pc + len;
+        if (next > c->end) break;   // runs past its block (a file cut short): what follows isn't code
         vm->ops++;
         switch (op) {
         case 0x04: if (c->target) as_mc_goto(vm, c->target, c->target->frame + 1, 0); break;   // NextFrame
@@ -930,7 +978,7 @@ static void run(AsVm *vm, Ctx *c) {
             push(vm, as_num(n > 0 ? (int)((vm->rand_state >> 8) % (uint32_t)n) : 0));
             break;
         }
-        case 0x34: { extern double as_time_ms(void); push(vm, as_num(as_time_ms())); break; }
+        case 0x34: { extern double as_time_ms(void); push(vm, as_num(vm->time_ms ? vm->time_ms(vm) : as_time_ms())); break; }
         case 0x3C: {   // DefineLocal
             AsVal v = pop(vm);
             AsStr *n = as_intern(vm, as_tostr(vm, pop(vm)));
@@ -1106,9 +1154,8 @@ static void run(AsVm *vm, Ctx *c) {
                         AsMc *k = mc->disp[i].mc;
                         if (!k || k->removed) continue;
                         if (!k->name) {
-                            static unsigned next_instance;
                             char b[24];
-                            snprintf(b, sizeof b, "instance%u", ++next_instance);
+                            snprintf(b, sizeof b, "instance%u", ++vm->next_instance);
                             k->name = as_atom(vm, b);
                         }
                         if (!as_own(ob, k->name)) push(vm, as_strv(k->name));
@@ -1181,6 +1228,7 @@ void as_run_block(AsVm *vm, const Movie *m, uint32_t off, uint32_t len, AsMc *ta
     c.movie = m;
     c.pc = off;
     c.end = off + len;
+    if (c.end > m->len) c.end = (uint32_t)m->len;   // the file may be cut short inside it
     c.regs = vm->global_regs;
     c.nregs = 4;
     c.target = target;

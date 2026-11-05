@@ -8,11 +8,17 @@
 // jump/accept, CIRCLE projectile/item/back, L block, R magic, START pause,
 // right stick flicked left/right: previous/next item.
 // SELECT+UP shows the stats overlay, SELECT+START quits.
+#include <psp2/common_dialog.h>
 #include <psp2/ctrl.h>
+#include <psp2/display.h>
+#include <psp2/ime_dialog.h>
 #include <psp2/io/fcntl.h>
 #include <psp2/kernel/processmgr.h>
+#include <psp2/kernel/threadmgr.h>
 #include <psp2/kernel/sysmem.h>
 #include <psp2/power.h>
+#include <psp2/touch.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <malloc.h>
@@ -26,15 +32,30 @@
 #include "audio.h"
 #include "cc_buttons.h"
 #include "cc_host.h"
+#include "custom_animal.h"
+#include "weapon_look.h"
+#include "help_book.h"
+#include "custom_char.h"
+#include "paint_jr.h"
 #include "hostfont.h"
+#include "pause_menu.h"
 #include "render.h"
 #include "strtab.h"
+#ifdef CC_TROPHIES
+#include "trophies.h"
+#endif
+#ifdef CC_NET
+#include "lobby.h"
+#include "netplay.h"
+#endif
 
 // parsed SWFs and the script heap (meshes live in GPU memory blocks outside it)
 int _newlib_heap_size_user = 160 * 1024 * 1024;
 
 #define DATA_DIR "ux0:data/CastleCrashers/"
 #define SAVE_PATH DATA_DIR "save.dat"   // the game's storage (profiles, levels, unlocks)
+#define ACH_PATH DATA_DIR "achievements.dat"
+#define SETTINGS_PATH DATA_DIR "settings.txt"   // Help & Options' Settings: volumes, Auto Potion
 #define MAX_BATCH 65535   // u16 indices; a multiple of 3
 #define SCREEN_W 960.0f
 #define SCREEN_H 544.0f
@@ -63,6 +84,7 @@ typedef struct {
     SceUID uid;
     void *addr;
     size_t size;
+    int cdram;   // video memory (else main memory)
 } GpuBlock;
 
 static size_t g_gpu_bytes;   // for the overlay
@@ -80,8 +102,20 @@ static void *gpu_alloc(size_t bytes, void *ctx) {
         return NULL;
     }
     g_gpu_bytes += blk->size = size;
+    blk->cdram = 0;
     return blk->addr;
 }
+
+// free video memory, in MB
+static int cdram_free_mb(void) {
+    SceKernelFreeMemorySizeInfo info = {.size = sizeof info};
+    return sceKernelGetFreeMemorySize(&info) < 0 ? 1 << 20 : info.size_cdram >> 20;
+}
+// Below this much free video memory unused files go before another loads: a file whose meshes
+// don't fit there is drawn from main memory, far slower for the GPU (War Machine with Paint Jr.'s
+// and the FRESH files about: draw 17 ms a frame, script time up too)
+#define CDRAM_LOW_MB 48
+static int g_mesh_in_main;   // the last upload's meshes went to main memory
 
 // Meshes: video memory when there's room (fast for the GPU, written once), else main memory.
 static void *mesh_alloc(size_t bytes, void *ctx) {
@@ -92,10 +126,12 @@ static void *mesh_alloc(size_t bytes, void *ctx) {
         sceKernelGetMemBlockBase(blk->uid, &blk->addr);
         if (sceGxmMapMemory(blk->addr, size, SCE_GXM_MEMORY_ATTRIB_READ) >= 0) {
             g_gpu_bytes += blk->size = size;
+            blk->cdram = 1;
             return blk->addr;
         }
         sceKernelFreeMemBlock(blk->uid);
     }
+    g_mesh_in_main = 1;
     return gpu_alloc(bytes, ctx);
 }
 
@@ -105,6 +141,34 @@ static void gpu_free(GpuBlock *blk) {
     sceKernelFreeMemBlock(blk->uid);
     g_gpu_bytes -= blk->size;
     blk->uid = -1;
+}
+
+// A file's meshes, in blocks of up to RENDER_CHUNK (render_upload): each one in video memory
+// when there's a hole for it, so the free video memory is usable however it's cut up.
+#define MESH_CHUNKS 96
+typedef struct { GpuBlock b[MESH_CHUNKS]; int n; } Meshes;
+
+static void *meshes_alloc(size_t bytes, void *ctx) {
+    Meshes *ms = ctx;
+    if (ms->n == MESH_CHUNKS) return NULL;
+    GpuBlock *b = &ms->b[ms->n];
+    b->uid = -1;
+    void *p = mesh_alloc(bytes, b);
+    if (p) ms->n++;
+    return p;
+}
+
+static void meshes_free(Meshes *ms) {
+    for (int i = 0; i < ms->n; i++) gpu_free(&ms->b[i]);
+    ms->n = 0;
+}
+
+// its bytes in video memory (cdram) or main memory
+static size_t meshes_bytes(const Meshes *ms, int cdram) {
+    size_t n = 0;
+    for (int i = 0; i < ms->n; i++)
+        if (ms->b[i].uid >= 0 && ms->b[i].cdram == cdram) n += ms->b[i].size;
+    return n;
 }
 
 static uint16_t *g_indices;   // 0, 1, 2, ... for sceGxmDraw
@@ -295,8 +359,6 @@ static void draw_frame(const DrawList *vb, unsigned clock) {
     draw_list_range(vb, vb->heat_end, vb->n);
 }
 
-static int g_show_loads;   // the debug overlay (SELECT+UP) is on
-
 static void show_message(const char *line1, const char *line2) {
     vita2d_set_clear_color(RGBA8(20, 20, 24, 255));
     vita2d_start_drawing();
@@ -314,60 +376,370 @@ static void show_message(const char *line1, const char *line2) {
 // player.swf into every player slot and fx.swf into every effect. Files nothing uses any
 // more (levels left behind, the title's menu) are freed by free_unused_movies.
 #define MAX_MOVIES 160
-static struct { char name[64]; Movie *m; GpuBlock gpu; int keep; } g_movies[MAX_MOVIES];
+static struct { char name[64]; Movie *m; Meshes gpu; int keep; } g_movies[MAX_MOVIES];   // keep: 1 always, 2 until first used (preloaded)
 static int g_nmovies;
 static char g_last_error[256];
 
-static Movie *vita_loader(AsVm *vm, const char *url) {
-    (void)vm;
-    const char *base = strrchr(url, '/');
-    base = base ? base + 1 : url;
-    for (int i = 0; i < g_nmovies; i++)
-        if (!strcasecmp(g_movies[i].name, base)) return g_movies[i].m;
-    if (g_nmovies == MAX_MOVIES) return NULL;
+// ---- the log file -------------------------------------------------------------------
+// ux0:data/CastleCrashers/log.txt: each distinct warning once, the files loaded and freed,
+// and slow frames, for bugs that only show on the Vita. The run
+// before is kept as log_prev.txt. Lines collect in memory and a thread of their own writes them
+// to the card (log_flush hands them over): a write from the game's thread cost frames, and
+// while the card is busy (a level's sounds loading) one took 370 ms every flush.
+#define LOG_PATH DATA_DIR "log.txt"
+#define LOG_MAX (4 << 20)
+static SceUID g_log = -1, g_log_sema = -1;
+static int g_log_bytes, g_log_used;
+static char g_log_buf[16384], g_log_out[16384];
+static volatile int g_log_out_n;   // bytes handed to the writer; 0 once written
+static uint32_t g_log_seen[2048];
+static int g_log_nseen;
+
+static int log_thread(SceSize args, void *argp) {
+    (void)args; (void)argp;
+    for (;;) {
+        sceKernelWaitSema(g_log_sema, 1, NULL);
+        if (g_log_out_n) sceIoWrite(g_log, g_log_out, g_log_out_n);
+        __atomic_store_n(&g_log_out_n, 0, __ATOMIC_SEQ_CST);
+    }
+    return 0;
+}
+
+static void log_open(void) {
+    sceIoRemove(DATA_DIR "log_prev.txt");
+    sceIoRename(LOG_PATH, DATA_DIR "log_prev.txt");
+    g_log = sceIoOpen(LOG_PATH, SCE_O_WRONLY | SCE_O_CREAT | SCE_O_TRUNC, 0666);
+    g_log_sema = sceKernelCreateSema("cc_log", 0, 0, 1, NULL);
+    SceUID t = sceKernelCreateThread("cc_log", log_thread, 0x10000100 + 20, 0x4000, 0, 0, NULL);
+    if (g_log_sema < 0 || t < 0 || sceKernelStartThread(t, 0, NULL) < 0) g_log_sema = -1;
+}
+
+// Hands what has collected to the writer. While it's still writing the last lot, lines keep
+// collecting (it waits only when the buffer is nearly full).
+static void log_flush(void) {
+    if (g_log < 0 || !g_log_used) return;
+    if (g_log_sema < 0) {   // no thread: write here
+        sceIoWrite(g_log, g_log_buf, g_log_used);
+        g_log_used = 0;
+        return;
+    }
+    if (__atomic_load_n(&g_log_out_n, __ATOMIC_SEQ_CST)) {
+        if (g_log_used < (int)sizeof g_log_buf - 640) return;
+        while (__atomic_load_n(&g_log_out_n, __ATOMIC_SEQ_CST)) sceKernelDelayThread(1000);
+    }
+    memcpy(g_log_out, g_log_buf, g_log_used);
+    __atomic_store_n(&g_log_out_n, g_log_used, __ATOMIC_SEQ_CST);
+    g_log_used = 0;
+    sceKernelSignalSema(g_log_sema, 1);
+}
+
+// before quitting: everything on the card
+static void log_flush_wait(void) {
+    log_flush();
+    while (g_log_sema >= 0 && __atomic_load_n(&g_log_out_n, __ATOMIC_SEQ_CST)) sceKernelDelayThread(1000);
+    log_flush();
+    while (g_log_sema >= 0 && __atomic_load_n(&g_log_out_n, __ATOMIC_SEQ_CST)) sceKernelDelayThread(1000);
+}
+
+static void log_line(const char *fmt, ...);
+// Exit to Main Menu steps, on the card at once (a freeze there left no trace)
+#define EXIT_TRACE(...) do { log_line(__VA_ARGS__); log_flush_wait(); } while (0)
+
+static void log_line(const char *fmt, ...) {
+    if (g_log < 0 || g_log_bytes > LOG_MAX) return;
+    char buf[640];
+    va_list ap;
+    va_start(ap, fmt);
+    int n = vsnprintf(buf, sizeof buf - 1, fmt, ap);
+    va_end(ap);
+    if (n < 0) return;
+    if (n > (int)sizeof buf - 2) n = sizeof buf - 2;
+    buf[n++] = '\n';
+    if (g_log_used + n > (int)sizeof g_log_buf) log_flush();
+    memcpy(g_log_buf + g_log_used, buf, n);
+    g_log_used += n;
+    g_log_bytes += n;
+}
+
+// 1 the first time a message is seen; numbers don't count (fx201, fx202... are one message)
+static int log_first(const char *msg) {
+    uint32_t h = 2166136261u;
+    for (const char *c = msg; *c; c++)
+        if (*c < '0' || *c > '9') h = (h ^ (uint8_t)*c) * 16777619u;
+    for (int i = 0; i < g_log_nseen; i++)
+        if (g_log_seen[i] == h) return 0;
+    if (g_log_nseen < (int)(sizeof g_log_seen / sizeof g_log_seen[0])) g_log_seen[g_log_nseen++] = h;
+    return 1;
+}
+
+// the recolour cache, for freeing files from inside a load (main sets these)
+static RecolourCache *g_cache;
+static void *g_cache_mem;
+static size_t g_cache_bytes;
+static int free_unused_movies(AsVm *vm, RecolourCache *cache, void *cache_mem, size_t cache_bytes);
+
+// swf_bitmap_loaded: each bitmap becomes a texture as soon as it's decoded, and its pixels are
+// then only on the GPU side
+static void bitmap_to_texture(Bitmap *bm) {
+    vita2d_texture *tex = vita2d_create_empty_texture_format(bm->w, bm->h, SCE_GXM_TEXTURE_FORMAT_U8U8U8U8_ABGR);
+    if (!tex) return;
+    uint8_t *dst = vita2d_texture_get_datap(tex);
+    unsigned stride = vita2d_texture_get_stride(tex);
+    for (int y = 0; y < bm->h; y++) memcpy(dst + y * stride, bm->rgba + (size_t)y * bm->w * 4, (size_t)bm->w * 4);
+    bm->tex = tex;
+    free(bm->rgba);
+    bm->rgba = NULL;
+}
+
+// A custom character's whole painting (custom_char.h), read from its cache file straight into
+// a texture; and let go of one (its last draw may still be on the GPU)
+static int custom_texture_from_file(Bitmap *bm, FILE *f) {
+    vita2d_texture *tex = vita2d_create_empty_texture_format(bm->w, bm->h, SCE_GXM_TEXTURE_FORMAT_U8U8U8U8_ABGR);
+    if (!tex) return 0;
+    uint8_t *dst = vita2d_texture_get_datap(tex);
+    unsigned stride = vita2d_texture_get_stride(tex);
+    for (int y = 0; y < bm->h; y++)
+        if (fread(dst + y * stride, 4, bm->w, f) != (size_t)bm->w) { vita2d_free_texture(tex); return 0; }
+    bm->tex = tex;
+    return 1;
+}
+
+static void custom_free_texture(Bitmap *bm) {
+    vita2d_wait_rendering_done();
+    vita2d_free_texture(bm->tex);
+}
+
+// ux0:data/CastleCrashers/{game,levels}/<base>: 1 and the path if it's there
+static int find_file(const char *base, char *path, size_t n, int *is_level) {
     static const char *dirs[] = {"game", "levels"};
     for (int i = 0; i < 2; i++) {
-        char path[256], err[256];
-        snprintf(path, sizeof path, DATA_DIR "%s/%s", dirs[i], base);
+        snprintf(path, n, DATA_DIR "%s/%s", dirs[i], base);
         SceUID fd = sceIoOpen(path, SCE_O_RDONLY, 0);
         if (fd < 0) continue;
         sceIoClose(fd);
-        if (g_show_loads) {   // debug overlay on: say which file is loading
-            char msg[128];
-            snprintf(msg, sizeof msg, "Loading %s...", base);
-            show_message(msg, NULL);
-        }   // otherwise the last frame stays up; the game shows its own loading screen
-        Movie *m = swf_load(path, err, sizeof err);
-        if (!m) {
-            snprintf(g_last_error, sizeof g_last_error, "%s: %s", base, err);
-            return NULL;
-        }
-        cc_repair_level(m);
-        cc_buttons_playstation(m, CC_BTN_STYLE_COLOURED);   // the game's button art as PlayStation buttons
-        cc_menu_vita_badge(m);                              // "Vita Edition" on the title
-        // bitmaps become textures; the pixels are then only on the GPU side
-        for (int c = 0; c < 65536; c++) {
-            if (m->chars[c].type != CHAR_BITMAP) continue;
-            Bitmap *bm = m->chars[c].ptr;
-            vita2d_texture *tex = vita2d_create_empty_texture_format(bm->w, bm->h, SCE_GXM_TEXTURE_FORMAT_U8U8U8U8_ABGR);
-            if (!tex) continue;
-            uint8_t *dst = vita2d_texture_get_datap(tex);
-            unsigned stride = vita2d_texture_get_stride(tex);
-            for (int y = 0; y < bm->h; y++) memcpy(dst + y * stride, bm->rgba + (size_t)y * bm->w * 4, (size_t)bm->w * 4);
-            bm->tex = tex;
-            free(bm->rgba);
-            bm->rgba = NULL;
-        }
-        GpuBlock *blk = &g_movies[g_nmovies].gpu;
-        blk->uid = -1;
-        render_tessellate_all(m);
-        if (render_upload(m, mesh_alloc, blk)) render_release_cpu(m);
-        snprintf(g_movies[g_nmovies].name, sizeof g_movies[0].name, "%s", base);
-        g_movies[g_nmovies++].m = m;
-        return m;
+        // levels/ (and All You Can Quaff, whose scripts run the developer's quick start where
+        // it's false): console_version reads true in its scripts (cc_host.c)
+        *is_level = i == 1 || !strcasecmp(base, "QUOFF.swf");
+        return 1;
     }
-    snprintf(g_last_error, sizeof g_last_error, "missing %s", base);
+    return 0;
+}
+
+// the CPU side of a load: parse, repair, PlayStation buttons, tessellate (no GPU work but the
+// bitmaps' textures, which swf_bitmap_loaded makes as they are decoded)
+static Movie *prepare_movie(const char *path, int is_level, char *err, size_t n) {
+    Movie *m = swf_load(path, err, n);
+    if (!m) return NULL;
+    m->is_level = is_level;
+    cc_repair_level(m);
+    cc_buttons_playstation(m, CC_BTN_STYLE_GREY);   // the game's button art as PlayStation buttons
+    cc_menu_vita_badge(m);                              // "Vita Edition" on the title
+    if (CC_BETA_STICKER) cc_menu_beta_sticker_build(m);  // and "BETA" on Multiplayer
+    render_tessellate_all(m);
+    return m;
+}
+
+// uploads its meshes and keeps it
+static Movie *register_movie(const char *base, const char *path, Movie *m) {
+    log_line("load %s%s (heap %u KB used)", path, m->truncated ? " (cut short)" : "",
+             (unsigned)(mallinfo().uordblks >> 10));
+    log_flush();   // loads and frees go to the writer at once: a crash right after keeps them
+    Meshes *ms = &g_movies[g_nmovies].gpu;
+    ms->n = 0;
+    g_mesh_in_main = 0;
+    if (render_upload(m, meshes_alloc, ms)) render_release_cpu(m);
+    size_t pending = render_pending_bytes(m);
+    if (pending)
+        log_line("  %u KB of meshes found no room in either memory: drawn by the CPU for now (slow)",
+                 (unsigned)(pending >> 10));
+    size_t in_main = meshes_bytes(ms, 0);
+    if (in_main)
+        log_line("  video memory %d MB free, %u of its %u KB of meshes in main memory (slow)", cdram_free_mb(),
+                 (unsigned)(in_main >> 10), (unsigned)((in_main + meshes_bytes(ms, 1)) >> 10));
+    else
+        log_line("  video memory %d MB free (meshes %u KB)", cdram_free_mb(), (unsigned)(meshes_bytes(ms, 1) >> 10));
+    snprintf(g_movies[g_nmovies].name, sizeof g_movies[0].name, "%s", base);
+    g_movies[g_nmovies].keep = 0;
+    g_movies[g_nmovies++].m = m;
+    return m;
+}
+
+// a big file (a sky is up to 34 MB of pixels) after a long session: make room first
+static void make_room(AsVm *vm) {
+    if (vm && g_cache && (mallinfo().uordblks > (size_t)_newlib_heap_size_user / 2 || cdram_free_mb() < CDRAM_LOW_MB))
+        free_unused_movies(vm, g_cache, g_cache_mem, g_cache_bytes);
+}
+
+// ---- loading in the background ----
+// The original keeps the game (and its loading screen, the knight walking) running while a
+// file loads. Here one file at a time is parsed and tessellated on a thread of its own while
+// the scripts hold its loadMovie (vm->prefetch); the upload and the bookkeeping stay on this
+// thread. vita_loader picks the finished file up.
+enum { BG_IDLE, BG_RUNNING, BG_DONE };
+static struct {
+    char base[64], path[256], err[256];
+    int is_level, preload;
+    volatile int state;
+    Movie *m;
+} g_bg;
+static SceUID g_bg_sema = -1;
+
+static SceUID g_main_thread;
+static int thread_slot(void) { return sceKernelGetThreadId() != g_main_thread; }
+
+static int bg_thread(SceSize args, void *argp) {
+    (void)args; (void)argp;
+    for (;;) {
+        sceKernelWaitSema(g_bg_sema, 1, NULL);
+        g_bg.m = prepare_movie(g_bg.path, g_bg.is_level, g_bg.err, sizeof g_bg.err);
+        __sync_synchronize();
+        g_bg.state = BG_DONE;
+    }
+    return 0;
+}
+
+static void bg_init(void) {
+    g_main_thread = sceKernelGetThreadId();
+    render_thread_slot = thread_slot;
+    g_bg_sema = sceKernelCreateSema("cc_load", 0, 0, 1, NULL);
+    SceUID th = sceKernelCreateThread("cc_load", bg_thread, 0x10000100 + 20, 1024 * 1024, 0, 0, NULL);
+    if (g_bg_sema < 0 || th < 0 || sceKernelStartThread(th, 0, NULL) < 0) g_bg_sema = -1;
+}
+
+// the running job's file, once the thread is done with it: kept, or NULL (failed)
+static Movie *bg_finish(void) {
+    while (g_bg.state == BG_RUNNING) sceKernelDelayThread(1000);
+    __sync_synchronize();
+    Movie *m = g_bg.m;
+    g_bg.state = BG_IDLE;
+    if (!m) {
+        log_line("background load %s failed (%s): trying again", g_bg.path, g_bg.err);
+        return NULL;
+    }
+    if (g_nmovies == MAX_MOVIES) { swf_free(m); return NULL; }
+    m = register_movie(g_bg.base, g_bg.path, m);
+    if (g_bg.preload) g_movies[g_nmovies - 1].keep = 2;   // not freed before the game asks for it
+    return m;
+}
+
+static Movie *cached_movie(const char *base) {
+    for (int i = 0; i < g_nmovies; i++)
+        if (!strcasecmp(g_movies[i].name, base)) {
+            if (g_movies[i].keep == 2) g_movies[i].keep = 0;   // a preloaded file in use: an ordinary one now
+            return g_movies[i].m;
+        }
     return NULL;
+}
+
+static int cached_movie_peek(const char *base) {
+    for (int i = 0; i < g_nmovies; i++)
+        if (!strcasecmp(g_movies[i].name, base)) return 1;
+    return 0;
+}
+
+// ---- preloading ----
+// The files the next screens need, read on the loading thread while nothing else loads, in the
+// order they're needed: the title's during the intro, the game's start and the character
+// select's on the title, the game's (effects, players, animals, the map) after that. Each took
+// the Vita seconds with the screen standing still (fx, player and animals 15 s). A file the
+// game asks for while another one is loading waits for it, so nothing is read ahead of its stage.
+// The intro reads the files the title reads itself at its start (MODEART, FRESHLOGO, LOADING).
+// The PC title's scenes are read first thing on the title, under the loading screen: read during
+// the intro they slowed it down (a big file, parsed and tessellated beside it).
+static const char *const g_preload[] = {"MENU.swf", "MODEART.swf", "FRESHLOGO.swf", "LOADING.swf",          // intro
+                                        "MENU_VIGNETTES.swf", "PAUSE.swf", "sounds.swf", "lobby.swf",   // title
+                                        "fx.swf", "player.swf", "animals.swf", "map.swf"};              // game
+enum { PRELOAD_INTRO = 4, PRELOAD_TITLE = 8, PRELOAD_GAME = 12 };
+static int g_npreloaded;   // of g_preload, started
+
+static void preload_step(int upto) {   // upto: the PRELOAD_ stage
+    if (g_bg_sema < 0) return;
+    if (g_bg.state == BG_DONE && g_bg.preload) bg_finish();
+    if (g_bg.state != BG_IDLE || g_npreloaded >= upto) return;
+    if (mallinfo().uordblks > (size_t)_newlib_heap_size_user * 6 / 10) return;   // room for the game first
+    const char *base = g_preload[g_npreloaded++];
+    char path[256];
+    int is_level;
+    if (cached_movie_peek(base) || g_nmovies == MAX_MOVIES || !find_file(base, path, sizeof path, &is_level)) return;
+    snprintf(g_bg.base, sizeof g_bg.base, "%s", base);
+    snprintf(g_bg.path, sizeof g_bg.path, "%s", path);
+    g_bg.is_level = is_level;
+    g_bg.preload = 1;
+    g_bg.m = NULL;
+    g_bg.state = BG_RUNNING;
+    __sync_synchronize();
+    sceKernelSignalSema(g_bg_sema, 1);
+}
+
+static int vita_prefetch(AsVm *vm, const char *url) {
+    const char *base = strrchr(url, '/');
+    base = base ? base + 1 : url;
+    if (g_bg_sema < 0 || cached_movie(base)) return 0;
+    if (g_bg.state != BG_IDLE) {
+        if (strcasecmp(g_bg.base, base)) {   // another file's job (its load was dropped): finish it
+            if (g_bg.state == BG_DONE) bg_finish();
+            return 1;
+        }
+        if (g_bg.state == BG_RUNNING) return 1;
+        bg_finish();   // done: a failure falls back to vita_loader's own load
+        return 0;
+    }
+    char path[256];
+    int is_level;
+    if (g_nmovies == MAX_MOVIES || !find_file(base, path, sizeof path, &is_level)) return 0;
+    make_room(vm);
+    snprintf(g_bg.base, sizeof g_bg.base, "%s", base);
+    snprintf(g_bg.path, sizeof g_bg.path, "%s", path);
+    g_bg.is_level = is_level;
+    g_bg.preload = 0;
+    g_bg.m = NULL;
+    g_bg.state = BG_RUNNING;
+    __sync_synchronize();
+    sceKernelSignalSema(g_bg_sema, 1);
+    return 1;
+}
+
+static Movie *vita_loader(AsVm *vm, const char *url) {
+    const char *base = strrchr(url, '/');
+    base = base ? base + 1 : url;
+    base = cc_level_file(base);   // Paint Jr.'s castle (paint_jr.h)
+    Movie *m = cached_movie(base);
+    if (m) return m;
+    if (g_bg.state != BG_IDLE) {   // never two loads at once (the tessellator is shared)
+        int same = !strcasecmp(g_bg.base, base);
+        m = bg_finish();
+        if (same && m) return cached_movie(base);
+    }
+    if (g_nmovies == MAX_MOVIES) return NULL;
+    char path[256], err[256];
+    int is_level;
+    if (!find_file(base, path, sizeof path, &is_level)) {
+        snprintf(g_last_error, sizeof g_last_error, "missing %s", base);
+        log_line("load %s: MISSING", base);
+        return NULL;
+    }
+    make_room(vm);   // the last frame stays up meanwhile; the game shows its own loading screen
+    m = prepare_movie(path, is_level, err, sizeof err);
+    if (!m && vm && g_cache && free_unused_movies(vm, g_cache, g_cache_mem, g_cache_bytes))
+        m = prepare_movie(path, is_level, err, sizeof err);   // out of memory: try again without the old files
+    if (!m) {
+        snprintf(g_last_error, sizeof g_last_error, "%s: %s", base, err);
+        log_line("load %s FAILED: %s", path, err);
+        return NULL;
+    }
+    return register_movie(base, path, m);
+}
+
+// a file kept for the rest of a game (paint_jr.c's part files: it holds their sprites); keep 3
+// goes back to 0 when the next game starts (release_game_movies)
+static void keep_for_game(Movie *m) {
+    for (int i = 0; i < g_nmovies; i++)
+        if (g_movies[i].m == m && !g_movies[i].keep) g_movies[i].keep = 3;
+}
+
+static void release_game_movies(void) {
+    for (int i = 0; i < g_nmovies; i++)
+        if (g_movies[i].keep == 3) g_movies[i].keep = 0;
 }
 
 // a file the port itself draws from (MAIN, the pause book): never freed
@@ -378,6 +750,17 @@ static Movie *host_movie(const char *name) {
     return m;
 }
 
+static void movie_free_at(int i) {   // g_movies[i]'s file, its textures and video memory
+    Movie *m = g_movies[i].m;
+    log_line("free %s", g_movies[i].name);
+    for (int c = 0; c < 65536; c++)
+        if (m->chars[c].type == CHAR_BITMAP && ((Bitmap *)m->chars[c].ptr)->tex)
+            vita2d_free_texture(((Bitmap *)m->chars[c].ptr)->tex);
+    as_forget_movie(m);
+    swf_free(m);
+    meshes_free(&g_movies[i].gpu);
+}
+
 // Frees the files no clip or script function of the game belongs to any more. Their meshes
 // may be in the last frame's draw list and the recolour cache, so the GPU is let finish and
 // the cache starts over; the caller builds a new frame before drawing again. Returns how many.
@@ -385,7 +768,8 @@ static int free_unused_movies(AsVm *vm, RecolourCache *cache, void *cache_mem, s
     Movie *ms[MAX_MOVIES];
     uint8_t used[MAX_MOVIES];
     for (int i = 0; i < g_nmovies; i++) ms[i] = g_movies[i].m;
-    if (!as_movies_used(vm, ms, g_nmovies, used)) return 0;
+    if (!vm) memset(used, 0, sizeof used);   // no game any more: all but the kept files
+    else if (!as_movies_used(vm, ms, g_nmovies, used)) return 0;
     int unused = 0;
     for (int i = 0; i < g_nmovies; i++) unused += !used[i] && !g_movies[i].keep;
     if (!unused) return 0;
@@ -395,61 +779,223 @@ static int free_unused_movies(AsVm *vm, RecolourCache *cache, void *cache_mem, s
     int n = 0;
     for (int i = 0; i < g_nmovies; i++) {
         if (used[i] || g_movies[i].keep) { g_movies[n++] = g_movies[i]; continue; }
-        Movie *m = g_movies[i].m;
-        for (int c = 0; c < 65536; c++)
-            if (m->chars[c].type == CHAR_BITMAP && ((Bitmap *)m->chars[c].ptr)->tex)
-                vita2d_free_texture(((Bitmap *)m->chars[c].ptr)->tex);
-        as_forget_movie(m);
-        swf_free(m);
-        gpu_free(&g_movies[i].gpu);
+        movie_free_at(i);
     }
     g_nmovies = n;
+    log_flush();
     return unused;
 }
 
-// ---- controls -> the key codes f_GetButtons gives port 1 ---------------------------
+// Frees one file by name, whatever its keep (the title's backdrop once the game starts): only
+// when nothing uses it any more. The GPU is let finish and the cache starts over, as above.
+static void free_movie_named(const char *base, RecolourCache *cache, void *cache_mem, size_t cache_bytes) {
+    for (int i = 0; i < g_nmovies; i++) {
+        if (strcasecmp(g_movies[i].name, base)) continue;
+        vita2d_wait_rendering_done();
+        recolour_cache_free(cache);
+        recolour_cache_init(cache, cache_mem, cache_bytes);
+        movie_free_at(i);
+        memmove(&g_movies[i], &g_movies[i + 1], (g_nmovies - i - 1) * sizeof *g_movies);
+        g_nmovies--;
+        log_flush();
+        return;
+    }
+}
 
-enum {
-    K_ACCEPT = 2, K_BACK = 3, K_LEFT = 37, K_UP = 38, K_RIGHT = 39, K_DOWN = 40,
-    K_START = 49, K_SELECT = 53, K_PUNCH1 = 65, K_R2 = 66, K_L2 = 67, K_PROJECTILE = 68,
-    K_MAGIC = 69, K_SHIELD = 81, K_JUMP = 83, K_PUNCH2 = 87,
-    // the light-tilt directions (f_Walk: these walk, the full ones above run)
-    K_WALK_LEFT = 117, K_WALK_UP = 118, K_WALK_RIGHT = 119, K_WALK_DOWN = 120,
-};
+// Moves a kept file's meshes to video memory (to_cdram, block by block while there's room) or
+// to main memory. Back from a game, PAUSE.swf (16 MB, kept since the game started) and
+// lobby.swf filled the video memory the title's scenes had on first boot, so those went to
+// main memory and the title ran at 21 fps (Jah 2026-10-28): they step aside for the scenes and
+// come back after. The GPU is let finish and the cache starts over; the caller builds a new
+// frame. Returns the blocks moved.
+static int movie_meshes_move(const char *base, int to_cdram, RecolourCache *cache, void *cache_mem, size_t cache_bytes) {
+    for (int i = 0; i < g_nmovies; i++) {
+        Meshes *ms = &g_movies[i].gpu;
+        if (strcasecmp(g_movies[i].name, base) || !meshes_bytes(ms, !to_cdram)) continue;
+        vita2d_wait_rendering_done();
+        recolour_cache_free(cache);
+        recolour_cache_init(cache, cache_mem, cache_bytes);
+        int moved = 0, in_main = g_mesh_in_main;
+        for (int c = 0; c < ms->n; c++) {
+            GpuBlock *blk = &ms->b[c];
+            if (blk->uid < 0 || blk->cdram == to_cdram) continue;
+            GpuBlock nb = {-1, NULL, 0, 0};
+            void *dst = to_cdram ? mesh_alloc(blk->size, &nb) : gpu_alloc(blk->size, &nb);
+            if (dst && to_cdram && !nb.cdram) { gpu_free(&nb); dst = NULL; }   // no room: the rest stay
+            if (!dst) break;
+            memcpy(dst, blk->addr, blk->size < nb.size ? blk->size : nb.size);
+            render_relocate(g_movies[i].m, blk->addr, blk->size, dst);
+            gpu_free(blk);
+            *blk = nb;
+            moved++;
+        }
+        g_mesh_in_main = in_main;
+        size_t left = meshes_bytes(ms, !to_cdram);
+        if (!moved) log_line("%s: meshes stay in %s memory", base, to_cdram ? "main" : "video");
+        else
+            log_line("%s: meshes to %s memory%s (video memory %d MB free)", base, to_cdram ? "video" : "main",
+                     left ? ", some stay" : "", cdram_free_mb());
+        return moved;
+    }
+    return 0;
+}
+static const char *const g_title_movers[] = {"PAUSE.swf", "lobby.swf"};
+
+// In a game, meshes that went to main memory come over to video memory once there's room
+// (each time the files kept change): player.swf and fx.swf first, as every knight, enemy and
+// effect draws from them (alien ship dips, Jah 2026-10-29), then the rest.
+static int game_meshes_to_video(RecolourCache *cache, void *cache_mem, size_t cache_bytes) {
+    static const char *const first[] = {"player.swf", "fx.swf"};
+    int moved = 0;
+    // First the meshes that found no room at all when their file came in (Flowery Field's
+    // level, behind the title's files after a trip back to the menu: drawn by the CPU, 12 fps)
+    for (int i = 0; i < g_nmovies; i++) {
+        Movie *m = g_movies[i].m;
+        size_t pending = render_pending_bytes(m);
+        if (!pending) continue;
+        vita2d_wait_rendering_done();
+        recolour_cache_free(cache);
+        recolour_cache_init(cache, cache_mem, cache_bytes);
+        int n0 = g_movies[i].gpu.n;
+        render_upload(m, meshes_alloc, &g_movies[i].gpu);
+        if (g_movies[i].gpu.n > n0) {
+            render_release_cpu(m);
+            moved++;
+        }
+        log_line("%s: %u KB of meshes uploaded, %u KB still not (video memory %d MB free)", g_movies[i].name,
+                 (unsigned)((pending - render_pending_bytes(m)) >> 10), (unsigned)(render_pending_bytes(m) >> 10),
+                 cdram_free_mb());
+    }
+    for (int j = 0; j < (int)(sizeof first / sizeof *first); j++) moved += movie_meshes_move(first[j], 1, cache, cache_mem, cache_bytes);
+    for (int i = 0; i < g_nmovies && cdram_free_mb() > 2; i++) {
+        if (!meshes_bytes(&g_movies[i].gpu, 0)) continue;
+        char name[64];
+        snprintf(name, sizeof name, "%s", g_movies[i].name);
+        moved += movie_meshes_move(name, 1, cache, cache_mem, cache_bytes);
+    }
+    return moved;
+}
+
+// ---- controls -> the game's buttons (cc_port_keys gives them port 1's key codes) -------
 
 #define STICK_DEAD 40   // of 128: below this the stick is centred
 #define STICK_RUN 100   // at or beyond this it's a full tilt
 
-static void map_pad(const SceCtrlData *pad, int debug, int in_game) {
-    memset(cc_keys, 0, sizeof cc_keys);
-    if (debug) return;
+static uint32_t pad_buttons(const SceCtrlData *pad, int in_game) {
+    uint32_t k = 0;
     unsigned b = pad->buttons;
     int lx = pad->lx - 128, ly = pad->ly - 128;
     // the console scripts run on a full tilt and walk on a light one; the D-pad runs. Outside a
     // level (map, stat screen, menus) only the full directions mean anything: any tilt is one.
     int run = in_game ? STICK_RUN : STICK_DEAD;
-    if ((b & SCE_CTRL_LEFT) || lx <= -run) cc_keys[K_LEFT] = 1;
-    else if (lx <= -STICK_DEAD) cc_keys[K_WALK_LEFT] = 1;
-    if ((b & SCE_CTRL_RIGHT) || lx >= run) cc_keys[K_RIGHT] = 1;
-    else if (lx >= STICK_DEAD) cc_keys[K_WALK_RIGHT] = 1;
-    if ((b & SCE_CTRL_UP) || ly <= -run) cc_keys[K_UP] = 1;
-    else if (ly <= -STICK_DEAD) cc_keys[K_WALK_UP] = 1;
-    if ((b & SCE_CTRL_DOWN) || ly >= run) cc_keys[K_DOWN] = 1;
-    else if (ly >= STICK_DEAD) cc_keys[K_WALK_DOWN] = 1;
+    if ((b & SCE_CTRL_LEFT) || lx <= -run) k |= 1u << CCB_LEFT;
+    else if (lx <= -STICK_DEAD) k |= 1u << CCB_WALK_LEFT;
+    if ((b & SCE_CTRL_RIGHT) || lx >= run) k |= 1u << CCB_RIGHT;
+    else if (lx >= STICK_DEAD) k |= 1u << CCB_WALK_RIGHT;
+    if ((b & SCE_CTRL_UP) || ly <= -run) k |= 1u << CCB_UP;
+    else if (ly <= -STICK_DEAD) k |= 1u << CCB_WALK_UP;
+    if ((b & SCE_CTRL_DOWN) || ly >= run) k |= 1u << CCB_DOWN;
+    else if (ly >= STICK_DEAD) k |= 1u << CCB_WALK_DOWN;
     // the right stick stands in for L2/R2 (switching items). The script steps once per
     // press and waits for the release, so a flick past the deadzone is one step and the
     // stick re-arms when it comes back to the centre.
     int rx = pad->rx - 128;
-    if (rx <= -STICK_RUN + 20) cc_keys[K_L2] = 1;
-    if (rx >= STICK_RUN - 20) cc_keys[K_R2] = 1;
-    if (b & SCE_CTRL_CROSS) cc_keys[K_ACCEPT] = cc_keys[K_JUMP] = 1;
-    if (b & SCE_CTRL_CIRCLE) cc_keys[K_BACK] = cc_keys[K_PROJECTILE] = 1;
-    if (b & SCE_CTRL_SQUARE) cc_keys[K_PUNCH1] = 1;
-    if (b & SCE_CTRL_TRIANGLE) cc_keys[K_PUNCH2] = 1;
-    // the PlayStation layout's sides: block on the left (L2), magic on the right (R2)
-    if (b & SCE_CTRL_LTRIGGER) cc_keys[K_SHIELD] = 1;
-    if (b & SCE_CTRL_RTRIGGER) cc_keys[K_MAGIC] = 1;
-    if (b & SCE_CTRL_START) cc_keys[K_START] = 1;
+    if (rx <= -STICK_RUN + 20) k |= 1u << CCB_L2;
+    if (rx >= STICK_RUN - 20) k |= 1u << CCB_R2;
+    // menus always accept on Cross and go back on Circle; the actions are on whichever button
+    // the player put them (cc_bind; by default the PlayStation layout: block on L, magic on R)
+    static const unsigned PAD[CC_ACTIONS] = {SCE_CTRL_SQUARE, SCE_CTRL_TRIANGLE, SCE_CTRL_CROSS,
+                                             SCE_CTRL_CIRCLE, SCE_CTRL_LTRIGGER, SCE_CTRL_RTRIGGER};
+    static const int ACTION[CC_ACTIONS] = {CCB_PUNCH1, CCB_PUNCH2, CCB_JUMP, CCB_PROJECTILE, CCB_SHIELD, CCB_MAGIC};
+    if (b & SCE_CTRL_CROSS) k |= 1u << CCB_ACCEPT;
+    if (b & SCE_CTRL_CIRCLE) k |= 1u << CCB_BACK;
+    for (int a = 0; a < CC_ACTIONS; a++)
+        if (b & PAD[cc_bind[a]]) k |= 1u << ACTION[a];
+    if (b & SCE_CTRL_START) k |= 1u << CCB_START;
+    return k;
+}
+
+// the game's Start from Cross (and none from Start itself)
+static uint32_t cross_starts(uint32_t k) {
+    return (k & ~(1u << CCB_START)) | (k >> CCB_ACCEPT & 1) << CCB_START;
+}
+
+// ---- more controllers: a PS TV's paired pads, or a plugin's (ds34vita) ---------------
+// The ports as SDL reads them: port 0 is the Vita's own buttons (on a PS TV the first pad's
+// too), port 1 the first pad, ports 2-4 players 2-4. Player 1 is ports 0 and 1 together, in
+// case a plugin doesn't mirror its first pad on port 0. The Ext2 reads tell L1/R1 from L2/R2.
+
+#define LOCAL_PADS 4
+static SceCtrlData g_pads[LOCAL_PADS];   // this frame's, player 1 to 4
+static int g_pad_on[LOCAL_PADS];         // paired (player 1 always)
+
+// an Ext2 read as the Vita's own: L1/R1 are its L/R (block, magic); L2/R2 switch items as the
+// right stick's flick does, so they push it to the side
+static int pad_read_ext(int port, SceCtrlData *p) {
+    if (sceCtrlPeekBufferPositiveExt2(port, p, 1) < 0) return 0;
+    unsigned b = p->buttons, o = b & ~(SCE_CTRL_L1 | SCE_CTRL_R1 | SCE_CTRL_L2 | SCE_CTRL_R2 | SCE_CTRL_L3 | SCE_CTRL_R3);
+    if (b & SCE_CTRL_L1) o |= SCE_CTRL_LTRIGGER;
+    if (b & SCE_CTRL_R1) o |= SCE_CTRL_RTRIGGER;
+    if (b & SCE_CTRL_L2) p->rx = 0;
+    if (b & SCE_CTRL_R2) p->rx = 255;
+    p->buttons = o;
+    return 1;
+}
+
+// player 1 into *p1 and g_pads[0]; players 2-4 into g_pads[] while their pads are paired
+// (not in a Wi-Fi game, where each Vita is one player)
+static void pads_read(SceCtrlData *p1, int extra) {
+    static int frames;
+    static SceCtrlPortInfo info;
+    if (frames++ % 30 == 0 && sceCtrlGetControllerPortInfo(&info) < 0) memset(&info, 0, sizeof info);
+    // the sticks from the plain read only, as before more pads (with the Ext2 reads' sticks
+    // they did nothing in a level on Jah's Vita); Ext2 only gives the buttons (L1/R1, L2/R2)
+    sceCtrlPeekBufferPositive(0, p1, 1);
+    SceCtrlData q;
+    if (pad_read_ext(0, &q)) {
+        p1->buttons = q.buttons;
+        if (q.rx == 0 || q.rx == 255) p1->rx = q.rx;   // L2/R2
+    }
+    // port 1's buttons only when it's a paired pad (on a handheld it's the Vita's own again)
+    if ((info.port[1] == SCE_CTRL_TYPE_DS3 || info.port[1] == SCE_CTRL_TYPE_DS4) && pad_read_ext(1, &q)) {
+        p1->buttons |= q.buttons;
+        if (q.rx == 0 || q.rx == 255) p1->rx = q.rx;
+    }
+    g_pads[0] = *p1;
+    g_pad_on[0] = 1;
+    for (int i = 1; i < LOCAL_PADS; i++) {
+        g_pad_on[i] = extra && info.port[i + 1] != SCE_CTRL_TYPE_UNPAIRED && pad_read_ext(i + 1, &g_pads[i]);
+        if (!g_pad_on[i]) {
+            memset(&g_pads[i], 0, sizeof g_pads[i]);
+            g_pads[i].lx = g_pads[i].ly = g_pads[i].rx = g_pads[i].ry = 128;
+        }
+    }
+}
+
+// menus: the buttons pressed since last frame, with the stick moving once per push too
+static unsigned pad_nav(const SceCtrlData *pad, const SceCtrlData *old) {
+    unsigned nav = pad->buttons & ~old->buttons;
+    if (pad->ly < 48 && old->ly >= 48) nav |= SCE_CTRL_UP;
+    if (pad->ly > 208 && old->ly <= 208) nav |= SCE_CTRL_DOWN;
+    if (pad->lx < 48 && old->lx >= 48) nav |= SCE_CTRL_LEFT;
+    if (pad->lx > 208 && old->lx <= 208) nav |= SCE_CTRL_RIGHT;
+    return nav;
+}
+
+// Settings' Item Switch: besides the right stick (always), a touch on the left or right half of
+// the front screen, the rear pad, or either switches to the previous or next item (L2 / R2)
+static int g_item_switch;   // HB_SWITCH_*
+
+static uint32_t touch_buttons(void) {
+    uint32_t k = 0;
+    for (int port = 0; port < 2; port++) {
+        if (!(g_item_switch & (port ? HB_SWITCH_REAR : HB_SWITCH_FRONT))) continue;
+        SceTouchData t;
+        if (sceTouchPeek(port ? SCE_TOUCH_PORT_BACK : SCE_TOUCH_PORT_FRONT, &t, 1) < 1) continue;
+        for (unsigned i = 0; i < t.reportNum; i++)   // both panels are 1920 wide
+            k |= 1u << (t.report[i].x < 960 ? CCB_L2 : CCB_R2);
+    }
+    return k;
 }
 
 // ---- pause menu ----------------------------------------------------------------------
@@ -457,19 +1003,90 @@ static void map_pad(const SceCtrlData *pad, int debug, int in_game) {
 // tells the scripts through g_nPort<n>State: 2 paused, 1 playing, 3 quit to the map.
 
 typedef struct {
-    int open, sel, page;       // page 0: the menu, 1: controls
-    DrawList art;              // the pause book, drawn over the frozen game
+    int open;
+    int select;                // opened at character select: no player state to set
+    int title;                 // the title's Help & Options (the FRESH Look row is only there)
+    PauseMenu m;               // the menu (pause_menu.c)
+    DrawList ui;               // this frame's backdrop, words and button prompts
+    DrawList art;              // the pause book (controls and achievements pages)
     int have_art;
     float book[4];             // where the book is on screen
+    HelpBook hb;               // Help & Options' book, while the menu is on PG_BOOK
+    DrawList hb_ui;
 } Pause;
 
-static const char *PAUSE_ITEMS[] = {"Resume", "Controls", "Quit to Map"};
-#define NPAUSE_ITEMS 3
+// Settings' volumes, 0..HB_VOLUME_STEPS, and Auto Potion: kept in settings.txt as "music = N",
+// "sfx = N", "autopotion = 0/1" and "itemswitch = 0..3" (HB_SWITCH_*); the Controls page's buttons as "buttons = " and cc_bind's
+// six numbers
+static int g_volume[2] = {HB_VOLUME_STEPS, HB_VOLUME_STEPS};
+static int g_auto_potion;
+static int g_fresh;   // "fresh = 0/1": the FRESH look (paint_jr.h)
+static int g_hud_size = HB_HUD_NORMAL, g_text_size;   // "hudsize = 0..3", "textsize = 0..2"
+
+static void settings_apply(void) {
+    as_render_hud_scale = hb_hud_scale[g_hud_size];
+    pause_menu_text_scale = hb_text_scale[g_text_size];
+    audio_set_volume(g_volume[0] / (float)HB_VOLUME_STEPS, g_volume[1] / (float)HB_VOLUME_STEPS);
+}
+
+static void settings_load(void) {
+    FILE *f = fopen(SETTINGS_PATH, "r");
+    if (f) {
+        char line[64];
+        int v;
+        while (fgets(line, sizeof line, f)) {
+            if (sscanf(line, " music = %d", &v) == 1 && v >= 0 && v <= HB_VOLUME_STEPS) g_volume[0] = v;
+            if (sscanf(line, " sfx = %d", &v) == 1 && v >= 0 && v <= HB_VOLUME_STEPS) g_volume[1] = v;
+            if (sscanf(line, " autopotion = %d", &v) == 1) g_auto_potion = v != 0;
+            if (sscanf(line, " fresh = %d", &v) == 1) g_fresh = v != 0;
+            if (sscanf(line, " hudsize = %d", &v) == 1 && v >= 0 && v < HB_HUD_N) g_hud_size = v;
+            if (sscanf(line, " textsize = %d", &v) == 1 && v >= 0 && v < HB_TEXT_N) g_text_size = v;
+            if (sscanf(line, " itemswitch = %d", &v) == 1 && v >= 0 && v < HB_SWITCH_N) g_item_switch = v;
+            int nb[CC_ACTIONS], used = 0;
+            if (sscanf(line, " buttons = %d %d %d %d %d %d", &nb[0], &nb[1], &nb[2], &nb[3], &nb[4], &nb[5]) ==
+                CC_ACTIONS) {
+                for (int a = 0; a < CC_ACTIONS; a++)
+                    if (nb[a] >= 0 && nb[a] < CC_ACTIONS) used |= 1 << nb[a];
+                if (used == (1 << CC_ACTIONS) - 1) memcpy(cc_bind, nb, sizeof nb);   // each button once
+            }
+        }
+        fclose(f);
+    }
+    settings_apply();
+}
+
+static void settings_save(void) {
+    FILE *f = fopen(SETTINGS_PATH, "w");
+    if (!f) return;
+    fprintf(f, "music = %d\nsfx = %d\nautopotion = %d\nitemswitch = %d\nfresh = %d\nhudsize = %d\ntextsize = %d\n",
+            g_volume[0], g_volume[1], g_auto_potion, g_item_switch, g_fresh, g_hud_size, g_text_size);
+    fprintf(f, "buttons = %d %d %d %d %d %d\n", cc_bind[0], cc_bind[1], cc_bind[2], cc_bind[3], cc_bind[4],
+            cc_bind[5]);
+    fclose(f);
+}
 
 static int in_level(AsVm *vm) {
     int found;
     AsVal g = as_resolve_path(vm, vm->root, "loader.game.game", &found);
     return found && g.t == V_OBJ && g.o->type == OBJ_MC;
+}
+
+// the world map (MAP.swf in the level slot): the executable's pause menu opens there too
+static int in_loader(AsVm *vm, const char *file) {
+    int found;
+    AsVal l = as_resolve_path(vm, vm->root, "loader", &found);
+    Movie *m = cached_movie(file);
+    return found && m && l.t == V_OBJ && l.o->type == OBJ_MC && ((AsMc *)l.o)->movie == m;
+}
+
+static int in_map(AsVm *vm) { return in_loader(vm, "MAP.swf"); }
+
+// character select (lobby.swf in the loader): Start opens the pause menu there too, a knight is
+// picked with Cross
+static int in_select(AsVm *vm) {
+    int found;
+    AsVal s = as_resolve_path(vm, vm->root, "loader.selectscreen", &found);
+    return found && s.t == V_OBJ && s.o->type == OBJ_MC;
 }
 
 // the pause book from PAUSE.swf, centred, about 60% of the screen wide
@@ -514,28 +1131,22 @@ static void pause_build_art(Pause *ps) {
     ps->have_art = 1;
 }
 
-static void pause_set_state(AsVm *vm, int state) { cc_set_flash_global(vm, "g_nPort1State", as_num(state)); }
+// Wi-Fi play: this Vita's player's state goes to every Vita with the next buttons (g_net_state:
+// the state + 1, 0 none waiting)
+static int g_netgame, g_net_state;
 
-// one frame of the open menu: returns 1 while it stays open
-static int pause_input(Pause *ps, AsVm *vm, unsigned pressed) {
-    if (ps->page == 1) {   // controls page: any of these goes back
-        if (pressed & (SCE_CTRL_CIRCLE | SCE_CTRL_CROSS | SCE_CTRL_START)) ps->page = 0;
-        return 1;
-    }
-    if (pressed & SCE_CTRL_UP) ps->sel = (ps->sel + NPAUSE_ITEMS - 1) % NPAUSE_ITEMS;
-    if (pressed & SCE_CTRL_DOWN) ps->sel = (ps->sel + 1) % NPAUSE_ITEMS;
-    if (pressed & (SCE_CTRL_CIRCLE | SCE_CTRL_START)) { pause_set_state(vm, 1); return 0; }
-    if (pressed & SCE_CTRL_CROSS) {
-        if (ps->sel == 0) { pause_set_state(vm, 1); return 0; }
-        if (ps->sel == 1) { ps->page = 1; return 1; }
-        pause_set_state(vm, 3);   // the scripts take the party back to the map
-        return 0;
-    }
-    return 1;
+static int g_pause_port = 1;   // the local player whose Start opened the menu
+
+static void pause_set_state(AsVm *vm, int state) {
+    if (g_netgame) { g_net_state = state + 1; return; }
+    char name[32];
+    snprintf(name, sizeof name, "g_nPort%dState", g_pause_port);
+    cc_set_flash_global(vm, name, as_num(state));
 }
 
-static void pause_draw(Pause *ps) {
-    vita2d_draw_rectangle(0, 0, SCREEN_W, SCREEN_H, RGBA8(0, 0, 0, 140));
+// the achievements page over the pause book
+static void pause_book_draw(Pause *ps, int page, int dim) {
+    if (dim) vita2d_draw_rectangle(0, 0, SCREEN_W, SCREEN_H, RGBA8(0, 0, 0, 140));
     float x0 = SCREEN_W * 0.3f, y0 = SCREEN_H * 0.3f, x1 = SCREEN_W * 0.7f;
     if (ps->have_art) {
         draw_list(&ps->art);
@@ -546,20 +1157,105 @@ static void pause_draw(Pause *ps) {
         vita2d_draw_rectangle(x0 - 20, y0 - 60, x1 - x0 + 40, 260, RGBA8(237, 222, 180, 255));
     }
     unsigned ink = RGBA8(70, 45, 20, 255), hi = RGBA8(190, 40, 30, 255);
-    if (ps->page == 1) {
-        static const char *lines[] = {
-            "Left stick: walk / run",    "Square: light attack",  "Triangle: heavy attack",
-            "Cross: jump",               "Circle: use item",      "L: block",
-            "R (hold) + attack: magic",  "Right stick left/right: switch item", "Start: pause",
-        };
-        for (int i = 0; i < 9; i++) vita2d_pgf_draw_text(g_font, x0, y0 + i * 26, ink, 0.9f, lines[i]);
-        vita2d_pgf_draw_text(g_font, x0, y0 + 9 * 26 + 14, hi, 0.9f, "Circle: back");
-        return;
+    if (page == PG_ACHIEVEMENTS) {
+        unsigned got = cc_achievements(), dimmed = RGBA8(150, 130, 100, 255);
+        int n = 0;
+        for (int id = 1; id <= CC_ACHIEVEMENTS; id++) n += got >> id & 1;
+        vita2d_pgf_draw_textf(g_font, x0, y0 - 30, ink, 1.0f, "Achievements  %d / %d", n, CC_ACHIEVEMENTS);
+        for (int id = 1; id <= CC_ACHIEVEMENTS; id++)
+            vita2d_pgf_draw_textf(g_font, x0, y0 + (id - 1) * 21, got >> id & 1 ? ink : dimmed, 0.75f, "%s %s",
+                                  got >> id & 1 ? "[x]" : "[  ]", cc_achievement_name(id));
+        vita2d_pgf_draw_text(g_font, x0, y0 + CC_ACHIEVEMENTS * 21 + 10, hi, 0.9f, "Circle: back");
     }
-    vita2d_pgf_draw_text(g_font, x0, y0, ink, 1.2f, "Paused");
-    for (int i = 0; i < NPAUSE_ITEMS; i++)
-        vita2d_pgf_draw_textf(g_font, x0 + 10, y0 + 50 + i * 40, i == ps->sel ? hi : ink, 1.1f, "%s%s",
-                              i == ps->sel ? "> " : "  ", PAUSE_ITEMS[i]);
+}
+
+// the menu over the frozen game, or a book page over its backdrop
+static void pause_draw(Pause *ps) {
+    Movie *pm = host_movie("PAUSE.swf");
+    render_begin(&ps->ui);
+    ps->ui.view[2] = SCREEN_W;
+    ps->ui.view[3] = SCREEN_H;
+    if (pm) pause_menu_build(&ps->m, pm, SCREEN_W / 848.0f, &ps->ui);
+    else vita2d_draw_rectangle(0, 0, SCREEN_W, SCREEN_H, RGBA8(0, 0, 0, 200));
+    draw_list(&ps->ui);
+    if (ps->m.page == PG_CONTROLS || ps->m.page == PG_ACHIEVEMENTS) pause_book_draw(ps, ps->m.page, 0);
+    if (ps->m.page == PG_BOOK && pm && !ps->m.book_new) {
+        render_begin(&ps->hb_ui);
+        ps->hb_ui.view[2] = SCREEN_W;
+        ps->hb_ui.view[3] = SCREEN_H;
+        help_book_build(&ps->hb, pm, SCREEN_W / 848.0f, &ps->hb_ui);
+        draw_list(&ps->hb_ui);
+    }
+}
+
+// Help & Options' book: L/R (or left/right) turn How to Play's pages, up/down and left/right
+// set the volumes and move the Controls page's actions (Triangle puts them back), Circle
+// closes it (the settings are saved then if they moved)
+static void help_input(Pause *ps, unsigned pressed, float dt) {
+    if (ps->m.book_new) {
+        help_book_open(&ps->hb, ps->m.book, g_volume[0], g_volume[1], g_auto_potion,
+                       ps->title && cc_fresh_available() ? g_fresh : -1);
+        ps->hb.item_switch = g_item_switch;
+        ps->hb.hud_size = g_hud_size;
+        ps->hb.text_size = g_text_size;
+        ps->hb.achieved = cc_achievements();
+        ps->m.book_new = 0;
+    }
+    unsigned b = (pressed & SCE_CTRL_UP ? HB_UP : 0) | (pressed & SCE_CTRL_DOWN ? HB_DOWN : 0) |
+                 (pressed & SCE_CTRL_LEFT ? HB_LEFT : 0) | (pressed & SCE_CTRL_RIGHT ? HB_RIGHT : 0) |
+                 (pressed & SCE_CTRL_LTRIGGER ? HB_PREV : 0) | (pressed & SCE_CTRL_RTRIGGER ? HB_NEXT : 0) |
+                 (pressed & SCE_CTRL_CIRCLE ? HB_BACK : 0) | (pressed & SCE_CTRL_TRIANGLE ? HB_RESET : 0);
+    int sound;
+    int open = help_book_update(&ps->hb, b, dt, &sound);
+    if (ps->hb.volume[0] != g_volume[0] || ps->hb.volume[1] != g_volume[1] || ps->hb.hud_size != g_hud_size ||
+        ps->hb.text_size != g_text_size) {   // heard (and seen) straight away
+        g_volume[0] = ps->hb.volume[0];
+        g_volume[1] = ps->hb.volume[1];
+        g_hud_size = ps->hb.hud_size;
+        g_text_size = ps->hb.text_size;
+        settings_apply();
+    }
+    g_auto_potion = ps->hb.auto_potion;   // the game's VM picks it up (not mid Wi-Fi game)
+    g_item_switch = ps->hb.item_switch;
+    // the FRESH look (the title's Settings only): from the next game; the title's sticker shows
+    // the setting at once
+    if (ps->hb.fresh >= 0) g_fresh = ps->hb.fresh;
+    if (sound >= 0) audio_sfx_play(sound == 0 ? "sound_toggle_b.wav" : "sound_player_select.wav", 1, 0, 0, ps);
+    if (open) return;
+    if (ps->hb.changed) settings_save();
+    pause_menu_book_closed(&ps->m);
+}
+
+// the menu's buttons for a frame; PM_OPEN while it stays open
+static int menu_input(Pause *ps, unsigned pressed, float dt) {
+    if (ps->m.page == PG_BOOK) {
+        help_input(ps, pressed, dt);
+        int sound;
+        pause_menu_update(&ps->m, 0, dt, &sound);   // the backdrop keeps drifting
+        return PM_OPEN;
+    }
+    unsigned b = (pressed & SCE_CTRL_UP ? PM_UP : 0) | (pressed & SCE_CTRL_DOWN ? PM_DOWN : 0) |
+                 (pressed & (SCE_CTRL_CROSS | SCE_CTRL_START) ? PM_ACCEPT : 0) | (pressed & SCE_CTRL_CIRCLE ? PM_BACK : 0);
+    int sound;
+    int r = pause_menu_update(&ps->m, b, dt, &sound);
+    if (sound >= 0) audio_sfx_play(sound ? "sound_player_select.wav" : "sound_toggle_b.wav", 1, 0, 0, ps);
+    return r;
+}
+
+// one frame of the open menu: 1 while it stays open, 0 closed, 2 back to the title
+static int pause_input(Pause *ps, AsVm *vm, unsigned pressed, float dt) {
+    int r = menu_input(ps, pressed, dt);
+    if (r == PM_OPEN) return 1;
+    ps->open = 0;
+    if (r == PM_TO_TITLE) return 2;
+    if (ps->select) { ps->select = 0; return 0; }
+    pause_set_state(vm, r == PM_TO_MAP ? 3 : 1);   // 3: the scripts take the party back to the map
+    return 0;
+}
+
+static void pause_open(Pause *ps, int on_map) {
+    ps->open = 1;
+    pause_menu_open(&ps->m, on_map);
 }
 
 static void vita_sound_start(AsVm *vm, const char *linkage, float volume, float pan, int loops, const void *owner) {
@@ -573,8 +1269,83 @@ static void vita_sound_stop(AsVm *vm, const void *owner) {
 }
 
 static void vita_warn(AsVm *vm, const char *msg) {
-    (void)vm;
     snprintf(g_last_error, sizeof g_last_error, "%s", msg);
+    if (log_first(msg)) {
+        log_line("[%u] %s", vm ? (unsigned)vm->tick : 0, msg);
+        log_flush();
+    }
+}
+
+// ---- the developer intro ---------------------------------------------------------------
+// LEGAL.swf, as the original plays it at start: Newgrounds, The Behemoth's bird, the featured
+// programmer and artist. It ends by calling ChangeMovie(); START or CROSS skips it.
+static int g_intro_done;
+static AsVal intro_change_movie(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
+    (void)vm; (void)this_; (void)argc; (void)argv;
+    g_intro_done = 1;
+    return as_undef();
+}
+
+static void intro_screen(DrawList *vb) {
+    Movie *m = vita_loader(NULL, "LEGAL.swf");
+    if (!m) return;
+    AsVm *t = as_new(vita_loader);
+    t->sound_start = vita_sound_start;
+    t->sound_stop = vita_sound_stop;
+    t->warn = vita_warn;
+    cc_host_init(t);
+    as_render_init(t);
+    t->root = as_mc_new(t, m, &m->root, NULL, 0);
+    cc_native_root_functions(t, &t->root->obj);
+    as_def_fn(t, t->global, "ChangeMovie", intro_change_movie);
+    g_intro_done = 0;
+    SceCtrlData pad, old = {0};
+    sceCtrlPeekBufferPositive(0, &old, 1);
+    SceUInt64 prev = sceKernelGetProcessTimeWide(), acc = 0;
+    const SceUInt64 tick_us = 1000000 / 30;
+    int last = 0;
+    while (!g_intro_done) {
+        preload_step(PRELOAD_INTRO);   // the title's file while the intro plays
+        sceCtrlPeekBufferPositive(0, &pad, 1);
+        if (pad.buttons & ~old.buttons & (SCE_CTRL_START | SCE_CTRL_CROSS)) break;
+        old = pad;
+        SceUInt64 now = sceKernelGetProcessTimeWide();
+        acc += now - prev;
+        prev = now;
+        if (acc > 2 * tick_us) acc = 2 * tick_us;
+        int ticked = 0;
+        while (acc >= tick_us && !g_intro_done) {
+            as_tick(t);
+            as_gc(t);
+            acc -= tick_us;
+            ticked = 1;
+            if (t->root->frame == m->root.nframes - 1) {   // the end, should it not say so
+                if (last++ > 30) g_intro_done = 1;
+            }
+        }
+        if (ticked) {
+            RecolourCache *cache = g_cache;
+            if (cache && (cache->used > cache->cap * 9 / 10 || cache->entries * 4 >= cache->table_size * 3)) {
+                vita2d_wait_rendering_done();
+                recolour_cache_free(cache);
+                recolour_cache_init(cache, g_cache_mem, g_cache_bytes);
+            }
+            float k = SCREEN_W / m->stage_w;
+            render_begin(vb);
+            as_render_mc(t->root, (Mat){k / 20, 0, 0, k / 20, 0, 0}, CX_IDENTITY, vb);
+        }
+        vita2d_set_clear_color(RGBA8(m->bg[0], m->bg[1], m->bg[2], 255));
+        vita2d_start_drawing();
+        vita2d_clear_screen();
+        draw_list(vb);
+        vita2d_end_drawing();
+        vita2d_swap_buffers();
+    }
+    vita2d_wait_rendering_done();
+    audio_sfx_stop(NULL);
+    if (cc_music_stop) cc_music_stop();
+    memset(cc_keys, 0, sizeof cc_keys);
+    as_free(t);
 }
 
 // ---- title screen and main menu --------------------------------------------------------
@@ -594,9 +1365,496 @@ static void outlined_text(int x, int y, float size, const char *s) {
     vita2d_pgf_draw_text(g_font, x, y, RGBA8(255, 255, 255, 255), size, s);
 }
 
-static void title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, size_t cache_bytes) {
+#ifdef CC_NET
+// a line in the game's font with a black outline, centred on x (y: the line's middle), drawn
+// now; the system font when the game font isn't there
+static void game_text(int x, int y, float size, uint32_t rgb, const char *s) {
+    if (as_render_host_line_height() <= 0) {
+        outlined_text(x - vita2d_pgf_text_width(g_font, size * 0.9f, s) / 2, y + 8, size * 0.9f, s);
+        return;
+    }
+    static DrawList dl;
+    render_begin(&dl);
+    dl.view[2] = SCREEN_W;
+    dl.view[3] = SCREEN_H;
+    CXform cx = {{(rgb >> 16 & 255) / 255.0f, (rgb >> 8 & 255) / 255.0f, (rgb & 255) / 255.0f, 1}, {0, 0, 0, 0}};
+    as_render_host_text_outlined(s, x, y, size, size, 2, 2, (Mat){1, 0, 0, 1, 0, 0}, cx, &dl);
+    draw_list(&dl);
+}
+
+// ---- Multiplayer: the Wi-Fi lobby, over the title ---------------------------------------
+// Host a game (this Vita is player 1) or join one heard on the same Wi-Fi, or one over the
+// internet by its game code or from the public games list (lobby.h); the host starts it once
+// someone has joined. Everyone then picks their knight at character select, with Cross.
+// W_MODE: the host picks the game (Local Game's book of modes) before it starts
+enum { W_CLOSED, W_MENU, W_HOST, W_SCAN, W_CODE, W_JOINED, W_PUBLIC, W_MODE };
+// the menu's choices (the public ones only with a list server)
+enum { WI_HOST, WI_HOST_PUBLIC, WI_SCAN, WI_CODE, WI_PUBLIC };
+static struct {
+    int page, item;
+    int back;                  // W_JOINED: the menu item to go back to
+    int public;                // W_HOST: in the public games list (once open to the internet)
+    int refresh;               // W_PUBLIC: frames until the list is asked for again
+    char code[NET_CODE_LEN + 1];   // W_CODE: the code typed in (letters only), kept for next time
+    int typing;                // W_CODE: the system keyboard is up
+    char note[96];
+    int note_timer;
+} g_wifi;
+
+static int wifi_items(int *out) {   // the menu's choices, top to bottom
+    int n = 0;
+    out[n++] = WI_HOST;
+    if (lobby_available()) out[n++] = WI_HOST_PUBLIC;
+    out[n++] = WI_SCAN;
+    out[n++] = WI_CODE;
+    if (lobby_available()) out[n++] = WI_PUBLIC;
+    return n;
+}
+
+static int wifi_item_at(int which) {   // where that choice is in the menu
+    int items[5], n = wifi_items(items);
+    for (int i = 0; i < n; i++)
+        if (items[i] == which) return i;
+    return 0;
+}
+
+static int wifi_players(void) {
+    int n = 0;
+    for (int p = 0; p < NET_PLAYERS; p++) n += net.names[p][0] != 0;
+    return n;
+}
+
+// a public game is in the list while it's open to the internet and waiting for players
+static void wifi_listing(void) {
+    uint32_t ext;
+    if (g_wifi.page == W_HOST && g_wifi.public && net.state == NET_HOSTING && net_internet(&ext, NULL) > 0)
+        lobby_publish(net_local_name(), wifi_players());
+    else
+        lobby_unpublish();
+}
+
+static void wifi_note(const char *s) {
+    log_line("Wi-Fi: %s", s);
+    log_flush();
+    snprintf(g_wifi.note, sizeof g_wifi.note, "%s", s);
+    g_wifi.note_timer = 60 * 4;
+}
+
+static int my_profile(uint8_t **out) {
+    static uint8_t buf[3 * 65536];
+    *out = buf;
+    int n = cc_storage_pack(0, buf, sizeof buf);
+    return n < 0 ? 0 : n;
+}
+
+// Join by Game Code takes the code in the Vita's own keyboard and text box (the IME dialog)
+static SceWChar16 g_ime_text[SCE_IME_DIALOG_MAX_TEXT_LENGTH + 1], g_ime_title[64], g_ime_start[16];
+
+static void wide(SceWChar16 *out, int cap, const char *s) {
+    int i = 0;
+    for (; s[i] && i < cap - 1; i++) out[i] = (unsigned char)s[i];
+    out[i] = 0;
+}
+
+static int wifi_keyboard_open(void) {
+    char start[NET_CODE_LEN + 2];
+    snprintf(start, sizeof start, "%.4s%s%s", g_wifi.code, g_wifi.code[4] ? "-" : "", g_wifi.code[4] ? g_wifi.code + 4 : "");
+    wide(g_ime_start, 16, start);
+    const char *title = strtab_get("vita.wifi.code_title");
+    wide(g_ime_title, 64, title ? title : "Game code (from the host's Multiplayer page)");
+    memset(g_ime_text, 0, sizeof g_ime_text);
+    SceImeDialogParam p;
+    sceImeDialogParamInit(&p);
+    p.supportedLanguages = SCE_IME_LANGUAGE_ENGLISH;
+    p.languagesForced = SCE_TRUE;
+    p.type = SCE_IME_TYPE_BASIC_LATIN;
+    p.option = SCE_IME_OPTION_NO_ASSISTANCE;
+    p.dialogMode = SCE_IME_DIALOG_DIALOG_MODE_WITH_CANCEL;
+    p.textBoxMode = SCE_IME_DIALOG_TEXTBOX_MODE_WITH_CLEAR;
+    p.title = g_ime_title;
+    p.maxTextLength = NET_CODE_LEN + 4;   // room for a dash and spaces
+    p.initialText = g_ime_start;
+    p.inputTextBuffer = g_ime_text;
+    int r = sceImeDialogInit(&p);
+    if (r < 0) log_line("Wi-Fi: keyboard didn't open (0x%08x)", r);
+    g_wifi.typing = r >= 0;
+    return g_wifi.typing;
+}
+
+// the keyboard is closed: 1 with the code in g_wifi.code (Enter), 0 if cancelled
+static int wifi_keyboard_done(void) {
+    SceImeDialogResult res;
+    memset(&res, 0, sizeof res);
+    sceImeDialogGetResult(&res);
+    sceImeDialogTerm();
+    g_wifi.typing = 0;
+    if (res.button != SCE_IME_DIALOG_BUTTON_ENTER) return 0;
+    int n = 0;   // letters and digits only, upper case (the dash and spaces are optional)
+    for (int i = 0; g_ime_text[i] && n < NET_CODE_LEN; i++) {
+        int c = g_ime_text[i];
+        if (c >= 'a' && c <= 'z') c -= 32;
+        if ((c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z')) g_wifi.code[n++] = (char)c;
+    }
+    g_wifi.code[n] = 0;
+    return 1;
+}
+
+// host: everyone starts now, playing by the host's settings; off the public list once started
+static int wifi_start(void) {
+    net.rules = g_auto_potion ? NET_RULE_AUTO_POTION : 0;
+    if (!net_start()) return 0;
+    lobby_unpublish();
+    return 1;
+}
+
+// one frame of the lobby: 1 to start the game (everyone's in NET_PLAYING), 2 for the host to
+// pick the game first (W_MODE: then net_start), else 0
+static int wifi_update(unsigned pressed) {
+    net_poll();
+    if (net.state == NET_LOST) {
+        wifi_note(net.error);
+        net_leave();
+        g_wifi.item = g_wifi.page == W_JOINED ? g_wifi.back : 0;
+        g_wifi.page = W_MENU;
+    }
+    if (net.state == NET_PLAYING) { lobby_unpublish(); return 1; }
+    if (g_wifi.page == W_MODE) return 0;   // the title's book of modes has the buttons
+    int sound = -1;
+    switch (g_wifi.page) {
+    case W_MENU: {
+        int items[5], ni = wifi_items(items);
+        if (g_wifi.item >= ni) g_wifi.item = 0;
+        int which = items[g_wifi.item];
+        if (pressed & SCE_CTRL_UP) { g_wifi.item = (g_wifi.item + ni - 1) % ni; sound = 0; }
+        if (pressed & SCE_CTRL_DOWN) { g_wifi.item = (g_wifi.item + 1) % ni; sound = 0; }
+        if (pressed & SCE_CTRL_CROSS) {
+            sound = 1;
+            uint8_t *pr;
+            int n = my_profile(&pr);
+            if ((which == WI_HOST || which == WI_HOST_PUBLIC) && net_host(pr, n)) {
+                g_wifi.page = W_HOST;
+                g_wifi.public = which == WI_HOST_PUBLIC;
+            } else if (which == WI_SCAN && net_scan()) { g_wifi.page = W_SCAN; g_wifi.item = 0; }
+            else if (which == WI_CODE) { g_wifi.page = W_CODE; wifi_keyboard_open(); }
+            else if (which == WI_PUBLIC) { g_wifi.page = W_PUBLIC; g_wifi.item = 0; g_wifi.refresh = 0; }
+            else wifi_note(net.error);
+        }
+        if (pressed & SCE_CTRL_CIRCLE) { g_wifi.page = W_CLOSED; sound = 1; }
+        break;
+    }
+    case W_HOST: {
+        int n = wifi_players();
+        if (pressed & (SCE_CTRL_START | SCE_CTRL_CROSS)) {
+            sound = 1;
+            if (n < 2) wifi_note("Waiting for someone to join first");
+            else { g_wifi.page = W_MODE; audio_sfx_play("sound_player_select.wav", 1, 0, 0, NULL); return 2; }
+        }
+        if (pressed & SCE_CTRL_CIRCLE) {
+            net_leave();
+            g_wifi.page = W_MENU;
+            g_wifi.item = wifi_item_at(g_wifi.public ? WI_HOST_PUBLIC : WI_HOST);
+            sound = 1;
+        }
+        break;
+    }
+    case W_PUBLIC: {   // the public games list, asked for again every 5 seconds
+        if (g_wifi.refresh-- <= 0) { lobby_refresh(); g_wifi.refresh = 60 * 5; }
+        LobbyGame games[LOBBY_MAX];
+        int n = lobby_games(games, 6);
+        if (g_wifi.item >= n) g_wifi.item = n ? n - 1 : 0;
+        if (n && (pressed & SCE_CTRL_UP)) { g_wifi.item = (g_wifi.item + n - 1) % n; sound = 0; }
+        if (n && (pressed & SCE_CTRL_DOWN)) { g_wifi.item = (g_wifi.item + 1) % n; sound = 0; }
+        if (n && (pressed & SCE_CTRL_CROSS)) {
+            sound = 1;
+            uint8_t *pr;
+            int len = my_profile(&pr);
+            if (net_join(games[g_wifi.item].addr, pr, len)) { g_wifi.page = W_JOINED; g_wifi.back = wifi_item_at(WI_PUBLIC); }
+            else { wifi_note(net.error); g_wifi.refresh = 0; }
+        }
+        if (pressed & SCE_CTRL_CIRCLE) { g_wifi.page = W_MENU; g_wifi.item = wifi_item_at(WI_PUBLIC); sound = 1; }
+        break;
+    }
+    case W_SCAN: {
+        NetHost hosts[8];
+        int n = net_hosts(hosts, 8);
+        if (g_wifi.item >= n) g_wifi.item = n ? n - 1 : 0;
+        if (n && (pressed & SCE_CTRL_UP)) { g_wifi.item = (g_wifi.item + n - 1) % n; sound = 0; }
+        if (n && (pressed & SCE_CTRL_DOWN)) { g_wifi.item = (g_wifi.item + 1) % n; sound = 0; }
+        if (n && (pressed & SCE_CTRL_CROSS)) {
+            sound = 1;
+            uint8_t *pr;
+            int len = my_profile(&pr);
+            if (net_join(hosts[g_wifi.item].addr, pr, len)) { g_wifi.page = W_JOINED; g_wifi.back = wifi_item_at(WI_SCAN); }
+            else { wifi_note(net.error); net_scan(); }
+        }
+        if (pressed & SCE_CTRL_CIRCLE) { net_leave(); g_wifi.page = W_MENU; g_wifi.item = wifi_item_at(WI_SCAN); sound = 1; }
+        break;
+    }
+    case W_CODE:   // the system keyboard takes the code; Cross types it again, Circle goes back
+        if (g_wifi.typing) {
+            if (sceImeDialogGetStatus() != SCE_COMMON_DIALOG_STATUS_FINISHED) break;   // the dialog has the buttons
+            if (!wifi_keyboard_done()) {   // cancelled: back to the menu (or to the code, if one was typed)
+                if (!g_wifi.code[0]) { g_wifi.page = W_MENU; g_wifi.item = wifi_item_at(WI_CODE); }
+                break;
+            }
+            sound = 1;
+            uint32_t addr = net_code_addr(g_wifi.code);
+            uint8_t *pr;
+            int len = my_profile(&pr);
+            if (!addr) wifi_note("That isn't a game code: check it with the host");
+            else if (net_join(addr, pr, len)) { g_wifi.page = W_JOINED; g_wifi.back = wifi_item_at(WI_CODE); }
+            else wifi_note(net.error);
+            break;
+        }
+        if (pressed & SCE_CTRL_CROSS) { sound = 1; wifi_keyboard_open(); }
+        if (pressed & SCE_CTRL_CIRCLE) { g_wifi.page = W_MENU; g_wifi.item = wifi_item_at(WI_CODE); sound = 1; }
+        break;
+    case W_JOINED:
+        if (pressed & SCE_CTRL_CIRCLE) { net_leave(); g_wifi.page = W_MENU; g_wifi.item = g_wifi.back; sound = 1; }
+        break;
+    }
+    wifi_listing();
+    if (sound >= 0) audio_sfx_play(sound ? "sound_player_select.wav" : "sound_toggle_b.wav", 1, 0, 0, &g_wifi);
+    return 0;
+}
+
+// the lobby as a page of the Help & Options book (PAUSE.swf's art, the game font)
+static void wifi_words(const char *key, const char *fallback, char *out, int cap) {
+    const char *s = strtab_get(key);
+    snprintf(out, cap, "%s", s ? s : fallback);
+}
+#define WORDS(key, fallback) (strtab_get(key) ? strtab_get(key) : (fallback))
+
+static int wifi_depth(int page) { return page == W_CLOSED ? 0 : page == W_MENU ? 1 : page == W_JOINED ? 3 : 2; }
+
+static void wifi_draw(unsigned frame) {
+    static DrawList ui;
+    // a page turn each time a page opens (forward going in, back coming out): the old page
+    // under the first half of the flip, the new one after; opening from the title turns from
+    // an empty page
+    static int shown = W_CLOSED, from = W_CLOSED, dir = 1;
+    static unsigned last_frame;
+    static float turn;
+    static SceUInt64 last_us;
+    SceUInt64 now = sceKernelGetProcessTimeWide();
+    float dt = frame == last_frame + 1 ? (now - last_us) / 1e6f : 0;
+    if (frame != last_frame + 1) shown = W_CLOSED;   // the lobby was closed in between
+    last_frame = frame;
+    last_us = now;
+    if (g_wifi.page != shown) {
+        from = shown;
+        dir = wifi_depth(g_wifi.page) >= wifi_depth(shown) ? 1 : -1;
+        turn = HB_TURN_SECONDS;
+        shown = g_wifi.page;
+    }
+    int page = turn > HB_TURN_SECONDS / 2 ? from : shown;
+    if (turn > 0) turn -= dt > 0.1f ? 0.1f : dt;
+    static char lines[HB_PAGE_LINES][64], note[128], code[NET_CODE_LEN + 2];
+    Movie *pm = host_movie("PAUSE.swf");
+    HbPage pg = {0};
+    pg.chosen = pg.code_chosen = -1;
+    pg.time = frame / 60.0f;
+    pg.alpha = 1;
+    pg.back = WORDS("help.back", "Back");
+    for (int i = 0; i < HB_PAGE_LINES; i++) { lines[i][0] = 0; pg.line[i] = lines[i]; }
+    note[0] = 0;
+    pg.note = note;
+    pg.turn = turn > 0 ? turn : 0;
+    pg.turn_dir = dir;
+    const char *dots = (frame / 20) % 4 == 0 ? "" : (frame / 20) % 4 == 1 ? "." : (frame / 20) % 4 == 2 ? ".." : "...";
+    if (page == W_CLOSED) pg.back = NULL;   // the empty page under the first turn
+    switch (page) {
+    case W_MENU: {
+        pg.title = WORDS("vita.wifi.title", "Multiplayer");
+        int items[5], ni = wifi_items(items);
+        for (int i = 0; i < ni; i++) {
+            switch (items[i]) {
+            case WI_HOST: wifi_words("vita.wifi.host", "Host a Game", lines[i], 64); break;
+            case WI_HOST_PUBLIC: wifi_words("vita.wifi.host_public", "Host a Public Game", lines[i], 64); break;
+            case WI_SCAN: wifi_words("vita.wifi.join_wifi", "Join on this Wi-Fi", lines[i], 64); break;
+            case WI_CODE: wifi_words("vita.wifi.join_code", "Join by Game Code", lines[i], 64); break;
+            case WI_PUBLIC: wifi_words("vita.wifi.public_games", "Public Games", lines[i], 64); break;
+            }
+        }
+        pg.nlines = ni;
+        pg.chosen = g_wifi.item;
+        if (items[g_wifi.item < ni ? g_wifi.item : 0] == WI_HOST_PUBLIC)
+            wifi_words("vita.wifi.about_public", "Anyone online can see your game and join it.", note, sizeof note);
+        else if (items[g_wifi.item < ni ? g_wifi.item : 0] == WI_PUBLIC)
+            wifi_words("vita.wifi.about_list", "Games anyone can join, from all over.", note, sizeof note);
+        else
+            wifi_words("vita.wifi.about", "Play on the same Wi-Fi, or online with a game code.", note, sizeof note);
+        pg.accept = WORDS("vita.wifi.select", "Select");
+        break;
+    }
+    case W_HOST: case W_JOINED: {
+        if (page == W_HOST) pg.title = g_wifi.public ? WORDS("vita.wifi.your_public_game", "Your Public Game")
+                                                     : WORDS("vita.wifi.your_game", "Your Game");
+        else pg.title = net.state == NET_CONNECTING ? WORDS("vita.wifi.connecting", "Connecting...")
+                        : net.state == NET_JOINING   ? WORDS("vita.wifi.joining", "Joining...")
+                                                     : WORDS("vita.wifi.joined", "Joined");
+        for (int p = 0; p < NET_PLAYERS; p++) {
+            if (net.names[p][0]) snprintf(lines[p], 64, "%d   %s%s", p + 1, net.names[p], p + 1 == net.port ? "  (you)" : "");
+            else snprintf(lines[p], 64, "%d   %s%s", p + 1, WORDS("vita.wifi.waiting", "waiting"), dots);
+        }
+        pg.nlines = NET_PLAYERS;
+        if (page == W_HOST) {
+            uint32_t ext;
+            const char *why;
+            int open = net_internet(&ext, &why);
+            if (open > 0) {
+                char c[NET_CODE_LEN + 1];
+                net_code(ext, c);
+                snprintf(code, sizeof code, "%.4s-%s", c, c + 4);
+                pg.code = code;
+                pg.code_line = 4;
+                int listed = g_wifi.public ? lobby_listed() : LOBBY_OFF;
+                if (listed == LOBBY_OK) wifi_words("vita.wifi.listed", "In the Public Games list: anyone can join", note, sizeof note);
+                else if (listed == LOBBY_FAILED) snprintf(note, sizeof note, "%s", lobby_why());
+                else if (listed == LOBBY_WORKING) snprintf(note, sizeof note, "%s%s", WORDS("vita.wifi.listing", "Adding your game to the Public Games list"), dots);
+                else wifi_words("vita.wifi.code_note", "Game code: friends over the internet join with it", note, sizeof note);
+            } else if (open == 0) {
+                snprintf(note, sizeof note, "%s%s", WORDS("vita.wifi.opening", "Opening your router for internet play"), dots);
+            } else {
+                snprintf(note, sizeof note, "%s: %s", WORDS("vita.wifi.wifi_only", "This Wi-Fi only"), why);
+            }
+            pg.accept = WORDS("vita.wifi.play", "Play");
+            pg.back = WORDS("vita.wifi.close", "Close");
+        } else {
+            wifi_words("vita.wifi.wait_host", "Waiting for the host to start", note, sizeof note);
+            pg.back = WORDS("vita.wifi.leave", "Leave");
+        }
+        break;
+    }
+    case W_SCAN: {
+        pg.title = WORDS("vita.wifi.join_wifi", "Join on this Wi-Fi");
+        NetHost hosts[8];
+        int n = net_hosts(hosts, 8);
+        if (!n) {
+            snprintf(lines[0], 64, "%s%s", WORDS("vita.wifi.looking", "Looking for games"), dots);
+            pg.nlines = 1;
+        }
+        for (int i = 0; i < n && i < 6; i++) snprintf(lines[i], 64, "%s   %d/4", hosts[i].name, hosts[i].players);
+        if (n) { pg.nlines = n < 6 ? n : 6; pg.chosen = g_wifi.item; pg.accept = WORDS("vita.wifi.join", "Join"); }
+        break;
+    }
+    case W_PUBLIC: {
+        pg.title = WORDS("vita.wifi.public_games", "Public Games");
+        LobbyGame games[LOBBY_MAX];
+        int n = lobby_games(games, 6), st = lobby_list_state();
+        if (!n) {
+            if (st == LOBBY_FAILED) {
+                wifi_words("vita.wifi.list_failed", "Can't get the list right now", lines[0], 64);
+                snprintf(note, sizeof note, "%s", lobby_why());
+            } else if (st == LOBBY_OK) {
+                wifi_words("vita.wifi.no_public", "No public games right now", lines[0], 64);
+                wifi_words("vita.wifi.no_public_note", "Host a Public Game and others can find yours", note, sizeof note);
+            } else {
+                snprintf(lines[0], 64, "%s%s", WORDS("vita.wifi.looking", "Looking for games"), dots);
+            }
+            pg.nlines = 1;
+        }
+        for (int i = 0; i < n; i++) snprintf(lines[i], 64, "%s   %d/4", games[i].name, games[i].players);
+        if (n) { pg.nlines = n; pg.chosen = g_wifi.item; pg.accept = WORDS("vita.wifi.join", "Join"); }
+        break;
+    }
+    case W_CODE: {
+        pg.title = WORDS("vita.wifi.join_code", "Join by Game Code");
+        int k = 0;   // what was typed, in the boxes (blank ones for the rest)
+        for (int i = 0; i < NET_CODE_LEN; i++) {
+            if (i == 4) code[k++] = '-';
+            code[k++] = i < (int)strlen(g_wifi.code) ? g_wifi.code[i] : ' ';
+        }
+        code[k] = 0;
+        pg.code = code;
+        pg.code_line = 1;
+        wifi_words("vita.wifi.code_help", "Type in the game code the host's Multiplayer page shows", note, sizeof note);
+        pg.accept = WORDS("vita.wifi.type_code", "Type Code");
+        break;
+    }
+    }
+    if (pm) {
+        render_begin(&ui);
+        ui.view[2] = SCREEN_W;
+        ui.view[3] = SCREEN_H;
+        help_book_build_page(&pg, pm, SCREEN_W / 848.0f, &ui);
+        draw_list(&ui);
+    }
+    if (g_wifi.note_timer > 0) {
+        g_wifi.note_timer--;
+        game_text(SCREEN_W / 2, SCREEN_H * 0.86f, 1.1f, 0xffffff, g_wifi.note);
+    }
+}
+#endif
+
+static void hide_sprite(AsMc *mc, int cid) {   // every clip of sprite cid under mc
+    for (int i = 0; i < mc->ndisp; i++)
+        if (mc->disp[i].kind == DISP_MC && mc->disp[i].mc) {
+            if (mc->disp[i].cid == cid) mc->disp[i].mc->visible = 0;
+            hide_sprite(mc->disp[i].mc, cid);
+        }
+}
+
+// the menu's buttons, top to bottom
+#ifdef CC_NET
+static const int g_menu_order[] = {CC_MENU_PLAY, CC_MENU_WIFI, CC_MENU_OPTIONS, CC_MENU_QUIT};
+#else
+static const int g_menu_order[] = {CC_MENU_PLAY, CC_MENU_OPTIONS, CC_MENU_QUIT};
+#endif
+#define MENU_N ((int)(sizeof g_menu_order / sizeof *g_menu_order))
+
+// The PC's title scenes are far too much for the GPU with 4x MSAA (15 fps: 80k-335k triangles
+// over many layers of 1920x1080 art): they're drawn into a screen-sized texture without MSAA
+// once per game tick (as the heat haze's, the size vita2d's projection and viewport assume),
+// and every frame shows that texture under the menu.
+#define VIGNETTE_W SCREEN_W
+#define VIGNETTE_H SCREEN_H
+static vita2d_texture *g_vignette_rt;
+
+static int vignette_rt_make(void) {
+    if (!g_vignette_rt) {
+        g_vignette_rt = vita2d_create_empty_texture_rendertarget(VIGNETTE_W, VIGNETTE_H, SCE_GXM_TEXTURE_FORMAT_A8B8G8R8);
+        if (!g_vignette_rt) return 0;
+        vita2d_texture_set_filters(g_vignette_rt, SCE_GXM_TEXTURE_FILTER_LINEAR, SCE_GXM_TEXTURE_FILTER_LINEAR);
+    }
+    return 1;
+}
+
+static void vignette_rt_draw(AsMc *vignettes, Mat m, RecolourCache *cache) {
+    if (!vignette_rt_make()) return;
+    static DrawList dl;
+    render_begin(&dl);
+    dl.view[2] = SCREEN_W;
+    dl.view[3] = SCREEN_H;
+    dl.cache = cache;
+    as_render_mc(vignettes, m, CX_IDENTITY, &dl);
+    vita2d_start_drawing_advanced(g_vignette_rt, 0);
+    vita2d_set_clear_color(RGBA8(0, 0, 0, 255));
+    vita2d_clear_screen();
+    draw_list(&dl);
+    vita2d_end_drawing();
+    vita2d_wait_rendering_done();   // the texture is read by the next scene (as the heat haze's)
+}
+
+// 1: a Wi-Fi game was started (net.state NET_PLAYING), 0: Local Game
+// from_game: back from Exit to Main Menu, under the loading screen, which then goes out over it
+static int title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, size_t cache_bytes, int from_game) {
+    // the scenes' texture before anything else loads: made after the menu and the scenes, it
+    // found no hole its size in video memory the 2 MB mesh blocks had cut up (a white title)
+    char art_path[256];
+    int art_level;
+    if (from_game && find_file("MENU_VIGNETTES.swf", art_path, sizeof art_path, &art_level)) vignette_rt_make();
     Movie *m = vita_loader(NULL, "MENU.swf");
-    if (!m) return;
+    if (!m) return 0;
+    // the mode book's borrowed pictures, now rather than when Local Game opens it (a hitch)
+    if (find_file("MODEART.swf", art_path, sizeof art_path, &art_level)) host_movie("MODEART.swf");
+    // and the FRESH sticker's (FRESHLOGO.swf), else the menu's first frame hitched loading it
+    if (find_file("FRESHLOGO.swf", art_path, sizeof art_path, &art_level)) help_book_fresh_logo = host_movie("FRESHLOGO.swf");
+    int wifi_game = 0;
+#ifdef CC_NET
+    cc_menu_wifi = 1;
+    g_wifi.page = W_CLOSED;
+#endif
     AsVm *t = as_new(vita_loader);
     t->sound_start = vita_sound_start;
     t->sound_stop = vita_sound_stop;
@@ -605,19 +1863,51 @@ static void title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, si
     as_render_init(t);
     t->root = as_mc_new(t, m, &m->root, NULL, 0);
     cc_native_root_functions(t, &t->root->obj);
+    // the PC's moving scenes behind the menu, when its MENU_VIGNETTES.swf is there (read during
+    // the intro; back from a game, under the loading screen)
+    // the PC's moving scenes behind the menu, when its MENU_VIGNETTES.swf is there: read in the
+    // background under the loading screen after the intro (they come in once read, the painted
+    // scene is off from the start); back from a game, read now under the loading screen
+    AsMc *vignettes = NULL;
+    int vignette_file = find_file("MENU_VIGNETTES.swf", art_path, sizeof art_path, &art_level);
+    if (vignette_file && from_game) {
+        for (int i = 0; i < (int)(sizeof g_title_movers / sizeof *g_title_movers); i++)
+            movie_meshes_move(g_title_movers[i], 0, cache, cache_mem, cache_bytes);
+        Movie *v = vita_loader(NULL, "MENU_VIGNETTES.swf");
+        if (v) vignettes = cc_title_vignettes(t, v);
+    }
+    if (from_game) {
+        EXIT_TRACE("exit: title made");
+        cc_loading_reveal(t);
+        EXIT_TRACE("exit: loading screen on the title");
+    } else if (vignette_file && !cached_movie_peek("MENU_VIGNETTES.swf")) {
+        // after the intro, the knights' loading screen until the scenes are read, then it goes
+        // out over the title (Jah 2026-10-28: no hitch between the two)
+        cc_loading_reveal(t);
+        cc_loading_hold = 1;
+    }
+    int hold_frames = 0;
     const char *prompt = strtab_number(1);   // the game's "Press START"
     if (!prompt) prompt = "Press START";
     const char *unavailable = strtab_get("vita.online.unavailable");
     if (!unavailable) unavailable = "Not available on PS Vita";
     AsMc *panel = NULL;
-    int item = 0, message = 0;
-    static Pause controls;   // Help & Options: the pause book's controls page
+    AsMc *modes = NULL;   // Local Game's book of modes (Castle Crashers, Arena, All You Can Quaff)
+    int item = 0, message = 0, mode = 0;
+    const char *message_text = unavailable;   // shown for a while when message is set
+    cc_game_mode = CC_MODE_STORY;
+    static Pause controls;   // Help & Options: the pause menu's Help & Options list and its books
     SceCtrlData pad, old = {0};
     sceCtrlPeekBufferPositive(0, &old, 1);
-    SceUInt64 prev = sceKernelGetProcessTimeWide(), acc = 0;
     const SceUInt64 tick_us = 1000000 / 30;
+    SceUInt64 prev = sceKernelGetProcessTimeWide(), acc = from_game ? tick_us : 0;   // (no black first frame)
     unsigned frame = 0;
     for (;;) {
+        preload_step(PRELOAD_TITLE);
+        if (vignette_file && !vignettes && cached_movie_peek("MENU_VIGNETTES.swf"))   // read: it's cached now
+            vignettes = cc_title_vignettes(t, vita_loader(NULL, "MENU_VIGNETTES.swf"));
+        // the loading screen lets go once they're in (or after 20 s: not read, the heap too full)
+        if (cc_loading_hold && (vignettes || ++hold_frames > 60 * 20)) cc_loading_hold = 0;
         sceCtrlPeekBufferPositive(0, &pad, 1);
         unsigned pressed = pad.buttons & ~old.buttons;
         int ly = pad.ly - 128, lx = pad.lx - 128, oly = old.ly - 128, olx = old.lx - 128;
@@ -626,32 +1916,121 @@ static void title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, si
         if (lx < -80 && olx >= -80) pressed |= SCE_CTRL_LEFT;
         if (lx > 80 && olx <= 80) pressed |= SCE_CTRL_RIGHT;
         old = pad;
+        if (cc_loading_busy(t)) pressed = 0;   // nothing to pick under the loading screen
+        AsMc *fresh = cc_menu_fresh(t, panel, g_fresh && cc_fresh_available());   // the FRESH sticker while the look is on
+#ifdef CC_NET
+        if (g_wifi.page != W_CLOSED || net.state != NET_OFF) {
+            int w = wifi_update(pressed);
+            if (w == 1) { wifi_game = 1; break; }
+            if (w == 2 && !modes) {   // the host picks the game: the book of modes over the title
+                modes = cc_modemenu_attach(t, m->stage_w / 2.0f, m->stage_h / 2.0f);
+                mode = 0;
+                if (panel) panel->visible = 0;
+                if (!modes && wifi_start()) { wifi_game = 1; break; }   // no book: the story
+            }
+            if (g_wifi.page != W_MODE) pressed = 0;
+        }
+#endif
         if (controls.open) {
-            if (pressed & (SCE_CTRL_CIRCLE | SCE_CTRL_CROSS | SCE_CTRL_START)) controls.open = 0;
+            SceUInt64 tnow = sceKernelGetProcessTimeWide();
+            static SceUInt64 tlast;
+            float dt = tlast && tnow > tlast ? (tnow - tlast) / 1000000.0f : 1 / 60.0f;
+            tlast = tnow;
+            if (menu_input(&controls, pressed, dt > 0.1f ? 0.1f : dt) != PM_OPEN) controls.open = 0;
         } else if (!panel) {
             if (pressed & (SCE_CTRL_START | SCE_CTRL_CROSS)) {
                 // left of the knights, over the (hidden, empty) news box
                 panel = cc_menu_attach(t, m->stage_w * 0.226f, m->stage_h * 0.635f);
                 if (!panel) break;   // no panel in this copy of the file: straight into the game
-                cc_menu_highlight(t, panel, item);
+                cc_menu_highlight(t, panel, g_menu_order[item]);
             }
-        } else {
-            int moved = 0;
-            if (pressed & (SCE_CTRL_UP | SCE_CTRL_LEFT)) { item = (item + CC_MENU_ITEMS - 1) % CC_MENU_ITEMS; moved = 1; }
-            if (pressed & (SCE_CTRL_DOWN | SCE_CTRL_RIGHT)) { item = (item + 1) % CC_MENU_ITEMS; moved = 1; }
-            if (moved) cc_menu_highlight(t, panel, item);
+        } else if (modes && pressed) {
+            // the hand goes where the pictures are: Castle Crashers on the right page, All You Can
+            // Quaff, Volleyball and Arena down the left one. Up and down go through them all in
+            // the book's order; left and right turn to the other page (left: where the hand last was)
+            enum { M_STORY, M_ARENA, M_QUAFF, M_VOLLEY };
+            static const int down[] = {M_QUAFF, M_STORY, M_VOLLEY, M_ARENA}, up[] = {M_ARENA, M_VOLLEY, M_STORY, M_QUAFF};
+            static int left_page = M_QUAFF;
+            int to = mode;
+            if (pressed & SCE_CTRL_LEFT) to = mode == M_STORY ? left_page : mode;
+            if (pressed & SCE_CTRL_RIGHT) to = M_STORY;
+            if (pressed & SCE_CTRL_UP) to = up[mode];
+            if (pressed & SCE_CTRL_DOWN) to = down[mode];
+            if (to != M_STORY) left_page = to;
+            if (to != mode) {
+                cc_modemenu_point(t, modes, mode, to);
+                mode = to;
+                audio_sfx_play("sound_toggle_b.wav", 1, 0, 0, &controls);
+            }
+            char vmenu[256];
+            int is_level;
+            if ((pressed & SCE_CTRL_CROSS) && mode == M_VOLLEY && !find_file("VMENU.swf", vmenu, sizeof vmenu, &is_level)) {
+                // the court picker comes from the PS3 version's files, not the PC's
+                message_text = "Volleyball needs VMENU.swf (from the PS3 game) in " DATA_DIR "game";
+                message = 30 * 5;
+                pressed &= ~SCE_CTRL_CROSS;
+            }
             if (pressed & SCE_CTRL_CROSS) {
-                if (item == CC_MENU_PLAY) break;
-                if (item == CC_MENU_QUIT) {
+                audio_sfx_play("sound_player_select.wav", 1, 0, 0, &controls);
+                static const int game_mode[CC_MODE_ITEMS] = {CC_MODE_STORY, CC_MODE_ARENA, CC_MODE_QUAFF, CC_MODE_VOLLEYBALL};
+                cc_game_mode = game_mode[mode];
+#ifdef CC_NET
+                if (g_wifi.page == W_MODE) {   // the host's pick: everyone starts it now
+                    net.mode = cc_game_mode;
+                    if (wifi_start()) { log_line("Wi-Fi game: mode %d, delay %d frames", net.mode, net.delay); wifi_game = 1; break; }
+                    wifi_note(net.error);
+                    g_wifi.page = W_HOST;
+                    as_call_method(t, as_objv(&modes->obj), "removeMovieClip", 0, NULL);
+                    modes = NULL;
+                    panel->visible = 1;
+                    cc_game_mode = CC_MODE_STORY;
+                    continue;
+                }
+#endif
+                break;
+            } else if (pressed & SCE_CTRL_CIRCLE) {   // back to the menu (the host: to the lobby)
+                as_call_method(t, as_objv(&modes->obj), "removeMovieClip", 0, NULL);
+                modes = NULL;
+#ifdef CC_NET
+                if (g_wifi.page == W_MODE) g_wifi.page = W_HOST;
+#endif
+                panel->visible = 1;
+            }
+        } else if (pressed) {
+            int moved = 0;
+            if (pressed & (SCE_CTRL_UP | SCE_CTRL_LEFT)) { item = (item + MENU_N - 1) % MENU_N; moved = 1; }
+            if (pressed & (SCE_CTRL_DOWN | SCE_CTRL_RIGHT)) { item = (item + 1) % MENU_N; moved = 1; }
+            if (moved) {
+                cc_menu_highlight(t, panel, g_menu_order[item]);
+                audio_sfx_play("sound_toggle_b.wav", 1, 0, 0, &controls);   // the menus' move sound
+            }
+            if (pressed & SCE_CTRL_CROSS) {
+                audio_sfx_play("sound_player_select.wav", 1, 0, 0, &controls);
+                int chosen = g_menu_order[item];
+                if (chosen == CC_MENU_PLAY) {   // which game: the book of modes, its hand on Castle Crashers
+                    modes = cc_modemenu_attach(t, m->stage_w / 2.0f, m->stage_h / 2.0f);
+                    if (!modes) break;   // no book in this copy of the file: straight into the game
+                    mode = 0;
+                    panel->visible = 0;
+                }
+#ifdef CC_NET
+                if (chosen == CC_MENU_WIFI) {
+                    g_wifi.page = W_MENU;
+                    g_wifi.item = 0;
+                    if (!net_init()) { wifi_note("The network isn't available"); g_wifi.page = W_CLOSED; }
+                }
+#endif
+                if (chosen == CC_MENU_QUIT) {
                     vita2d_wait_rendering_done();
                     audio_shutdown();
+                    log_flush_wait();
                     vita2d_fini();
                     sceKernelExitProcess(0);
                 }
-                if (item == CC_MENU_OPTIONS) {
+                if (chosen == CC_MENU_OPTIONS) {
                     controls.open = 1;
-                    controls.page = 1;
-                    if (!controls.have_art) pause_build_art(&controls);
+                    controls.title = 1;
+                    pause_menu_open_help(&controls.m);
                 }
             }
         }
@@ -662,6 +2041,7 @@ static void title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, si
         if (acc > 2 * tick_us) acc = 2 * tick_us;
         int ticked = 0;
         while (acc >= tick_us) {
+            if (modes) cc_modemenu_tick(t, modes);
             as_tick(t);
             as_gc(t);
             acc -= tick_us;
@@ -676,29 +2056,98 @@ static void title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, si
             float k = SCREEN_W / m->stage_w;
             Mat screen = {k / 20, 0, 0, k / 20, 0, 0};
             render_begin(vb);
+            hide_sprite(t->root, 626);   // the news bar (no news on the Vita)
+            if (vignette_file) cc_title_hide_backdrop(t->root);   // the painted one goes
+            // the PC's scenes are drawn on their own (below); with no texture for them, with the menu
+            int vig_rt = vignettes && vignette_rt_make();
+            if (vig_rt) {
+                vignette_rt_draw(vignettes, mat_mul(screen, t->root->m), cache);   // (as_render_mc adds its own)
+                vignettes->visible = 0;
+            }
             as_render_mc(t->root, screen, CX_IDENTITY, vb);
+            if (vig_rt) vignettes->visible = 1;
+            if (!panel && !cc_loading_busy(t) && (frame / 30) % 2 == 0 && as_render_host_line_height() > 0) {   // blinking, in the game's font, where the news bar was
+                Mat id = {1, 0, 0, 1, 0, 0};
+                CXform black = {{0, 0, 0, 1}, {0, 0, 0, 0}};
+                for (int dx = -2; dx <= 2; dx += 2)
+                    for (int dy = -2; dy <= 2; dy += 2)
+                        if (dx || dy) as_render_host_text(prompt, 172 + dx, 443 + dy, 1.5f, 1.5f, 2, id, black, vb);
+                as_render_host_text(prompt, 172, 443, 1.5f, 1.5f, 2, id, CX_IDENTITY, vb);
+            }
         }
         vita2d_set_clear_color(RGBA8(m->bg[0], m->bg[1], m->bg[2], 255));
         vita2d_start_drawing();
         vita2d_clear_screen();
+        if (vignettes && g_vignette_rt)
+            vita2d_draw_texture(g_vignette_rt, 0, 0);
         draw_list(vb);
+        if (panel && !modes) {   // the power button that stands for Quit
+            static CcVert tris[4096];
+            float k = SCREEN_W / m->stage_w;
+            int n = cc_menu_power_button(panel, (Mat){k / 20, 0, 0, k / 20, 0, 0}, tris, 4096);
+            vita2d_color_vertex *v = n ? vita2d_pool_memalign(n * sizeof *v, sizeof *v) : NULL;
+            for (int i = 0; v && i < n; i++)
+                v[i] = (vita2d_color_vertex){tris[i].x, tris[i].y, 0.5f,
+                                             RGBA8(tris[i].rgba[0], tris[i].rgba[1], tris[i].rgba[2], tris[i].rgba[3])};
+            if (v) vita2d_draw_array(SCE_GXM_PRIMITIVE_TRIANGLES, v, n);
+            Mat hm;
+            AsMc *hl = cc_menu_highlight_clip(panel, &hm);   // the chosen button's frame, over all that
+            if (hl) {
+                static DrawList hvb;
+                Mat pm = mat_mul((Mat){k / 20, 0, 0, k / 20, 0, 0}, mat_mul(t->root->m, mat_mul(panel->m, hm)));
+                render_begin(&hvb);
+                hvb.view[2] = SCREEN_W;
+                hvb.view[3] = SCREEN_H;
+                hl->visible = 1;
+                as_render_mc(hl, pm, CX_IDENTITY, &hvb);
+                hl->visible = 0;
+                draw_list(&hvb);
+            }
+            if (fresh) {   // the FRESH sticker on Local Game, over the highlight
+                static DrawList fvb;
+                render_begin(&fvb);
+                fvb.view[2] = SCREEN_W;
+                fvb.view[3] = SCREEN_H;
+                fresh->visible = 1;
+                as_render_mc(fresh, mat_mul((Mat){k / 20, 0, 0, k / 20, 0, 0}, mat_mul(t->root->m, panel->m)), CX_IDENTITY, &fvb);
+                fresh->visible = 0;
+                draw_list(&fvb);
+            }
+            Mat bm;   // the BETA sticker on Multiplayer, over everything
+            if (cc_menu_beta_sticker() && cc_menu_beta_place(panel, (Mat){k / 20, 0, 0, k / 20, 0, 0}, &bm)) {
+                static DrawList svb;
+                render_begin(&svb);
+                render_shape(cc_menu_beta_sticker(), bm, CX_IDENTITY, &svb);
+                draw_list(&svb);
+            }
+        }
         frame++;
-        if (!panel && (frame / 30) % 2 == 0) {   // blinking, over the news box at the bottom left
+        if (!panel && !cc_loading_busy(t) && (frame / 30) % 2 == 0 && as_render_host_line_height() <= 0) {   // no game font
             int w = vita2d_pgf_text_width(g_font, 1.2f, prompt);
-            outlined_text(180 - w / 2, 470, 1.2f, prompt);
+            outlined_text(172 - w / 2, 455, 1.2f, prompt);
         }
         if (message > 0) {
             message--;
-            int w = vita2d_pgf_text_width(g_font, 1.0f, unavailable);
-            outlined_text((SCREEN_W - w) / 2, SCREEN_H - 24, 1.0f, unavailable);
+            int w = vita2d_pgf_text_width(g_font, 1.0f, message_text);
+            outlined_text((SCREEN_W - w) / 2, SCREEN_H - 24, 1.0f, message_text);
         }
         if (controls.open) pause_draw(&controls);
+#ifdef CC_NET
+        if (g_wifi.page != W_CLOSED && g_wifi.page != W_MODE) wifi_draw(frame);
+        else if (g_wifi.note_timer > 0) {   // why the last Wi-Fi game ended
+            g_wifi.note_timer--;
+            game_text(SCREEN_W / 2, SCREEN_H - 30, 1.1f, 0xffffff, g_wifi.note);
+        }
+#endif
         vita2d_end_drawing();
+        vita2d_common_dialog_update();   // the system keyboard, when it's up (Join by Game Code)
         vita2d_swap_buffers();
     }
     vita2d_wait_rendering_done();
     if (cc_music_stop) cc_music_stop();
     memset(cc_keys, 0, sizeof cc_keys);
+    as_free(t);
+    return wifi_game;
 }
 int main(void) {
     scePowerSetArmClockFrequency(444);
@@ -706,12 +2155,42 @@ int main(void) {
     scePowerSetGpuClockFrequency(222);
     scePowerSetGpuXbarClockFrequency(166);
     vita2d_init_advanced_with_msaa(16 * 1024 * 1024, SCE_GXM_MULTISAMPLE_4X);
+    swf_bitmap_loaded = bitmap_to_texture;
     vita2d_set_vblank_wait(1);
     g_font = vita2d_load_default_pgf();
     make_split_program();
     g_indices = gpu_alloc(sizeof(uint16_t) * MAX_BATCH, &g_index_block);
     for (int i = 0; g_indices && i < MAX_BATCH; i++) g_indices[i] = i;
     sceCtrlSetSamplingMode(SCE_CTRL_MODE_ANALOG);
+    sceCtrlSetSamplingModeExt(SCE_CTRL_MODE_ANALOG);   // the other pads (Ext2 reads)
+    sceTouchSetSamplingState(SCE_TOUCH_PORT_FRONT, SCE_TOUCH_SAMPLING_STATE_START);   // Item Switch
+    sceTouchSetSamplingState(SCE_TOUCH_PORT_BACK, SCE_TOUCH_SAMPLING_STATE_START);
+    log_open();
+    log_line("cc_vita started");
+    cc_custom_texture_from_file = custom_texture_from_file;
+    cc_custom_free_texture = custom_free_texture;
+    for (int i = 0, n = cc_custom_load_all(DATA_DIR "custom/"); i < n; i++)   // optional: painted characters
+        log_line("custom character %d \"%s\" (fights like character %d)", CC_CUSTOM_P_TYPE + i, cc_custom_name(i),
+                 cc_custom_base(CC_CUSTOM_P_TYPE + i));
+    cc_look_load(DATA_DIR "weapon_looks.txt");   // weapon looks from the armoury (weapon_look.h)
+    if (cc_animal_load(DATA_DIR "custom/animal/"))   // optional: a custom animal orb (custom_animal.h)
+        log_line("custom animal orb \"%s\"", cc_animal_name());
+    {   // optional: Paint Jr. from the PC's files (paint_jr.h)
+        char path[256];
+        int lvl;
+        cc_paintjr_set_available(find_file("FRESH01.swf", path, sizeof path, &lvl),
+                                 find_file("PJPARTS.swf", path, sizeof path, &lvl),
+                                 find_file("PAINTJR.swf", path, sizeof path, &lvl));
+        int castle = find_file("LEVEL15_NEW.swf", path, sizeof path, &lvl);
+        cc_paintjr_set_castle(castle);
+#ifdef CC_NET
+        net_my_caps = cc_paintjr_p_type() && castle ? NET_CAP_PAINT_JR : 0;   // he can play in Wi-Fi games
+#endif
+        if (cc_paintjr_p_type()) log_line("Paint Jr. (character %d)", cc_paintjr_p_type());
+        // the PC's moving title scenes: "Vita Edition" then has no painted cloud behind it
+        cc_menu_badge_outline = find_file("MENU_VIGNETTES.swf", path, sizeof path, &lvl);
+    }
+    bg_init();
 
     Movie *start = host_movie("MAIN.swf");
     if (!start) {
@@ -722,16 +2201,32 @@ int main(void) {
             sceCtrlPeekBufferPositive(0, &pad, 1);
             if (pad.buttons & SCE_CTRL_START) break;
         }
+        log_flush_wait();
         vita2d_fini();
         sceKernelExitProcess(0);
         return 0;
     }
 
     cc_storage_load(SAVE_PATH);
+    cc_achievements_load(ACH_PATH);
+#ifdef CC_TROPHIES
+    int trophies = trophies_init();   // with NoTrpDrm; earned achievements are synced below
+    if (trophies < 0) log_line("trophies off (0x%08X): is NoTrpDrm under *main?", (unsigned)trophies);
+    else log_line("trophies on");
+    trophies = trophies > 0;
+#else
+    int trophies = 0;
+#endif
+    unsigned trophies_synced = 0;
     // the game's words (from the user's castle.exe by extract_strings.py), then Vita wording
     strtab_load(DATA_DIR "strings_en.txt");
     strtab_load(DATA_DIR "strings_vita_en.txt");
+    strtab_load(DATA_DIR "strings_help_en.txt");   // Help & Options' words (tools/extract_help.py)
     audio_init(DATA_DIR);
+    settings_load();
+    // the menus' move and select sounds, decoded now (silently) so the first press is heard
+    audio_sfx_play("sound_toggle_b.wav", 0, 0, 0, NULL);
+    audio_sfx_play("sound_player_select.wav", 0, 0, 0, NULL);
     cc_music_play = audio_music_play;
     cc_music_stop = audio_music_stop;
     // the game's own text font (from the PC copy's data/fonts); text is left out without it
@@ -762,47 +2257,164 @@ int main(void) {
     void *cache_mem = gpu_alloc(cache_bytes, &cache_gpu);
     recolour_cache_init(&cache, cache_mem, cache_bytes);
     vb.cache = &cache;
+    g_cache = &cache;
+    g_cache_mem = cache_mem;
+    g_cache_bytes = cache_bytes;
 
-    title_screen(&vb, &cache, cache_mem, cache_bytes);
+    intro_screen(&vb);
+
+    int from_game = 0;
+new_game:   // the title again after Exit to Main Menu
+    g_npreloaded = 0;
+    g_netgame = title_screen(&vb, &cache, cache_mem, cache_bytes, from_game);
+    // the title's moving scenes aren't wanted in the game: their meshes are video memory the
+    // levels need (read again under the loading screen on the way back)
+    free_movie_named("MENU_VIGNETTES.swf", &cache, cache_mem, cache_bytes);
+    if (g_vignette_rt) {   // and their texture (made again first thing on the way back)
+        vita2d_wait_rendering_done();
+        vita2d_free_texture(g_vignette_rt);
+        g_vignette_rt = NULL;
+    }
+    for (int i = 0; i < (int)(sizeof g_title_movers / sizeof *g_title_movers); i++)   // back where they were
+        movie_meshes_move(g_title_movers[i], 1, &cache, cache_mem, cache_bytes);
+    render_begin(&vb);
+#ifdef CC_NET
+    if (g_netgame) cc_game_mode = net.mode;   // the host's pick, on every Vita
+#endif
 
     AsVm *vm = as_new(vita_loader);
     vm->rand_state = (uint32_t)sceKernelGetProcessTimeWide() ^ 0x9E3779B9u;   // Flash's random() differs each session
     vm->sound_start = vita_sound_start;
     vm->sound_stop = vita_sound_stop;
     vm->warn = vita_warn;
+    vm->prefetch = vita_prefetch;   // files load on a second thread while the game runs
+#ifdef CC_NET
+    cc_custom_set_active(!g_netgame);
+#endif
+    cc_look_set_active(!g_netgame);     // nor the looks kept on this one
+    cc_animal_set_active(!g_netgame);   // not in Wi-Fi games: the other machine may not have it
+    cc_paintjr_set_active(!g_netgame || (net.rules & NET_RULE_PAINT_JR));   // Paint Jr. when every Vita has his files
+    release_game_movies();              // the last game's part files (paint_jr.c) may go now
+    cc_movie_keep = keep_for_game;
     cc_host_init(vm);
     as_render_init(vm);
-    vm->root = as_mc_new(vm, start, &start->root, NULL, 0);
+    cc_set_auto_potion(vm, g_auto_potion);
+    cc_fresh_set(g_fresh && !g_netgame);   // the FRESH look: this Vita's own, not in a Wi-Fi game
+    int net_wait = 0;        // Wi-Fi play: passes spent waiting for the others
+#ifdef CC_NET
+    uint32_t net_tick = 0;   // the next frame to run
+    NetInput mine = {0};
+    if (g_netgame) {   // the same game on every Vita: seed, clock, everyone's profiles
+        netplay_begin(vm);
+        vm->prefetch = netplay_prefetch;
+        cc_set_auto_potion(vm, net.rules & NET_RULE_AUTO_POTION);   // the host's, on every Vita
+        g_net_state = 0;
+        log_line("Wi-Fi game: port %d, seed %u", net.port, net.seed);
+    } else {   // on your own: player 1 is this Vita's user, as the others' names in a Wi-Fi game
+        memset(cc_net_names, 0, sizeof cc_net_names);
+        snprintf(cc_net_names[0], sizeof cc_net_names[0], "%s", net_local_name());
+    }
+#endif
+    // All You Can Quaff is a file of its own (its title, joining, the feast, the results); the
+    // story and Arena start in MAIN, which asks GetGameMode() which one it is
+    Movie *first = start;
+    if (cc_game_mode == CC_MODE_QUAFF) {
+        first = vita_loader(NULL, "QUOFF.swf");
+        if (!first) { first = start; cc_game_mode = CC_MODE_STORY; }
+    }
+    log_line("game mode %d (%s)", cc_game_mode, first == start ? "MAIN.swf" : "QUOFF.swf");
+    vm->root = as_mc_new(vm, first, &first->root, NULL, 0);
+    cc_loading_attach(vm);   // the game's loading screen over level changes
 
-    SceCtrlData pad, old = {0};
+    SceCtrlData pad, old = {0}, pads_old[LOCAL_PADS] = {{0}};
     int overlay = 0;
     static Pause pause;
     SceUInt64 last = sceKernelGetProcessTimeWide(), acc = 0, prev = last;
     float fps = 0, tick_ms = 0, build_ms = 0, shown_tick = 0, shown_build = 0;
     int frames = 0, ticks = 0;
     unsigned heat_clock = 0;
+    int ach_shown = 0, ach_timer = 0;   // the "achievement unlocked" banner
+    int saving_timer = 0;               // game frames left of the "Saving..." note
     uint32_t last_free = 0;
+    int last_free_count = -1;   // the files kept after the last pass
+    int last_move_count = -1;   // the files kept when meshes last tried for video memory
     const SceUInt64 tick_us = 1000000 / 30;   // the game's frame rate
+    int exit_to_title = 0;
+    int leaving = 0;   // Exit to Main Menu: the loading screen is coming in over the game
+    pause.open = 0;
+    pause.select = 0;
+    unsigned select_eat = 0;   // buttons held from closing the menu at character select
+    // PAUSE.swf is read, tessellated and uploaded now: on the first Start that took ~3 s
+    host_movie("PAUSE.swf");
+    if (!pause.have_art) pause_build_art(&pause);
 
-    for (;;) {
-        sceCtrlPeekBufferPositive(0, &pad, 1);
+    while (!exit_to_title) {
+        if (!leaving) preload_step(PRELOAD_GAME);
+        pads_read(&pad, !g_netgame);
         unsigned pressed = pad.buttons & ~old.buttons;
+        unsigned nav = pad_nav(&pad, &old);   // menus: the stick moves once per push too
         old = pad;
+        // players 2-4's pads: their Start opens the pause menu too, and they all steer it
+        unsigned others_start = 0, others_nav = 0, held = pad.buttons;
+        for (int i = 1; i < LOCAL_PADS; i++) {
+            if (g_pad_on[i]) {
+                unsigned n = pad_nav(&g_pads[i], &pads_old[i]);
+                others_nav |= n;
+                if ((n & SCE_CTRL_START) && !others_start) others_start = i + 1;
+                held |= g_pads[i].buttons;
+            }
+            pads_old[i] = g_pads[i];
+        }
         int debug = pad.buttons & SCE_CTRL_SELECT;
         if (debug && (pressed & SCE_CTRL_START)) break;
-        if (debug && (pressed & SCE_CTRL_UP)) g_show_loads = overlay = !overlay;
-        // in a level, Start is the pause menu's (the executable's in the original)
-        int level = in_level(vm);
-        map_pad(&pad, debug, level);
-        if (level) cc_keys[K_START] = 0;
+        if (debug && (pressed & SCE_CTRL_UP)) overlay = !overlay;
+        // in a level and on the map, Start is the pause menu's (the executable's in the original)
+        int level = in_level(vm), on_map = !level && in_map(vm), select = !level && !on_map && in_select(vm);
+        // the mini games: Start is the pause menu's too (Volleyball's team and court picker reads
+        // only Cross, Circle and the directions), except at character select (its own menu)
+        int mini = cc_game_mode != CC_MODE_STORY && !select;
+        uint32_t buttons = debug ? 0 : pad_buttons(&pad, level) | touch_buttons();
+        // character select: the Cross or Start that closed the menu isn't a pick until let go
+        if (select_eat && !(held & select_eat)) select_eat = 0;
+        if (select_eat) buttons = 0;
+        if (leaving) pressed = buttons = others_start = 0;
+        // All You Can Quaff's title: Cross is its Start (the Vita's Start is the pause menu's)
+        int quaff_title = cc_quaff_title(vm);
+        if (quaff_title) buttons = cross_starts(buttons);
+        uint32_t no_start = (level || on_map || select || mini) && !quaff_title ? ~(1u << CCB_START) : ~0u;
+        memset(cc_keys, 0, sizeof cc_keys);
+        cc_port_keys(1, buttons & no_start);
+        for (int i = 1; i < LOCAL_PADS; i++)
+            if (g_pad_on[i] && !select_eat && !leaving) {
+                uint32_t b = pad_buttons(&g_pads[i], level);
+                cc_port_keys(i + 1, (quaff_title ? cross_starts(b) : b) & no_start);
+            }
+        int start_port = (pressed & SCE_CTRL_START) && !debug ? 1 : others_start;
         if (pause.open) {
-            pause.open = pause_input(&pause, vm, pressed);
+            float dt = (sceKernelGetProcessTimeWide() - prev) / 1000000.0f;
+            int was_select = pause.select;
+            int r = pause_input(&pause, vm, nav | others_nav, dt > 0.1f ? 0.1f : dt);
+            if (r == 2) { leaving = 1; EXIT_TRACE("exit: loading screen in"); }
+            if (!g_netgame) cc_set_auto_potion(vm, g_auto_potion);   // Settings may have changed it
+            if (r == 0 && was_select) select_eat = held & (SCE_CTRL_CROSS | SCE_CTRL_START | SCE_CTRL_CIRCLE);
             memset(cc_keys, 0, sizeof cc_keys);
-        } else if (level && !debug && (pressed & SCE_CTRL_START) &&
-                   !as_tobool(vm, cc_flash_global(vm, "g_bNoPause"))) {
-            pause.open = 1;
-            pause.sel = pause.page = 0;
+            buttons = 0;   // (Wi-Fi play: the game runs on under the menu, without this player)
+        } else if (mini && start_port) {
+            // as at character select: no Exit To Map, the scripts aren't told (the game just
+            // stands still under it, outside Wi-Fi games); Exit to Main Menu goes to the title
+            pause_open(&pause, 1);
+            pause.select = 1;
+            if (!pause.have_art) pause_build_art(&pause);
+        } else if ((level || on_map) && start_port && !as_tobool(vm, cc_flash_global(vm, "g_bNoPause"))) {
+            g_pause_port = start_port;
+            pause_open(&pause, on_map);
             pause_set_state(vm, 2);
+            log_flush();   // the log is complete while paused (to copy it off by FTP)
+            if (!pause.have_art) pause_build_art(&pause);
+        } else if (select && start_port) {
+            // the same menu as the map's (no Exit To Map); the players' states stay as they are
+            pause_open(&pause, 1);
+            pause.select = 1;
             if (!pause.have_art) pause_build_art(&pause);
         }
 
@@ -811,63 +2423,211 @@ int main(void) {
         acc += now - prev;
         prev = now;
         if (acc > 2 * tick_us) acc = 2 * tick_us;
-        if (pause.open) acc = 0;   // the game stands still under the menu
-        int ticked = 0;
-        while (acc >= tick_us) {
+        if (pause.open && !g_netgame) acc = 0;   // the game stands still under the menu (not in a Wi-Fi game)
+#ifdef CC_NET
+        if (g_netgame) {
+            net_poll();
+            if (net.state == NET_LOST && !leaving) {   // back to the title, saying why
+                wifi_note(net.error);
+                log_line("Wi-Fi game ended: %s", net.error);
+                leaving = 1;
+            }
+            const char *want = netplay_file_wanted();   // a level file every Vita must have first
+            if (want && !vita_prefetch(vm, want)) netplay_file_ready();
+            if (net_catch_up()) acc += tick_us;   // further behind the host than need be: a frame more
+            static int logged_delay;
+            if (net.delay != logged_delay) { logged_delay = net.delay; log_line("Wi-Fi game: delay now %d frames", net.delay); }
+        }
+#endif
+        int ticked = 0, stalled = 0;
+        float hitch_script = 0, hitch_gc = 0, hitch_build = 0;   // this pass, for the slow-frame log
+        int hitch_ticks = 0;
+        long long hitch_ops = vm->ops;
+        const char *hitch_what = "";
+        // leaving: only the loading screen moves; once it covers the screen the game goes
+        while (leaving && acc >= tick_us) {
+            if (!exit_to_title && cc_loading_cover(vm)) { exit_to_title = 1; EXIT_TRACE("exit: covered"); }
+            acc -= tick_us;
+            ticked = 1;
+        }
+        while (!leaving && acc >= tick_us) {
+#ifdef CC_NET
+            if (g_netgame) {   // this frame from everyone's buttons, once they're all here
+                mine.buttons = buttons;
+                mine.state = g_net_state;
+                int lv = in_level(vm), om = !lv && in_map(vm);
+                int ok = netplay_step(vm, net_tick, &mine, lv || om);
+                // not here yet: it's often on its way, a millisecond or two off; wait a little
+                // for it rather than a whole picture (the first frame of a pass only)
+                for (int w = 0; !ok && !ticked && w < 8; w++) {
+                    sceKernelDelayThread(500);
+                    ok = netplay_step(vm, net_tick, &mine, lv || om);
+                }
+                if (!ok) { acc = tick_us; stalled = 1; break; }
+                g_net_state = 0;
+                net_tick++;
+            }
+#endif
             SceUInt64 t0 = sceKernelGetProcessTimeWide();
+            cc_volleyball_tick(vm);
             as_tick(vm);
+            SceUInt64 t1 = sceKernelGetProcessTimeWide();
             as_gc(vm);
-            tick_ms += (sceKernelGetProcessTimeWide() - t0) / 1000.0f;
+            SceUInt64 t2 = sceKernelGetProcessTimeWide();
+            hitch_script += (t1 - t0) / 1000.0f;
+            hitch_gc += (t2 - t1) / 1000.0f;
+            hitch_ticks++;
+            tick_ms += (t2 - t0) / 1000.0f;
             ticks++;
             acc -= tick_us;
             ticked = 1;
         }
+        net_wait = stalled ? net_wait + 1 : 0;
+        if (cc_quit_requested && !leaving) {   // the scripts went back to the menus: as Exit to Main Menu
+            cc_quit_requested = 0;
+            leaving = 1;
+            pause.open = 0;
+            EXIT_TRACE("exit: the game quit to the menu");
+        }
+        if (cc_save_requested && cc_game_mode == CC_MODE_VOLLEYBALL) cc_save_requested = 0;   // a mini game
         if (cc_save_requested) {
             cc_save_requested = 0;
+#ifdef CC_NET
+            if (g_netgame) {   // this Vita's player only, as their own profile
+                if (!cc_storage_save_as(SAVE_PATH, net.port - 1)) snprintf(g_last_error, sizeof g_last_error, "couldn't write " SAVE_PATH);
+            } else
+#endif
             if (!cc_storage_save(SAVE_PATH)) snprintf(g_last_error, sizeof g_last_error, "couldn't write " SAVE_PATH);
+            saving_timer = 60;   // "Saving..." at the bottom for two seconds, as the original shows it
         }
 
         if (ticked) {
             // every few seconds, once the heap is half full: let go of the files left behind
             // (levels played earlier, the title). Below that they stay, so going back to the
             // map or replaying a level doesn't load them again.
-            if (vm->tick - last_free >= 90 && mallinfo().uordblks > (size_t)_newlib_heap_size_user / 2) {
+            // (not on tick % 150: two ticks in one pass could step over it for minutes)
+            static SceUInt64 last_flush;
+            SceUInt64 t = sceKernelGetProcessTimeWide();
+            if (t - last_flush >= 2000000) {
+                static int beats;
+                if (++beats % 5 == 0)   // every 10 s, so a log that stops says roughly when
+                    log_line("[%u] running, heap %u KB, %d files", (unsigned)vm->tick,
+                             (unsigned)(mallinfo().uordblks >> 10), g_nmovies);
+                last_flush = t;
+                log_flush();
+            }
+            // Only after a new file came in: once over half, a pass every 3 s that finds the
+            // rest still in use costs frames for nothing (the map dropped to 45 fps).
+            if (vm->tick - last_free >= 90 && g_nmovies != last_free_count &&
+                (mallinfo().uordblks > (size_t)_newlib_heap_size_user / 2 || cdram_free_mb() < CDRAM_LOW_MB)) {
                 last_free = vm->tick;
                 free_unused_movies(vm, &cache, cache_mem, cache_bytes);
+                last_free_count = g_nmovies;
+                hitch_what = " (freed files)";
+            }
+            // meshes in main memory: to video memory, once per change in the files kept
+            if (g_nmovies != last_move_count) {
+                int any = 0;
+                for (int i = 0; i < g_nmovies; i++)
+                    any |= meshes_bytes(&g_movies[i].gpu, 0) != 0 || render_pending_bytes(g_movies[i].m) != 0;
+                if (any && game_meshes_to_video(&cache, cache_mem, cache_bytes)) hitch_what = " (meshes to video memory)";
+                last_move_count = g_nmovies;
             }
             // a full recolour cache stops helping: start it over (after the GPU is done with it)
             if (cache.used > cache.cap * 9 / 10 || cache.entries * 4 >= cache.table_size * 3) {
                 vita2d_wait_rendering_done();
                 recolour_cache_free(&cache);
                 recolour_cache_init(&cache, cache_mem, cache_bytes);
+                hitch_what = " (colour cache restarted)";
             }
             SceUInt64 t0 = sceKernelGetProcessTimeWide();
-            float k = SCREEN_W / start->stage_w;
+            float k = SCREEN_W / first->stage_w;
             Mat screen = {k / 20, 0, 0, k / 20, 0, 0};
             render_begin(&vb);
+#ifdef CC_NET
+            netplay_hud_names(vm);
+#endif
+            cc_custom_new_frame();
             as_render_mc(vm->root, screen, CX_IDENTITY, &vb);
-            build_ms += (sceKernelGetProcessTimeWide() - t0) / 1000.0f;
+            if (saving_timer > 0) {
+                saving_timer--;
+                pause_menu_saving(k, saving_timer < 10 ? saving_timer / 10.0f : 1, &vb);
+            }
+            hitch_build = (sceKernelGetProcessTimeWide() - t0) / 1000.0f;
+            build_ms += hitch_build;
         }
 
-        vita2d_set_clear_color(RGBA8(start->bg[0], start->bg[1], start->bg[2], 255));
-        draw_frame(&vb, heat_clock++);
+        // A new picture comes only with a game frame, 30 a second. Drawing it again in between
+        // showed the same frame twice and doubled the GPU's work: the map (66k triangles, ~22 ms
+        // of GPU a frame) then missed every other vblank and ran unevenly at 45 fps. The pause
+        // menu animates on its own and is drawn every vblank.
+        if (!ticked && !pause.open && net_wait < 20) {
+            sceDisplayWaitVblankStart();
+            continue;
+        }
+        vita2d_set_clear_color(RGBA8(first->bg[0], first->bg[1], first->bg[2], 255));
+        SceUInt64 draw_t0 = sceKernelGetProcessTimeWide();
+        draw_frame(&vb, heat_clock);
+        if (ticked) heat_clock += 2;   // the shimmer's speed, as when it was drawn 60 times a second
         if (pause.open) pause_draw(&pause);
+#ifdef CC_NET
+        if (g_netgame && net_wait >= 20) {   // the others haven't sent this frame yet
+            const char *w = strtab_get("vita.wifi.wait_players");
+            game_text(SCREEN_W / 2, SCREEN_H / 2, 1.4f, 0xffffff, w ? w : "Waiting for the other players...");
+        }
+        if (g_netgame && net_desync_tick) {
+            static int said;
+            if (!said++) log_line("Wi-Fi game out of step from frame %u", net_desync_tick);
+            const char *w = strtab_get("vita.wifi.out_of_step");
+            game_text(SCREEN_W / 2, SCREEN_H - 20, 0.9f, 0xff5a50, w ? w : "Out of step with the other Vitas");
+        }
+#endif
+        int ach = cc_achievement_take_new();
+        if (trophies && cc_achievements() != trophies_synced) {
+#ifdef CC_TROPHIES
+            for (int id = 1; id <= CC_ACHIEVEMENTS; id++)
+                if ((cc_achievements() & ~trophies_synced) >> id & 1) trophies_unlock(id);
+#endif
+            trophies_synced = cc_achievements();
+        }
+        if (ach) { ach_shown = ach; ach_timer = 30 * 4; }
+        if (ach_timer > 0) {   // a banner at the top for four seconds
+            if (ticked) ach_timer--;
+            vita2d_draw_rectangle(SCREEN_W / 2 - 230, 14, 460, 64, RGBA8(0, 0, 0, 170));
+            outlined_text(SCREEN_W / 2 - 210, 40, 0.9f, "Achievement unlocked");
+            outlined_text(SCREEN_W / 2 - 210, 68, 1.0f, cc_achievement_name(ach_shown));
+        }
         if (overlay) {
             unsigned ink = RGBA8(255, 255, 255, 255);
             vita2d_draw_rectangle(0, 0, SCREEN_W, 64, RGBA8(0, 0, 0, 150));
             vita2d_pgf_draw_textf(g_font, 12, 24, ink, 0.8f,
-                                  "%.0f fps   script %.1f ms   build %.1f ms   %d tris  %d draws  cpu-coloured %d   heap %u objs",
+                                  "%.0f/30 fps   script %.1f ms   build %.1f ms   %d tris  %d draws  cpu-coloured %d   heap %u objs",
                                   fps, shown_tick, shown_build, render_stats.triangles, render_stats.draws,
                                   render_stats.cx_tris, (unsigned)vm->heap_count);
             vita2d_pgf_draw_textf(g_font, 12, 50, ink, 0.8f, "%d files, %.1f MB GPU, heap %.1f of %d MB   %s",
                                   g_nmovies, g_gpu_bytes / 1048576.0, mallinfo().uordblks / 1048576.0,
                                   _newlib_heap_size_user >> 20, g_last_error);
         }
+        SceUInt64 swap_t0 = sceKernelGetProcessTimeWide();
         vita2d_end_drawing();
         vita2d_swap_buffers();
 
         frames++;
         now = sceKernelGetProcessTimeWide();
+        // Hitches: a game frame shown more than 50 ms after the one before (one missed at 30 fps)
+        // goes to the log with where the time went, to find what stalls on the Vita.
+        static SceUInt64 last_shown;
+        if (ticked && !pause.open && last_shown && now - last_shown > 50000)
+            log_line("[%u] slow frame %.0f ms: script %.1f (%d ticks, %lld actions) gc %.1f build %.1f draw %.1f swap %.1f ms, %d tris "
+                     "%d draws %d cpu-coloured%s",
+                     (unsigned)vm->tick, (now - last_shown) / 1000.0f, hitch_script, hitch_ticks, vm->ops - hitch_ops,
+                     hitch_gc, hitch_build,
+                     (swap_t0 - draw_t0) / 1000.0f, (now - swap_t0) / 1000.0f, render_stats.triangles,
+                     render_stats.draws, render_stats.cx_tris, hitch_what);
+        if (ticked && !pause.open && last_shown && now - last_shown > 50000 && audio_sfx_pending())
+            log_line("  (%d sounds loading)", audio_sfx_pending());
+        if (pause.open) last_shown = 0;
+        else if (ticked) last_shown = now;
         if (now - last >= 1000000) {
             fps = frames * 1000000.0f / (now - last);
             shown_tick = ticks ? tick_ms / ticks : 0;
@@ -876,6 +2636,46 @@ int main(void) {
             frames = ticks = 0;
             last = now;
         }
+    }
+    if (exit_to_title) {   // the game is left: everything of it goes, then the title's menu
+#ifdef CC_NET
+        if (g_netgame) {   // leave the Wi-Fi game, and this Vita's own profile back from its save
+            net_leave();
+            netplay_end();
+            cc_storage_clear();
+            cc_storage_load(SAVE_PATH);
+            g_netgame = 0;
+        } else
+#endif
+        if (cc_game_mode == CC_MODE_VOLLEYBALL) {   // the matches leave the story as it was saved
+            cc_storage_clear();
+            cc_storage_load(SAVE_PATH);
+        }
+        // Nothing loads while the files go: a file still loading is taken in first. The title's
+        // own files stay (as if just preloaded), so the title loads nothing in the background:
+        // a background load there (lobby.swf) froze the Vita in the title's drawing, ~3 s in.
+        // The game's preloads that the game never asked for (fx, player, animals: left from the
+        // map, before any level) go too: kept, fx.swf alone held 32 MB of video memory, the title
+        // had to draw from main memory and ran slow (Jah 2026-11-02, only after a short game).
+        if (g_bg.state != BG_IDLE) bg_finish();
+        for (int i = 0; i < g_nmovies; i++)
+            if (g_movies[i].keep == 2) g_movies[i].keep = 0;
+        for (int i = 0; i < g_nmovies; i++)
+            for (int j = 0; j < PRELOAD_TITLE; j++)
+                if (!g_movies[i].keep && !strcasecmp(g_movies[i].name, g_preload[j])) g_movies[i].keep = 2;
+        EXIT_TRACE("exit: leaving the game");
+        vita2d_wait_rendering_done();
+        audio_sfx_stop(NULL);
+        if (cc_music_stop) cc_music_stop();
+        EXIT_TRACE("exit: sound stopped");
+        as_free(vm);
+        EXIT_TRACE("exit: game freed");
+        free_unused_movies(NULL, &cache, cache_mem, cache_bytes);
+        EXIT_TRACE("exit: files freed");
+        memset(cc_keys, 0, sizeof cc_keys);
+        render_begin(&vb);   // its meshes were in the files just freed
+        from_game = 1;
+        goto new_game;
     }
 
     vita2d_wait_rendering_done();
@@ -886,12 +2686,13 @@ int main(void) {
             if (g_movies[i].m->chars[c].type == CHAR_BITMAP && ((Bitmap *)g_movies[i].m->chars[c].ptr)->tex)
                 vita2d_free_texture(((Bitmap *)g_movies[i].m->chars[c].ptr)->tex);
         swf_free(g_movies[i].m);
-        gpu_free(&g_movies[i].gpu);
+        meshes_free(&g_movies[i].gpu);
     }
     recolour_cache_free(&cache);
     gpu_free(&cache_gpu);
     gpu_free(&g_index_block);
     vita2d_free_pgf(g_font);
+    log_flush_wait();
     vita2d_fini();
     sceKernelExitProcess(0);
     return 0;

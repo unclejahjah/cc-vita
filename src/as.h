@@ -145,8 +145,11 @@ struct AsMc {
     AsStr *name;               // atom; NULL for unnamed
     int depth;
     int frame;                 // 0-based current frame
+    int goto_want, goto_got;   // the last goto's frame as asked for (maybe past the end) and as went to
     uint8_t playing;
     uint8_t removed;
+    uint32_t gotos;            // frame changes by a goto (as_mc_parent)
+    uint32_t parent_gotos;     // removed: its parent's gotos then
     uint8_t scripted;          // a script set its transform: the timeline stops moving it
     uint8_t visible;
     uint8_t loaded;            // onClipEvent(load) done
@@ -163,6 +166,8 @@ struct AsMc {
     uint32_t born;             // vm->tick it was created on: it doesn't advance until the next one
     uint8_t shader;            // AddShader on this clip: 1 "Heat" (the screen behind it shimmers)
     const EditText *text;      // a text field (its contents are the "text" variable)
+    AsMc *mask;                // setMask: only what lies inside this clip's shapes shows
+    uint8_t is_mask;           // used as some clip's setMask mask: not drawn itself
 };
 
 // ---- the VM ----
@@ -194,9 +199,17 @@ struct AsVm {
     void *host;                 // for the host's own use
     int depth;                  // call depth (runaway recursion guard)
     AsObj *cur_fn;              // function running now (for messages), NULL on a timeline
+    int cur_argc;               // and the arguments it was called with
+    AsVal *cur_argv;
+    AsObj *native_fn;           // the native running now (as_call_script finds its script version)
+    AsMc *text_field;           // the text field text_for_number is asked about
     long long ops;              // actions executed (profiling)
     uint32_t tick;              // frames run so far
     uint32_t rand_state;
+    // getTimer()'s clock in ms; NULL: the real one. Wi-Fi play gives every Vita the same
+    // clock (from the frame count), as their games must stay the same frame by frame.
+    double (*time_ms)(AsVm *vm);
+    unsigned next_instance;     // unnamed clips enumerated: "instanceN"
     void (*trace)(AsVm *vm, const char *msg);
     void (*loaded)(AsVm *vm, AsMc *target);    // after a loadMovie finished (its first frame has run)
     void (*warn)(AsVm *vm, const char *msg);   // missing functions and other surprises
@@ -206,13 +219,20 @@ struct AsVm {
     // each tick, after the frame scripts ran and before onEnterFrame (host work that needs
     // freshly placed clips to have run their first frame)
     void (*after_frame_scripts)(AsVm *vm);
+    // a loadMovie about to run: return 1 to hold it (and the ones after it) until a later frame
+    int (*hold_load)(AsVm *vm, AsMc *target, const char *url);
+    // start reading a file in the background: 1 while it isn't ready yet, 0 once it is (or
+    // can't be read that way; the loader then reads it as usual)
+    int (*prefetch)(AsVm *vm, const char *url);
     // the executable's text by number (TextField.ntext = N), or NULL
     const char *(*text_for_number)(AsVm *vm, int n);
     // native versions of hot script functions, by name (as_override)
     struct { AsStr *name; AsNative fn; } overrides[32];
     int noverrides;
     // variables whose value the host fixes (as_pin): scripts read it, their writes are ignored
-    struct { AsStr *name, *only_in; AsVal v; } pinned[16];
+    // (in_levels: in every script of a level file, Movie.is_level)
+    // (get: the value comes from it each read; undefined from it reads the variable as usual)
+    struct { AsStr *name, *only_in; AsVal v; int in_levels; AsVal (*get)(AsVm *vm); } pinned[24];
     int npinned;
     // queued frame scripts for this tick: (clip, frame) in order
     AsMc **queue;
@@ -225,7 +245,8 @@ void as_free(AsVm *vm);
 void as_gc(AsVm *vm);           // only between frames
 // which of movies[0..n) anything in the heap belongs to (used[i]); 0 if it can't tell yet
 int as_movies_used(AsVm *vm, Movie *const *movies, int n, uint8_t *used);
-void as_forget_movie(const Movie *m);   // before freeing a movie
+void as_forget_movie(const Movie *m);
+AsVal as_mc_parent(const AsMc *mc);   // _parent (a removed clip: until its parent moves on)   // before freeing a movie
 
 // values
 static inline AsVal as_undef(void) { AsVal v; v.t = V_UNDEF; v.n = 0; return v; }
@@ -257,6 +278,8 @@ void as_def(AsVm *vm, AsObj *o, const char *name, AsVal v);   // define with DON
 void as_def_fn(AsVm *vm, AsObj *o, const char *name, AsNative fn);
 AsVal as_call(AsVm *vm, AsVal fn, AsVal this_, int argc, AsVal *argv);
 AsVal as_call_method(AsVm *vm, AsVal obj, const char *name, int argc, AsVal *argv);
+// From inside an as_override native: runs the script's own version of the function it stands in for.
+AsVal as_call_script(AsVm *vm, AsVal this_, int argc, AsVal *argv);
 
 // running scripts
 void as_run_block(AsVm *vm, const Movie *m, uint32_t off, uint32_t len, AsMc *target);
@@ -266,6 +289,12 @@ void as_override(AsVm *vm, const char *name, AsNative fn);
 // A variable that always reads v by name (only primitive values: they aren't GC roots).
 // With only_in, just inside the script function of that name (and writes still happen).
 void as_pin(AsVm *vm, const char *name, AsVal v, const char *only_in);
+// The same for every script (functions and timelines) of a level file: reads give v and
+// the scripts' own writes are ignored there.
+void as_pin_in_levels(AsVm *vm, const char *name, AsVal v);
+// as_pin with the value from get at each read (it can look at vm->cur_argv); when get gives
+// undefined, the variable reads as usual.
+void as_pin_fn(AsVm *vm, const char *name, const char *only_in, AsVal (*get)(AsVm *vm));
 
 // profiling: time and actions per function, worst first (exclusive of callees)
 void as_prof_enable(int on);
@@ -279,11 +308,19 @@ int as_mc_frame_of(AsMc *mc, AsVal label);            // 0-based, -1 if none
 void as_mc_remove(AsVm *vm, AsMc *mc);
 AsMc *as_mc_child(AsMc *mc, AsStr *name);
 AsMc *as_mc_attach(AsVm *vm, AsMc *mc, AsStr *linkage, AsStr *name, int depth);
+AsMc *as_mc_create_empty(AsVm *vm, AsMc *parent, AsStr *name, int depth);
+// one of the parent's file's characters at a (script) depth: a copy of a timeline's text field
+AsMc *as_mc_place_char(AsVm *vm, AsMc *parent, int cid, Mat m, CXform cx, const char *name, int depth);
+// a sprite of another file (m) at a (script) depth: art borrowed from that file
+AsMc *as_mc_place_foreign(AsVm *vm, AsMc *parent, const Movie *m, int cid, Mat mat, const char *name, int depth);
 void as_tick(AsVm *vm);                               // one frame of the whole tree
+void as_tick_clip(AsVm *vm, AsMc *mc);                // one frame of one clip only
+void as_drain(AsVm *vm);                              // run the frame scripts a goto queued, now
 AsVal as_mc_get_prop(AsVm *vm, AsMc *mc, int index);
 void as_mc_set_prop(AsVm *vm, AsMc *mc, int index, AsVal v);
 int as_mc_prop_index(const char *name);               // "_x" -> 0, ... ; -1 if not a clip property
 void as_mc_mark(AsVm *vm, AsMc *mc);
+Mat as_mc_global_matrix(AsMc *mc);                    // its placement through all its parents
 AsVal as_resolve_path(AsVm *vm, AsMc *from, const char *path, int *found);
 AsMc *as_mc_resolve_target(AsVm *vm, AsMc *base, AsVal target);   // clip, path string, or "" for base
 

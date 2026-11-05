@@ -1,7 +1,7 @@
 // Desktop check for the Vita renderer: same parser + tessellator, software
-// rasterised to PPM so output can be compared with code/swfproto.
-// usage: hosttest PLAYER.swf walk out_prefix [frames]
-//        hosttest --level LEVELn.swf PLAYER.swf out_prefix [frames]   (knight walks right)
+// rasterised to PPM.
+// usage: hosttest file.swf label out_prefix [frames]
+//        hosttest --as GAME_DIR MAIN.swf out frames every   (the game itself; see HANDOFF.md)
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
@@ -9,16 +9,31 @@
 #include <time.h>
 
 #include <dirent.h>
+#include <malloc.h>
 #include <strings.h>
 
 #include "../src/as_render.h"
 #include "../src/hostfont.h"
 #include "../src/cc_buttons.h"
 #include "../src/cc_host.h"
-#include "../src/enemy.h"
+#include "../src/custom_char.h"
+#include "../src/paint_jr.h"
+#include "../src/custom_animal.h"
+#include "../src/weapon_look.h"
+#include "../src/pause_menu.h"
+#include "../src/help_book.h"
+#include "../src/strtab.h"
+#include "../src/swf.h"
+#include "../src/net.h"
+#include "../src/netplay.h"
+#include "../src/lobby.h"
+#include <arpa/inet.h>
+#include <unistd.h>
 
-#define MAX_W 960
-#define MAX_H 544
+#define SCREEN_W 960
+#define SCREEN_H 544
+#define MAX_W (SCREEN_W * 2)   // --as with CC_SCALE=2 renders at twice the Vita size
+#define MAX_H (SCREEN_H * 2)
 
 static int W = 480, H = 480;
 static uint8_t px[MAX_W * MAX_H * 3];
@@ -140,205 +155,6 @@ static void write_frame(const char *prefix, int t) {
            render_stats.cached_tris);
 }
 
-static void line(float x0, float y0, float x1, float y1, const uint8_t rgb[3]) {
-    float dx = x1 - x0, dy = y1 - y0;
-    int n = (int)(fabsf(dx) > fabsf(dy) ? fabsf(dx) : fabsf(dy)) + 1;
-    for (int i = 0; i <= n; i++) {
-        int x = (int)(x0 + dx * i / n), y = (int)(y0 + dy * i / n);
-        for (int oy = 0; oy < 2; oy++)
-            for (int ox = 0; ox < 2; ox++)
-                if (x + ox >= 0 && x + ox < W && y + oy >= 0 && y + oy < H) memcpy(px + ((y + oy) * W + x + ox) * 3, rgb, 3);
-    }
-}
-
-static void *host_alloc(size_t bytes, void *ctx) {
-    (void)ctx;
-    return malloc(bytes);
-}
-
-static int level_mode(int argc, char **argv) {
-    if (argc < 5) { fprintf(stderr, "usage: %s --level LEVEL.swf PLAYER.swf out_prefix [frames]\n", argv[0]); return 1; }
-    int frames = argc > 5 ? atoi(argv[5]) : 4;
-    char err[256];
-    clock_t t0 = clock();
-    Level *lv = level_load(argv[2], err, sizeof err);
-    if (!lv) { fprintf(stderr, "%s\n", err); return 1; }
-    Movie *pl = swf_load(argv[3], err, sizeof err);
-    if (!pl) { fprintf(stderr, "%s\n", err); return 1; }
-    // same upload path as the Vita, so only colour-transformed shapes get recoloured
-    render_tessellate_all(lv->m);
-    render_tessellate_all(pl);
-    void *lv_block = render_upload(lv->m, host_alloc, NULL), *pl_block = render_upload(pl, host_alloc, NULL);
-    printf("loaded in %.2fs: %d layers, spawn %.0f,%.0f, edges %.0f..%.0f, %d markers hidden, bg %02x%02x%02x\n",
-           (double)(clock() - t0) / CLOCKS_PER_SEC, lv->nlayers, lv->spawn_x, lv->spawn_y, lv->edge_left,
-           lv->edge_right, lv->hidden, lv->m->bg[0], lv->m->bg[1], lv->m->bg[2]);
-    for (int i = 0; i < lv->nlayers; i++)
-        printf("  layer %s/%s factor %.2f\n", lv->m->names[lv->layer[i].container->name],
-               lv->m->names[lv->layer[i].inner->name], lv->layer[i].factor);
-    int walk = sprite_find_label(&pl->root, "walk");
-    if (walk < 0) walk = 0;
-    W = MAX_W; H = MAX_H;
-    float k = W / GAME_W;
-    Mat screen = {k / 20, 0, 0, k / 20, 0, 0};
-    DrawList vb = {0};
-    RecolourCache cache;
-    const size_t cache_bytes = 8 * 1024 * 1024;
-    void *cache_mem = malloc(cache_bytes);
-    recolour_cache_init(&cache, cache_mem, cache_bytes);
-    vb.cache = &cache;
-    vb.view[2] = W;
-    vb.view[3] = H;
-    int types[8] = {0}, type_ids[8] = {1, 2, 3, 4, 100, 101, 300, 400};
-    for (int i = 0; i < lv->nsegs; i++)
-        for (int k2 = 0; k2 < 8; k2++) types[k2] += lv->segs[i].type == type_ids[k2];
-    printf("%d play-layer objects depth-sorted, %d static\n", lv->nsorted, lv->game_static.count);
-    printf("%d collision segments: type1 %d, 2 %d, 3 %d, 4 %d, 100 %d, 101 %d, 300 %d, 400 %d\n", lv->nsegs, types[0],
-           types[1], types[2], types[3], types[4], types[5], types[6], types[7]);
-    // The knight walks right with collision (5 px steps, like holding right); one picture per 30 steps.
-    // Collision edges are drawn on top: red walls, blue stairs (100/101), green other types.
-    // optional: start x y and step size (negative walks left)
-    Mover km = {argc > 7 ? atof(argv[6]) : lv->spawn_x, argc > 7 ? atof(argv[7]) : lv->spawn_y, 0, 0};
-    float step_dx = argc > 8 ? atof(argv[8]) : 5, step_dy = argc > 9 ? atof(argv[9]) : 0;
-    for (int i = 0; i < lv->nsegs; i++)
-        if (lv->segs[i].type == 100 || lv->segs[i].type == 101)
-            printf("  stair edge %d type %d: %.0f,%.0f - %.0f,%.0f\n", i, lv->segs[i].type, lv->segs[i].x0,
-                   lv->segs[i].y0, lv->segs[i].x1, lv->segs[i].y1);
-    float kx, ky;
-    for (int t = 0; t < frames; t++) {
-        for (int step = 0; t && step < 30; step++) {
-            level_move(lv, &km, step_dx, argc > 9 ? step_dy : 0);
-            if (argc <= 7) level_move(lv, &km, 0, step & 1 ? 3 : -3);   // wiggle up/down to probe the floor edges
-        }
-        kx = km.x;
-        ky = km.y;
-        clear(lv->m->bg);
-        render_begin(&vb);
-        Actor knight = {pl, &pl->root.frames[walk], kx, ky, step_dx < 0 ? -1.0f : 1.0f, t, km.body_y};
-        float camx = level_clamp_camera_x(lv, kx);
-        level_render(lv, screen, camx, ky, 100, t, &knight, 1, &vb);
-        rasterise(&vb);
-        Mat gm = level_game_matrix(lv, screen, camx, ky, 100);
-        for (int i = 0; i < lv->nsegs; i++) {
-            const Segment *s = &lv->segs[i];
-            static const uint8_t red[3] = {255, 0, 0}, blue[3] = {0, 80, 255}, green[3] = {0, 200, 0};
-            const uint8_t *c = s->type <= 4 ? red : s->type < 200 ? blue : green;
-            line(gm.a * s->x0 * 20 + gm.c * s->y0 * 20 + gm.tx, gm.b * s->x0 * 20 + gm.d * s->y0 * 20 + gm.ty,
-                 gm.a * s->x1 * 20 + gm.c * s->y1 * 20 + gm.tx, gm.b * s->x1 * 20 + gm.d * s->y1 * 20 + gm.ty, c);
-        }
-        write_frame(argv[4], t);
-        printf("  knight at %.0f,%.0f body_y %.0f ground %d\n", kx, ky, km.body_y, km.ground);
-    }
-    level_free(lv);
-    swf_free(pl);
-    free(lv_block);
-    free(pl_block);
-    recolour_cache_free(&cache);
-    free(cache_mem);
-    return 0;
-}
-
-// Scripted knight test: walk, light combo, jump + kick, heavy. Writes a frame at each snapshot.
-static int player_mode(int argc, char **argv) {
-    if (argc < 5) { fprintf(stderr, "usage: %s --player LEVEL.swf PLAYER.swf out_prefix\n", argv[0]); return 1; }
-    char err[256];
-    Level *lv = level_load(argv[2], err, sizeof err);
-    Movie *pl = swf_load(argv[3], err, sizeof err);
-    if (!lv || !pl) { fprintf(stderr, "%s\n", err); return 1; }
-    static Rig rig;
-    rig_init(&rig, pl);
-    Player p;
-    player_init(&p, &rig, lv->spawn_x, lv->spawn_y);
-    for (int i = 0; i < A_COUNT; i++) printf("%s %d/%d  ", anim_name(i), rig.anims[i].fin, rig.anims[i].length);
-    printf("\n");
-    Enemies es;
-    enemies_reset(&es);
-    int fight = argc > 5 && !strcmp(argv[5], "fight");
-    W = MAX_W; H = MAX_H;
-    float k = W / GAME_W;
-    Mat screen = {k / 20, 0, 0, k / 20, 0, 0};
-    DrawList vb = {0};
-    vb.view[2] = W;
-    vb.view[3] = H;
-    static const char *names[] = {"idle", "walk", "dash", "attack", "jump", "land", "block", "hit"};
-    // 60 Hz frames; a script of presses: X = light, Y = heavy, A = jump, R/L = tap right/left
-    static const struct { int f; char key; } script[] = {
-        {10, 'X'}, {20, 'X'}, {30, 'X'}, {40, 'X'},             // X X X X
-        {120, 'X'}, {130, 'Y'},                                  // X Y: uppercut
-        {200, 'X'}, {210, 'X'}, {220, 'Y'}, {232, 'Y'},          // X X Y Y
-        {320, 'A'}, {330, 'X'}, {338, 'X'}, {346, 'Y'},          // air X X Y
-        {420, 'A'}, {432, 'Y'},                                  // air Y: slam down
-        {500, 'R'}, {506, 'R'}, {516, 'X'},                      // dash, X: dash punch
-    };
-    const char *last = "";
-    int shot = 0;
-    for (int f = 0; f < (fight ? 900 : 580); f++) {
-        PlayerInput in = {0};
-        char key = 0;
-        if (fight) {
-            // face the nearest enemy, walk up to it and mash X X Y (or X Y to launch, then air X)
-            const Enemy *t = NULL;
-            for (int i = 0; i < MAX_ENEMIES; i++)
-                if (es.e[i].alive && es.e[i].hp > 0 && (!t || fabsf(es.e[i].mv.x - p.mv.x) < fabsf(t->mv.x - p.mv.x)))
-                    t = &es.e[i];
-            if (t) {
-                float dx = t->mv.x - p.mv.x, dy = t->mv.y - p.mv.y;
-                if (fabsf(dx) > 55) in.dx = dx > 0 ? 1 : -1;
-                else if (dx * p.face < 0) in.dx = dx > 0 ? 0.6f : -0.6f;
-                if (fabsf(dy) > 8) in.dy = dy > 0 ? 1 : -1;
-                // X Y to launch, then jump and X X X to juggle
-                if (fabsf(dx) < 80 && fabsf(dy) < 15 && f % 8 == 0) {
-                    int step = (f / 8) % 6;
-                    key = step == 0 ? 'X' : step == 1 ? 'Y' : step == 2 ? 'A' : 'X';
-                }
-            }
-        }
-        for (size_t s = 0; !fight && s < sizeof script / sizeof *script; s++)
-            if (script[s].f == f) key = script[s].key;
-        if (key == 'X') in.light = 1;
-        if (key == 'Y') in.heavy = 1;
-        if (key == 'A') in.jump = 1;
-        // a tap holds the direction for 2 frames; the second tap is held until the dash punch
-        if (!fight && ((f >= 500 && f < 502) || (f >= 506 && f < 520))) in.dx = 1;
-        player_update(&p, lv, &in, 0.5f);
-        if (fight) enemies_update(&es, lv, &rig, &p, 0.5f);
-        const char *now = player_move_name(&p);
-        int snap = fight ? f % 45 == 0 : strcmp(now, last) && p.state == P_ATTACK;
-        if (!fight && strcmp(now, last))
-            printf("f%3d %-6s %-10s group %d num %d body_y %.0f x %.0f\n", f, names[p.state], now, p.punch_group,
-                   p.punch_num, p.mv.body_y, p.mv.x);
-        if (fight)
-            for (int i = 0; i < MAX_ENEMIES; i++) {
-                static int last_anim[MAX_ENEMIES];
-                const Enemy *e = &es.e[i];
-                if (e->alive && e->anim != last_anim[i] && (e->anim == A_BOUNCE1 || e->anim == A_BOUNCE2 ||
-                                                             e->anim == A_JUGGLE || e->anim == A_HITGROUND))
-                    printf("   f%3d enemy %d -> %-10s toss_y %.0f weight %.0f bounces %d hp %d\n", f, i,
-                           anim_name(e->anim), e->speed_toss_y, e->weight, e->bounces, e->hp);
-                last_anim[i] = e->anim;
-            }
-        if (fight && f % 30 == 0) {
-            printf("f%3d knight %-6s %-10s hp %3d x %.0f | wave %d kills %d |", f, names[p.state], now, p.hp, p.mv.x,
-                   es.wave, es.kills);
-            for (int i = 0; i < MAX_ENEMIES; i++)
-                if (es.e[i].alive)
-                    printf(" [%s hp%d st%d x%.0f by%.0f]", anim_name(es.e[i].anim), es.e[i].hp, es.e[i].state,
-                           es.e[i].mv.x, es.e[i].mv.body_y);
-            printf("\n");
-        }
-        last = now;
-        if (!snap) continue;
-        clear(lv->m->bg);
-        render_begin(&vb);
-        Actor actors[1 + MAX_ENEMIES];
-        actors[0] = player_actor(&p);
-        int na = 1 + enemies_actors(&es, &rig, actors + 1, MAX_ENEMIES);
-        level_render(lv, screen, level_clamp_camera_x(lv, p.mv.x), p.mv.y, 100, f / 2, actors, na, &vb);
-        rasterise(&vb);
-        write_frame(argv[4], shot++);
-    }
-    return 0;
-}
-
 // Every frame of one clip in a grid (to see which frame is which character part).
 static int sprite_mode(int argc, char **argv) {
     if (argc < 5) { fprintf(stderr, "usage: %s --sprite file.swf cid out_prefix [cell_px]\n", argv[0]); return 1; }
@@ -348,7 +164,7 @@ static int sprite_mode(int argc, char **argv) {
     int cid = atoi(argv[3]), cell = argc > 5 ? atoi(argv[5]) : 80;
     if (m->chars[cid].type != CHAR_SPRITE) { fprintf(stderr, "not a sprite\n"); return 1; }
     const Sprite *s = m->chars[cid].ptr;
-    W = MAX_W; H = MAX_H;
+    W = SCREEN_W; H = SCREEN_H;
     static const uint8_t paper[3] = {237, 237, 224};
     clear(paper);
     DrawList vb = {0};
@@ -365,6 +181,12 @@ static int sprite_mode(int argc, char **argv) {
     return 0;
 }
 
+// CC_PS_BUTTONS: "dark", "coloured" (the game's balls), or anything else for grey, as the Vita
+static int btn_style(void) {
+    const char *v = getenv("CC_PS_BUTTONS");
+    return !strcmp(v, "dark") ? CC_BTN_STYLE_DARK : !strcmp(v, "coloured") ? CC_BTN_STYLE_COLOURED : CC_BTN_STYLE_GREY;
+}
+
 // Several clips' first frames in a row: --clips file.swf cid,cid,... out_prefix [cell_px] [art_px]
 static int clips_mode(int argc, char **argv) {
     if (argc < 5) { fprintf(stderr, "usage: %s --clips file.swf cid,cid,... out_prefix [cell_px] [art_px]\n", argv[0]); return 1; }
@@ -375,8 +197,8 @@ static int clips_mode(int argc, char **argv) {
     float art = argc > 6 ? (float)atof(argv[6]) : 60;
     if (getenv("CC_PS_BUTTONS"))   // "coloured" or "dark"
         printf("PlayStation buttons: %d clips\n",
-               cc_buttons_playstation(m, !strcmp(getenv("CC_PS_BUTTONS"), "dark") ? CC_BTN_STYLE_DARK : CC_BTN_STYLE_COLOURED));
-    W = MAX_W; H = cell;
+               cc_buttons_playstation(m, btn_style()));
+    W = SCREEN_W; H = cell;
     static const uint8_t paper[3] = {60, 60, 70};
     clear(paper);
     DrawList vb = {0};
@@ -415,37 +237,6 @@ static int clips_mode(int argc, char **argv) {
     return 0;
 }
 
-// One character dressed as `who` in every root animation (to spot undressed parts).
-static int dress_mode(int argc, char **argv) {
-    if (argc < 6) { fprintf(stderr, "usage: %s --dress PLAYER.swf who weapon out_prefix\n", argv[0]); return 1; }
-    char err[256];
-    Movie *m = swf_load(argv[2], err, sizeof err);
-    if (!m) { fprintf(stderr, "%s\n", err); return 1; }
-    static Rig rig;
-    rig_init(&rig, m);
-    int who = atoi(argv[3]), weapon = atoi(argv[4]);
-    W = MAX_W; H = MAX_H;
-    static const uint8_t paper[3] = {237, 237, 224};
-    clear(paper);
-    DrawList vb = {0};
-    int cell = 80, cols = W / cell;
-    for (int l = 0; l < m->root.nlabels && (l / cols + 1) * cell <= H; l++) {
-        render_begin(&vb);
-        Mover mv = {0, 0, 0, 0};
-        // borrow the rig_actor dressing for this label's frame
-        Actor a = rig_actor(&rig, A_STAND, 4, &mv, 1, who, weapon);
-        a.frame = &m->root.frames[m->root.labels[l].frame];
-        vb.nparts = a.nparts;
-        for (int i = 0; i < a.nparts; i++) { vb.part_count[i] = a.part_count[i]; vb.part_frame[i] = a.part_frame[i]; }
-        float k = 0.35f / 20;
-        Mat mt = {k, 0, 0, k, (l % cols) * cell + cell / 2.0f, (l / cols) * cell + cell * 0.8f};
-        render_display_list(m, a.frame, mt, CX_IDENTITY, 4, &vb);
-        rasterise(&vb);
-    }
-    write_frame(argv[5], 0);
-    return 0;
-}
-
 // ---- the ActionScript engine on the real game files ----
 
 static char game_dir[512];
@@ -461,6 +252,7 @@ static Movie *host_loader(AsVm *vm, const char *url) {
     (void)vm;
     const char *base = strrchr(url, '/');
     base = base ? base + 1 : url;
+    base = cc_level_file(base);   // Paint Jr.'s castle (paint_jr.h)
     load_count++;
     for (int i = 0; i < nmovie_cache; i++)
         if (!strcasecmp(movie_cache[i].name, base)) return movie_cache[i].m;
@@ -477,14 +269,17 @@ static Movie *host_loader(AsVm *vm, const char *url) {
                 snprintf(path, sizeof path, "%s/%s", dirpath, de->d_name);
                 closedir(d);
                 Movie *m = swf_load(path, err, sizeof err);
+                if (m) m->is_level = i == 1 || !strcasecmp(base, "QUOFF.swf");   // as the Vita
                 int fixed = m ? cc_repair_level(m) : 0;
     if (m && getenv("CC_DUMP_SHAPE") && !strcmp(base, "MENU.swf")) {
         extern void cc_dump_shape(Movie *m, int cid);
         cc_dump_shape(m, atoi(getenv("CC_DUMP_SHAPE")));
     }
+    cc_menu_badge_outline = getenv("CC_VIGNETTES") != NULL;
     if (m && getenv("CC_PS_BUTTONS")) cc_menu_vita_badge(m);
+    if (m && CC_BETA_STICKER) cc_menu_beta_sticker_build(m);
     if (m && getenv("CC_PS_BUTTONS"))   // as the Vita does for every file it loads
-        cc_buttons_playstation(m, !strcmp(getenv("CC_PS_BUTTONS"), "dark") ? CC_BTN_STYLE_DARK : CC_BTN_STYLE_COLOURED);
+        cc_buttons_playstation(m, btn_style());
                 printf("  [load] %s%s", base, m ? "" : " FAILED");
                 if (fixed) printf(" (put back %d layer%s the file lost)", fixed, fixed > 1 ? "s" : "");
                 printf("\n");
@@ -523,6 +318,22 @@ static void host_sound(AsVm *vm, const char *linkage, float vol, float pan, int 
     if (getenv("AS_SOUNDS")) printf("  [sound] %s vol %.2f pan %.2f loops %d\n", linkage, vol, pan, loops);
 }
 
+// CC_PREFETCH=N: each file's first loadMovie waits N frames, as the Vita's background loads do
+static int fake_prefetch(AsVm *vm, const char *url) {
+    (void)vm;
+    static char done[256][128];
+    static int ndone, waited;
+    static char cur[128];
+    for (int i = 0; i < ndone; i++) if (!strcasecmp(done[i], url)) return 0;
+    if (strcasecmp(cur, url)) { snprintf(cur, sizeof cur, "%s", url); waited = 0; }
+    if (++waited <= atoi(getenv("CC_PREFETCH"))) return 1;
+    if (ndone < 256) snprintf(done[ndone++], sizeof done[0], "%s", url);
+    cur[0] = 0;
+    return 0;
+}
+
+static AsMc *g_modes;   // the title's book of modes (CC_MODE_ITEM)
+
 static int as_mode(int argc, char **argv) {
     if (argc < 5) { fprintf(stderr, "usage: %s --as GAME_DIR START.swf out_prefix [frames] [snap_every]\n", argv[0]); return 1; }
     snprintf(game_dir, sizeof game_dir, "%s", argv[2]);
@@ -537,8 +348,40 @@ static int as_mode(int argc, char **argv) {
     AsVm *vm = as_new(host_loader);
     vm->warn = host_warn;
     vm->trace = host_trace;
+    if (getenv("CC_PREFETCH")) vm->prefetch = fake_prefetch;
+    // CC_CUSTOM_DIR=dir/: a painted character, as ux0:data/CastleCrashers/custom/ on the Vita
+    for (int i = 0, n = getenv("CC_CUSTOM_DIR") ? cc_custom_load_all(getenv("CC_CUSTOM_DIR")) : 0; i < n; i++)
+        printf("custom character \"%s\" (character %d, fights like %d)\n", cc_custom_name(i), CC_CUSTOM_P_TYPE + i,
+               cc_custom_base(CC_CUSTOM_P_TYPE + i));
+    if (getenv("CC_LOOKS")) cc_look_load(getenv("CC_LOOKS"));   // CC_LOOKS=file: weapon_looks.txt
+    if (getenv("CC_CUSTOM_ANIMAL"))   // CC_CUSTOM_ANIMAL=dir/ (with pet.png, pet.xml): a custom animal orb
+        cc_animal_load(getenv("CC_CUSTOM_ANIMAL"));
+    {   // Paint Jr. when GAME/game has PLAYER_NEW.swf and PAINTJR.swf, as on the Vita
+        char a[700], b[700], c[700];
+        snprintf(a, sizeof a, "%s/game/FRESH01.swf", game_dir);
+        snprintf(b, sizeof b, "%s/game/PJPARTS.swf", game_dir);
+        snprintf(c, sizeof c, "%s/game/PAINTJR.swf", game_dir);
+        cc_paintjr_set_available(access(a, R_OK) == 0, access(b, R_OK) == 0, access(c, R_OK) == 0);
+        snprintf(a, sizeof a, "%s/levels/LEVEL15_NEW.swf", game_dir);
+        cc_paintjr_set_castle(access(a, R_OK) == 0);
+        // NET_NO_PJ=1: this copy tells a Wi-Fi game it hasn't Paint Jr.'s files
+        net_my_caps = cc_paintjr_p_type() && access(a, R_OK) == 0 && !getenv("NET_NO_PJ") ? NET_CAP_PAINT_JR : 0;
+        if (cc_paintjr_p_type()) printf("Paint Jr. (character %d)\n", cc_paintjr_p_type());
+        if (getenv("CC_FRESH")) cc_fresh_set(atoi(getenv("CC_FRESH")));   // CC_FRESH=1: the FRESH look
+        if (cc_fresh()) printf("FRESH look\n");
+    }
     extern void cc_host_init(AsVm *vm);
+    if (getenv("CC_GAME_MODE")) cc_game_mode = atoi(getenv("CC_GAME_MODE"));   // 1 Quaff, 3 Arena
     cc_host_init(vm);
+    if (getenv("CC_NAMETAGS")) {   // CC_NAMETAGS="Jah,Friend": the players' names (a Wi-Fi game's, or the Vita user's)
+        char buf[256];
+        snprintf(buf, sizeof buf, "%s", getenv("CC_NAMETAGS"));
+        int p = 0;
+        for (char *t = strtok(buf, ","); t && p < NET_PLAYERS; t = strtok(NULL, ","))
+            snprintf(cc_net_names[p++], sizeof cc_net_names[0], "%s", t);
+    }
+    if (getenv("CC_AUTO_POTION")) cc_set_auto_potion(vm, 1);   // Help & Options' Auto Potion on
+    if (getenv("CC_HUD_SCALE")) as_render_hud_scale = atof(getenv("CC_HUD_SCALE"));   // Settings' HUD Size
     // CC_SAVE=path: start from a save file (cc_host.c's "CCS2" format), like the Vita's save.dat
     if (getenv("CC_SAVE") && !cc_storage_load(getenv("CC_SAVE")))
         printf("  couldn't read save %s\n", getenv("CC_SAVE"));
@@ -562,8 +405,93 @@ static int as_mode(int argc, char **argv) {
             printf("font: %s\n", err);
         }
     }
+    // NET_MODE=host|join: a Wi-Fi game over this PC's network with other hosttests (see
+    // HANDOFF.md). NET_WAIT=n: the host starts once n players are in; NET_ADDR: the host's
+    // address for join (default 127.0.0.1); CC_PAD="frame:CCB bit[:hold],..." this copy's
+    // buttons; NET_JITTER=ms: a random wait each frame, as a slow Vita; CC_PREFETCH=N: each
+    // level file takes N frames to arrive. NET_LOG=1 prints each frame's check. NET_CODE: join by
+    // game code; NET_DELAY: the host's delay instead of the one from the pings; UPNP_ROUTER: the
+    // router to ask (as well as everyone, by multicast). LOBBY_URL (tools/lobby/lobby_server.py):
+    // the host goes in the public games list (open to the internet or not); NET_PUBLIC=1 joins
+    // the first game in it.
+    const char *net_mode = getenv("NET_MODE");
+    if (net_mode) {
+        static uint8_t prof[3 * 65536];
+        int plen = cc_storage_pack(0, prof, sizeof prof);
+        if (!strcmp(net_mode, "host")) {
+            if (!net_host(prof, plen)) { printf("net: %s\n", net.error); return 1; }
+            int want = getenv("NET_WAIT") ? atoi(getenv("NET_WAIT")) : 2;
+            for (int i = 0; i < 30000; i++) {
+                net_poll();
+                uint32_t ext;
+                static int told;
+                if (!told && net_internet(&ext, NULL) > 0) {
+                    char code[NET_CODE_LEN + 1];
+                    net_code(ext, code);
+                    printf("net: internet game code %s\n", code);
+                    fflush(stdout);
+                    told = 1;
+                }
+                int n = 0;
+                for (int p = 0; p < NET_PLAYERS; p++) n += net.names[p][0] != 0;
+                if (lobby_available()) {
+                    lobby_publish(net_local_name(), n);
+                    static int was;
+                    int l = lobby_listed();
+                    if (l != was && l != LOBBY_WORKING) { printf("net: public list: %s\n", l == LOBBY_OK ? "listed" : lobby_why()); fflush(stdout); }
+                    was = l;
+                }
+                if (n >= want) break;
+                usleep(1000);
+            }
+            lobby_unpublish();
+            for (int i = 0; i < 1000; i++) { net_poll(); usleep(1000); }   // a few pings: the delay
+            uint32_t ext;
+            const char *why;
+            int open = net_internet(&ext, &why);
+            if (open <= 0) printf("net: not on the internet (%s)\n", open ? why : "still asking the router");
+            net.mode = cc_game_mode;   // CC_GAME_MODE: everyone plays that
+            net_start();
+        } else {
+            const char *addr = getenv("NET_ADDR") ? getenv("NET_ADDR") : "127.0.0.1";
+            uint32_t ip = getenv("NET_CODE") ? net_code_addr(getenv("NET_CODE")) : inet_addr(addr);
+            if (getenv("NET_CODE") && !ip) { printf("net: %s isn't a game code\n", getenv("NET_CODE")); return 1; }
+            if (getenv("NET_PUBLIC")) {   // the first game in the public list
+                LobbyGame g[LOBBY_MAX];
+                int n = 0;
+                for (int i = 0; i < 100 && !n; i++) {
+                    lobby_refresh();
+                    usleep(100000);
+                    while (lobby_list_state() == LOBBY_WORKING) usleep(10000);
+                    n = lobby_games(g, LOBBY_MAX);
+                }
+                for (int i = 0; i < n; i++) printf("net: public game %s %d/4 at %s\n", g[i].name, g[i].players, inet_ntoa(*(struct in_addr *)&g[i].addr));
+                if (!n) { printf("net: no public games (%s)\n", lobby_why()); return 1; }
+                ip = g[0].addr;
+            }
+            if (!net_join(ip, prof, plen)) { printf("net: %s\n", net.error); return 1; }
+            for (int i = 0; i < 30000 && net.state != NET_PLAYING && net.state != NET_LOST; i++) { net_poll(); usleep(1000); }
+        }
+        if (net.state != NET_PLAYING) { printf("net: no game (%s)\n", net.error); return 1; }
+        cc_game_mode = net.mode;
+        cc_paintjr_set_active(net.rules & NET_RULE_PAINT_JR);   // as the Vita: only when every copy has him
+        printf("net: Paint Jr. %s\n", net.rules & NET_RULE_PAINT_JR ? "on" : "off");
+        printf("net: playing as port %d, seed %u, delay %d (host %d, joiners %d)\n", net.port, net.seed, net.delay, net.first, net.slowest);
+        netplay_begin(vm);
+        vm->prefetch = netplay_prefetch;
+    }
     vm->root = as_mc_new(vm, start, &start->root, NULL, 0);
-    W = MAX_W; H = MAX_H;
+    if (!strcasecmp(argv[3], "MAIN.swf") && !getenv("CC_NO_LOADING")) cc_loading_attach(vm);
+    AsMc *vignettes = NULL;   // CC_VIGNETTES=1 with MENU.swf: the PC's moving scenes (MENU_VIGNETTES.swf) under the title
+    if (getenv("CC_VIGNETTES") && !strcasecmp(argv[3], "MENU.swf"))
+        vignettes = cc_title_vignettes(vm, host_loader(vm, "MENU_VIGNETTES.swf"));
+    if (getenv("CC_BOOT_LOADING") && !strcasecmp(argv[3], "MENU.swf")) {   // the Vita's loading screen after the intro
+        cc_native_root_functions(vm, &vm->root->obj);
+        cc_loading_reveal(vm);
+        cc_loading_hold = atoi(getenv("CC_BOOT_LOADING"));   // =N: held until tick N
+    }
+    W = SCREEN_W; H = SCREEN_H;
+    if (getenv("CC_SCALE") && atoi(getenv("CC_SCALE")) == 2) { W = MAX_W; H = MAX_H; }
     DrawList vb = {0};
     vb.view[2] = W;
     vb.view[3] = H;
@@ -573,9 +501,97 @@ static int as_mode(int argc, char **argv) {
     // CC_KEYS="frame:code[:hold],...": scripted key presses (codes from f_GetButtons; port 1:
     // accept 2, back 3, start 49, d-pad 37-40, punch1 65, punch2 87, jump 83, magic 69)
     const char *keys = getenv("CC_KEYS");
+    int covering = 0;   // CC_RESTART_COVER: the loading screen comes in before the restart, as on the Vita
     for (int f = 0; f < frames; f++) {
-        memset(cc_keys, 0, sizeof cc_keys);
-        for (const char *p = keys; p && *p;) {
+        if (cc_loading_hold > 1 && f >= cc_loading_hold) cc_loading_hold = 0;   // CC_BOOT_LOADING=N lets go
+        if (getenv("CC_RESTART_AT") && f == atoi(getenv("CC_RESTART_AT")) && getenv("CC_RESTART_COVER") && !covering)
+            covering = 1;
+        if (covering == 1 && cc_loading_cover(vm)) covering = 2;
+        if (getenv("CC_RESTART_AT") && (covering ? covering == 2 : f == atoi(getenv("CC_RESTART_AT")))) {   // the Vita's Exit to Main Menu
+            if (covering) printf("  [covered at %d]\n", f);
+            covering = covering ? 3 : 0;
+            as_free(vm);
+            Movie *first = start;
+            if (getenv("CC_RESTART_MENU")) {   // as the Vita does: every file but MAIN goes, then the title
+                int n = 0;
+                for (int i = 0; i < nmovie_cache; i++) {
+                    if (movie_cache[i].m == start) { movie_cache[n++] = movie_cache[i]; continue; }
+                    printf("  [free] %s\n", movie_cache[i].name);
+                    as_forget_movie(movie_cache[i].m);
+                    swf_free(movie_cache[i].m);
+                }
+                nmovie_cache = n;
+                first = host_loader(NULL, "MENU.swf");
+            }
+            vm = as_new(host_loader);
+            vm->warn = host_warn;
+            vm->trace = host_trace;
+            vm->sound_start = host_sound;
+            cc_host_init(vm);
+            as_render_init(vm);
+            vm->root = as_mc_new(vm, first, &first->root, NULL, 0);
+            if (first != start) {
+                cc_native_root_functions(vm, &vm->root->obj);
+                if (covering) cc_loading_reveal(vm);
+            } else if (!strcasecmp(argv[3], "MAIN.swf") && !getenv("CC_NO_LOADING")) cc_loading_attach(vm);
+            render_begin(&vb);
+            printf("  [restart at %d]\n", f);
+        }
+        if (net_mode) {   // this frame from everyone's buttons, once they're here
+            NetInput in = {0};
+            for (const char *p = getenv("CC_PAD"); p && *p;) {
+                int kf = 0, bit = 0, hold = 2;
+                int n = sscanf(p, "%d:%d:%d", &kf, &bit, &hold);
+                // frame kf: the frame the buttons are read on (used net.delay frames later)
+                if (n >= 2 && f >= kf && f < kf + (n == 3 ? hold : 2) && bit >= 0 && bit < CCB_COUNT) in.buttons |= 1u << bit;
+                p = strchr(p, ',');
+                if (p) p++;
+            }
+            static int file_wait;
+            const char *want = netplay_file_wanted();
+            if (want && ++file_wait > (getenv("CC_PREFETCH") ? atoi(getenv("CC_PREFETCH")) : 0)) {
+                netplay_file_ready();
+                file_wait = 0;
+            }
+            if (getenv("NET_JITTER")) usleep(rand() % (atoi(getenv("NET_JITTER")) * 1000 + 1));
+            // NET_FPS=30: frames at the Vita's pace (else as fast as they come), catching up as it does
+            static double next_us;
+            static int waits, last_delay = -1;
+            if (getenv("NET_FPS")) {
+                struct timespec ts;
+                clock_gettime(CLOCK_MONOTONIC, &ts);
+                double now = ts.tv_sec * 1e6 + ts.tv_nsec / 1e3, step = 1e6 / atoi(getenv("NET_FPS"));
+                if (net_catch_up()) next_us -= step;
+                if (next_us < now - 2 * step) next_us = now - 2 * step;
+                if (next_us > now) usleep((useconds_t)(next_us - now));
+                next_us += step;
+            }
+            if (net.delay != last_delay) { printf("net: frame %d, delay %d\n", f, net.delay); last_delay = net.delay; }
+            if (f > 0 && f % 300 == 0) { printf("net: frame %d, %d frames waited for so far\n", f, waits); fflush(stdout); }
+            int waited = 0;
+            while (!netplay_step(vm, f, &in, 0)) {
+                if (!waited) waits++;
+                net_poll();
+                // ~60 s, as long as a Vita waits (the host's slow file loads take ~15 s)
+                if (net.state != NET_PLAYING || ++waited > 120000) { printf("net: stopped at frame %d (%s)\n", f, net.error); return 1; }
+                if (waited % 4000 == 0) { printf("net: waiting at frame %d, %d s\n", f, waited / 2000); fflush(stdout); }
+                usleep(500);
+                want = netplay_file_wanted();
+                if (want && ++file_wait > (getenv("CC_PREFETCH") ? atoi(getenv("CC_PREFETCH")) : 0)) {
+                    netplay_file_ready();
+                    file_wait = 0;
+                }
+            }
+            net_poll();
+            if (getenv("NET_TEST_DESYNC") && f == atoi(getenv("NET_TEST_DESYNC"))) vm->rand_state ^= 1;   // to see it caught
+            if (f == frames - 1)
+                printf("net: last frame %d, check %04x, %s\n", f, netplay_check(vm),
+                       net_desync_tick ? "OUT OF STEP" : "in step all the way");
+            if (net_desync_tick && !getenv("NET_LOG")) { static int said; if (!said++) printf("net: out of step from frame %u\n", net_desync_tick); }
+            if (getenv("NET_LOG")) printf("  [net] frame %d check %04x%s\n", f, netplay_check(vm), net_desync_tick ? " DESYNC" : "");
+        }
+        if (!net_mode) memset(cc_keys, 0, sizeof cc_keys);
+        for (const char *p = net_mode ? NULL : keys; p && *p;) {
             int kf = 0, code = 0, hold = 2;
             int n = sscanf(p, "%d:%d:%d", &kf, &code, &hold);
             if (n >= 2 && f >= kf && f < kf + (n == 3 ? hold : 2) && code > 0 && code < 256) cc_keys[code] = 1;
@@ -615,10 +631,66 @@ static int as_mode(int argc, char **argv) {
                     av[nav++] = a[0] == '\'' ? as_strv(as_str(vm, a + 1))
                               : a[0] == '#' ? as_num(atof(a + 1)) : as_resolve_path(vm, vm->root, a, &found);
                 printf("  [call] %s (%d args) at frame %d%s\n", fn, nav, f, fv.t == V_OBJ ? "" : " - not a function");
-                if (fv.t == V_OBJ) as_call(vm, fv, as_objv(&vm->root->obj), nav, av);
+                // a.b.method: called on a.b (clip methods such as gotoAndStop need their clip)
+                AsVal self = as_objv(&vm->root->obj);
+                char *dot = strrchr(fn, '.');
+                if (dot) {
+                    *dot = 0;
+                    AsVal o = as_resolve_path(vm, vm->root, fn, &found);
+                    if (found && o.t == V_OBJ) self = o;
+                }
+                if (fv.t == V_OBJ) as_call(vm, fv, self, nav, av);
             }
             p = strchr(p, ',');
             if (p) p++;
+        }
+        // CC_AUTOKILL="from[:every]": from that frame, every N frames (default 20), p1 kills each
+        // active enemy (e_human1..30) with one big hit, so a level's waves can be played through
+        if (getenv("CC_AUTOKILL")) {
+            int from = 0, kev = 20;
+            sscanf(getenv("CC_AUTOKILL"), "%d:%d", &from, &kev);
+            int found;
+            AsVal dmg = as_resolve_path(vm, vm->root, "f_Damage", &found);
+            AsVal p1 = as_resolve_path(vm, vm->root, "loader.game.game.p1", &found);
+            int to = getenv("CC_AUTOKILL_TO") ? atoi(getenv("CC_AUTOKILL_TO")) : 1 << 30;   // and stop there
+            // CC_AUTOKILL_KIND=bee: e_bee1..30 instead
+            const char *kind = getenv("CC_AUTOKILL_KIND") ? getenv("CC_AUTOKILL_KIND") : "human";
+            if (f >= from && f < to && (f - from) % kev == 0 && dmg.t == V_OBJ && found) {
+                for (int i = 1; i <= 30; i++) {
+                    char path[64];
+                    snprintf(path, sizeof path, "loader.game.game.e_%s%d", kind, i);
+                    AsVal e = as_resolve_path(vm, vm->root, path, &found);
+                    if (!found || e.t != V_OBJ) continue;
+                    if (!as_tobool(vm, as_get(vm, e, as_str(vm, "active"))) || !as_tobool(vm, as_get(vm, e, as_str(vm, "alive"))) ||
+                        as_tonum(vm, as_get(vm, e, as_str(vm, "health"))) <= 0)
+                        continue;
+                    as_set(vm, e, as_atom(vm, "hitby"), p1);
+                    AsVal av[6] = {e, as_num(9999), as_num(1), as_num(0), as_num(5), as_num(-20)};
+                    as_call(vm, dmg, as_objv(&vm->root->obj), 6, av);
+                    printf("  [autokill] e_%s%d at frame %d\n", kind, i, f);
+                }
+            }
+        }
+        // CC_ENEMY_LOG=1: print an enemy (e_human1..30) whenever its active/alive/dead state changes
+        if (getenv("CC_ENEMY_LOG")) {
+            static int last[31];
+            for (int i = 1; i <= 30; i++) {
+                char path[64];
+                snprintf(path, sizeof path, "loader.game.game.e_human%d", i);
+                int found;
+                AsVal e = as_resolve_path(vm, vm->root, path, &found);
+                if (!found || e.t != V_OBJ) continue;
+                int st = 1 | as_tobool(vm, as_get(vm, e, as_str(vm, "active"))) << 1 |
+                         as_tobool(vm, as_get(vm, e, as_str(vm, "alive"))) << 2 |
+                         (as_tonum(vm, as_get(vm, e, as_str(vm, "health"))) <= 0) << 3;
+                if (st == last[i]) continue;
+                last[i] = st;
+                printf("  [enemy] frame %d e_human%d active %d alive %d health %s x %s y %s kills %s/%s\n", f, i,
+                       st >> 1 & 1, st >> 2 & 1, as_tostr(vm, as_get(vm, e, as_str(vm, "health")))->s,
+                       as_tostr(vm, as_get(vm, e, as_str(vm, "x")))->s, as_tostr(vm, as_get(vm, e, as_str(vm, "y")))->s,
+                       as_tostr(vm, as_resolve_path(vm, vm->root, "kills", &found))->s,
+                       as_tostr(vm, as_resolve_path(vm, vm->root, "kills_goal", &found))->s);
+            }
         }
         static int prof_from = -1;
         static double prof_ms, prof_max;
@@ -630,7 +702,15 @@ static int as_mode(int argc, char **argv) {
         extern double as_time_ms(void);
         double t0 = as_time_ms();
         long long ops0 = vm->ops;
-        as_tick(vm);
+        cc_volleyball_tick(vm);
+        if (cc_quaff_title(vm)) {   // as the Vita: Cross (accept) is the title's Start, Start isn't
+            for (int p = 0; p < 4; p++) {
+                static const uint8_t accept[4] = {2, 4, 6, 10}, start[4] = {49, 50, 51, 52};
+                cc_keys[start[p]] = cc_keys[accept[p]];
+            }
+        }
+        if (g_modes) cc_modemenu_tick(vm, g_modes);
+        if (covering != 1) as_tick(vm);
         double tg = as_time_ms();
         size_t heap0 = vm->heap_count;
         as_gc(vm);
@@ -669,6 +749,10 @@ static int as_mode(int argc, char **argv) {
                 AsVal v = as_resolve_path(vm, vm->root, t, &found);
                 printf(" %s", found ? as_tostr(vm, v)->s : "-");
             }
+            if (getenv("CC_HEAP")) {   // CC_HEAP=1: malloc'd KB and script objects, for leaks over a session
+                struct mallinfo2 mi = mallinfo2();
+                printf(" | heap %zu KB, %zu objects, %d files", mi.uordblks >> 10, (size_t)vm->heap_count, nmovie_cache);
+            }
             printf("\n");
         }
         if (prof_from >= 0) {
@@ -679,14 +763,57 @@ static int as_mode(int argc, char **argv) {
                 printf("ticks %d..%d: average %.2f ms (worst %.2f), %lld actions a tick\n", prof_from, f,
                        prof_ms / (f - prof_from + 1), prof_max, prof_ops / (f - prof_from + 1));
         }
-        if (f % every == 0 || f == frames - 1) {
+        if (cc_quit_requested) {   // QuitTo/ChangeMovie: the Vita goes back to the title here
+            printf("  [quit to the menu at %d]\n", f);
+            cc_quit_requested = 0;
+        }
+        // CC_SNAP_FROM=frame: no snapshots before that frame
+        if ((f % every == 0 && (!getenv("CC_SNAP_FROM") || f >= atoi(getenv("CC_SNAP_FROM")))) || f == frames - 1) {
+            static AsMc *panel;
             if (getenv("CC_MENU") && f == atoi(getenv("CC_MENU"))) {   // CC_MENU=frame: the Vita's title menu
-                static AsMc *panel;
                 if (!panel) {
                     cc_native_root_functions(vm, &vm->root->obj);
+                    cc_menu_wifi = getenv("CC_MENU_WIFI") != NULL;   // the co-op build's menu
                     panel = cc_menu_attach(vm, vm->root->movie->stage_w * 0.226f, vm->root->movie->stage_h * 0.635f);
                     if (panel) cc_menu_highlight(vm, panel, getenv("CC_MENU_ITEM") ? atoi(getenv("CC_MENU_ITEM")) : 0);
+                    if (panel && getenv("CC_MODE_ITEM")) {   // Local Game's mode menu, its hand on that item
+                        panel->visible = 0;
+                        AsMc *mm = g_modes = cc_modemenu_attach(vm, atof(getenv("CC_MODE_X")), atof(getenv("CC_MODE_Y")));
+                        if (mm && getenv("CC_MODE_SCALE")) {
+                            as_set(vm, as_objv(&mm->obj), as_atom(vm, "_xscale"), as_num(atof(getenv("CC_MODE_SCALE"))));
+                            as_set(vm, as_objv(&mm->obj), as_atom(vm, "_yscale"), as_num(atof(getenv("CC_MODE_SCALE"))));
+                            if (getenv("CC_MODE_DX")) {   // a closer look: moved by (dx, dy) stage px
+                                as_set(vm, as_objv(&mm->obj), as_atom(vm, "_x"), as_num(mm->m.tx / 20 + atof(getenv("CC_MODE_DX"))));
+                                as_set(vm, as_objv(&mm->obj), as_atom(vm, "_y"), as_num(mm->m.ty / 20 + atof(getenv("CC_MODE_DY"))));
+                            }
+                        }
+                        if (mm) cc_modemenu_point(vm, mm, 0, atoi(getenv("CC_MODE_ITEM")));
+                        for (const char *h = getenv("CC_MODE_HIDE"); mm && h && *h; h = strchr(h, ',') ? strchr(h, ',') + 1 : "")
+                            for (int i = 0; i < mm->ndisp; i++)   // CC_MODE_HIDE="depth,...": finding the book's art
+                                if (mm->disp[i].depth == atoi(h) - 16384) { mm->disp[i].m.a = mm->disp[i].m.d = mm->disp[i].m.b = mm->disp[i].m.c = 0; if (mm->disp[i].mc) mm->disp[i].mc->visible = 0; }
+                    }
                 }
+            }
+            if (getenv("AS_HIDE_SHAPES")) {   // AS_HIDE_SHAPES="cid,cid": hide shapes placed on timelines
+                void hide_shapes(AsMc *mc) {
+                    for (int i = 0; i < mc->ndisp; i++) {
+                        AsDisp *e = &mc->disp[i];
+                        char list[256], key[16];
+                        snprintf(list, sizeof list, ",%s,", getenv("AS_HIDE_SHAPES"));
+                        snprintf(key, sizeof key, ",%d,", e->cid);
+                        if (e->kind == DISP_SHAPE && strstr(list, key)) e->m.a = e->m.b = e->m.c = e->m.d = 0;
+                        if (e->kind == DISP_MC && e->mc) hide_shapes(e->mc);
+                    }
+                }
+                hide_shapes(vm->root);
+            }
+            if (getenv("AS_HIDE_CLIPS")) {   // AS_HIDE_CLIPS=1: hide every clip, so only shapes show
+                for (int i = 0; i < vm->root->ndisp; i++)
+                    if (vm->root->disp[i].kind == DISP_MC && vm->root->disp[i].mc) {
+                        AsMc *mc = vm->root->disp[i].mc;
+                        for (int j = 0; j < mc->ndisp; j++)
+                            if (mc->disp[j].kind == DISP_MC && mc->disp[j].mc) mc->disp[j].mc->visible = 0;
+                    }
             }
             if (getenv("AS_HIDE_CHAR")) {   // AS_HIDE_CHAR=n: hide every clip of sprite n (finding art)
                 int cid = atoi(getenv("AS_HIDE_CHAR"));
@@ -699,6 +826,13 @@ static int as_mode(int argc, char **argv) {
                 }
                 hide(vm->root);
             }
+            if (getenv("CC_VIEW")) {   // CC_VIEW="x,y": snapshots with the level scrolled to put x,y top left
+                float vx = 0, vy = 0;
+                sscanf(getenv("CC_VIEW"), "%f,%f", &vx, &vy);
+                int found;
+                AsVal v = as_resolve_path(vm, vm->root, "loader.game.game", &found);
+                if (v.t == V_OBJ && v.o->type == OBJ_MC) { ((AsMc *)v.o)->m.tx = -vx * 20; ((AsMc *)v.o)->m.ty = -vy * 20; }
+            }
             if (getenv("AS_HIDE")) {   // AS_HIDE="path,path": hide clips in the snapshots (finding what draws what)
                 char buf[1024];
                 snprintf(buf, sizeof buf, "%s", getenv("AS_HIDE"));
@@ -708,13 +842,81 @@ static int as_mode(int argc, char **argv) {
                     if (v.t == V_OBJ && v.o->type == OBJ_MC) ((AsMc *)v.o)->visible = 0;
                 }
             }
-            clear(start->bg);
+            if (vignettes) cc_title_hide_backdrop(vm->root);
+            uint8_t bgc[3] = {start->bg[0], start->bg[1], start->bg[2]};
+            if (getenv("CC_BG")) sscanf(getenv("CC_BG"), "%hhu,%hhu,%hhu", &bgc[0], &bgc[1], &bgc[2]);   // "r,g,b"
+            clear(bgc);
             render_begin(&vb);
             as_render_mc(vm->root, screen, CX_IDENTITY, &vb);
+            if (getenv("CC_SAVING")) pause_menu_saving(W / 848.0f, 1, &vb);   // the Vita's "Saving..." note
+            if (getenv("CC_NAMETAGS")) {   // the HUD's names, as the Vita fills them in
+                netplay_hud_names(vm);
+                render_begin(&vb);
+                as_render_mc(vm->root, screen, CX_IDENTITY, &vb);
+            }
+            if (getenv("CC_TITLE_PROMPT")) {   // CC_TITLE_PROMPT=text: the title's Press START, as the Vita draws it
+                float u = W / 960.0f;
+                Mat id = {u, 0, 0, u, 0, 0};
+                CXform black = {{0, 0, 0, 1}, {0, 0, 0, 0}};
+                for (int dx = -2; dx <= 2; dx += 2)
+                    for (int dy = -2; dy <= 2; dy += 2)
+                        if (dx || dy) as_render_host_text(getenv("CC_TITLE_PROMPT"), 172 + dx, 443 + dy, 1.5f, 1.5f, 2, id, black, &vb);
+                as_render_host_text(getenv("CC_TITLE_PROMPT"), 172, 443, 1.5f, 1.5f, 2, id, CX_IDENTITY, &vb);
+            }
             if (vb.heat_at >= 0)   // the Vita draws a heat shimmer behind this
                 printf("  [heat] items 0..%d shimmer in %.0f,%.0f - %.0f,%.0f\n", vb.heat_at, vb.heat[0], vb.heat[1],
                        vb.heat[2], vb.heat[3]);
             rasterise(&vb);
+            if (panel) {   // the title's power button, drawn over the frame as the Vita does
+                static CcVert t[4096];
+                int n = cc_menu_power_button(panel, screen, t, 4096);
+                for (int i = 0; i + 2 < n; i += 3) {
+                    const CcVert *a = &t[i], *b = &t[i + 1], *c = &t[i + 2];
+                    float area = (b->x - a->x) * (c->y - a->y) - (b->y - a->y) * (c->x - a->x);
+                    if (area == 0) continue;
+                    int x0 = (int)fminf(a->x, fminf(b->x, c->x)), x1 = (int)fmaxf(a->x, fmaxf(b->x, c->x)) + 1;
+                    int y0 = (int)fminf(a->y, fminf(b->y, c->y)), y1 = (int)fmaxf(a->y, fmaxf(b->y, c->y)) + 1;
+                    for (int y = y0 < 0 ? 0 : y0; y < y1 && y < H; y++)
+                        for (int x = x0 < 0 ? 0 : x0; x < x1 && x < W; x++) {
+                            float px_ = x + 0.5f, py_ = y + 0.5f;
+                            float w0 = ((b->x - px_) * (c->y - py_) - (b->y - py_) * (c->x - px_)) / area;
+                            float w1 = ((c->x - px_) * (a->y - py_) - (c->y - py_) * (a->x - px_)) / area;
+                            if (w0 < 0 || w1 < 0 || w0 + w1 > 1) continue;
+                            uint8_t *d = px + (y * W + x) * 3;
+                            for (int k = 0; k < 3; k++) d[k] = (a->rgba[k] * a->rgba[3] + d[k] * (255 - a->rgba[3])) / 255;
+                        }
+                }
+                Mat hm;
+                AsMc *hl = cc_menu_highlight_clip(panel, &hm);   // the chosen button's frame, over all that
+                if (hl) {
+                    DrawList hvb = {0};
+                    render_begin(&hvb);
+                    hvb.view[2] = W;
+                    hvb.view[3] = H;
+                    hl->visible = 1;
+                    as_render_mc(hl, mat_mul(screen, mat_mul(vm->root->m, mat_mul(panel->m, hm))), CX_IDENTITY, &hvb);
+                    hl->visible = 0;
+                    rasterise(&hvb);
+                }
+                AsMc *fresh = cc_menu_fresh(vm, panel, cc_fresh());   // CC_FRESH=1: the FRESH sticker, over that
+                if (fresh) {
+                    DrawList fvb = {0};
+                    render_begin(&fvb);
+                    fvb.view[2] = W;
+                    fvb.view[3] = H;
+                    fresh->visible = 1;
+                    as_render_mc(fresh, mat_mul(screen, mat_mul(vm->root->m, panel->m)), CX_IDENTITY, &fvb);
+                    fresh->visible = 0;
+                    rasterise(&fvb);
+                }
+                Mat bm;   // the BETA sticker on Multiplayer, over everything
+                if (cc_menu_beta_sticker() && cc_menu_beta_place(panel, screen, &bm)) {
+                    DrawList svb = {0};
+                    render_begin(&svb);
+                    render_shape(cc_menu_beta_sticker(), bm, CX_IDENTITY, &svb);
+                    rasterise(&svb);
+                }
+            }
             write_frame(argv[4], shot++);
             printf("tick %d: %.1f ms, %lld actions, heap %zu objects, root frame %d\n", f, ms, vm->ops - ops0,
                    vm->heap_count, vm->root->frame + 1);
@@ -737,6 +939,8 @@ static int as_mode(int argc, char **argv) {
         AsVal v = as_resolve_path(vm, vm->root, getenv("AS_DUMP"), &found);
         if (v.t == V_OBJ) {
             AsProps *ps = &v.o->props;
+            for (int i = 0; i < v.o->nitems; i++)   // an array's items
+                printf("  .%d = %s\n", i, as_tostr(vm, v.o->items[i])->s);
             for (int i = 0; i < ps->cap; i++) {
                 AsProp *p = &ps->slots[i];
                 if (!p->key || p->key == (AsStr *)1) continue;
@@ -753,11 +957,15 @@ static int as_mode(int argc, char **argv) {
         void dump(AsMc *mc, int d) {
             for (int i = 0; i < mc->ndisp; i++) {
                 AsDisp *e = &mc->disp[i];
-                if (e->kind == DISP_SHAPE) continue;
+                if (e->kind == DISP_SHAPE) {   // AS_TREE_SHAPES: list shapes too
+                    if (getenv("AS_TREE_SHAPES"))
+                        printf("%*sshape [cid %d depth %d] x %.0f y %.0f\n", d * 2, "", e->cid, e->depth, e->m.tx / 20, e->m.ty / 20);
+                    continue;
+                }
                 AsMc *c = e->mc;
                 if (!c) continue;
-                printf("%*s%s [depth %d%s] frame %d/%d x %.0f y %.0f%s%s%s\n", d * 2, "",
-                       c->name ? c->name->s : "(unnamed)", e->depth, c->text ? " text" : "", c->frame + 1,
+                printf("%*s%s [cid %d depth %d%s] frame %d/%d x %.0f y %.0f%s%s%s\n", d * 2, "",
+                       c->name ? c->name->s : "(unnamed)", e->cid, e->depth, c->text ? " text" : "", c->frame + 1,
                        c->def ? c->def->nframes : 0, c->m.tx / 20, c->m.ty / 20, c->visible ? "" : " hidden",
                        c->alpha < 100 ? " translucent" : "", c->events_len ? " events" : "");
                 if (d < maxd) dump(c, d + 1);
@@ -792,13 +1000,212 @@ static int as_mode(int argc, char **argv) {
     return 0;
 }
 
+// The pause menu's pages: --pause PAUSE.swf out_prefix [backdrop.ppm 960x544]
+static int pause_mode(int argc, char **argv) {
+    if (argc < 4) { fprintf(stderr, "usage: %s --pause PAUSE.swf out_prefix [backdrop.ppm]\n", argv[0]); return 1; }
+    char err[256];
+    Movie *m = swf_load(argv[2], err, sizeof err);
+    if (!m) { fprintf(stderr, "%s\n", err); return 1; }
+    cc_buttons_playstation(m, CC_BTN_STYLE_GREY);
+    if (getenv("CC_FONT_DIR")) {
+        char fnt[600], dds[600];
+        snprintf(fnt, sizeof fnt, "%s/synjUnicode_20.fnt", getenv("CC_FONT_DIR"));
+        snprintf(dds, sizeof dds, "%s/synjUnicode_20_0.dds", getenv("CC_FONT_DIR"));
+        HostFont *hf = hostfont_load(fnt, dds, err, sizeof err);
+        if (hf) as_render_set_font(hf);
+        else printf("font: %s\n", err);
+    }
+    W = 960; H = 544;
+    static uint8_t back[960 * 544 * 3];
+    FILE *bf = argc > 4 ? fopen(argv[4], "rb") : NULL;
+    int have_back = 0;
+    if (bf) {
+        int w, h;
+        if (fscanf(bf, "P6 %d %d 255", &w, &h) == 2 && w == 960 && h == 544 && fgetc(bf) != EOF)
+            have_back = fread(back, 1, sizeof back, bf) == sizeof back;
+        fclose(bf);
+    }
+    PauseMenu pm = {0};
+    pause_menu_open(&pm, getenv("CC_PAUSE_MAP") != NULL);
+    // each step: buttons, then seconds to let pass before the picture
+    static const struct { unsigned b; float wait; const char *what; } steps[] = {
+        {0, 0.5f, "main"}, {PM_DOWN, 0.1f, "main, Help & Options chosen"}, {PM_DOWN, 0.05f, NULL},
+        {PM_ACCEPT, 0.08f, "Information flashing"}, {0, 0.6f, "information"}, {PM_BACK, 0.6f, "main again"},
+        {PM_DOWN, 0.05f, NULL}, {PM_ACCEPT, 0.7f, "exit to map: are you sure"}, {PM_BACK, 0.6f, NULL},
+        {PM_DOWN, 0.05f, NULL}, {PM_ACCEPT, 0.7f, "exit to main menu: are you sure"},
+        {PM_DOWN, 0.1f, "Yes chosen"},
+    };
+    DrawList vb = {0};
+    for (size_t i = 0; i < sizeof steps / sizeof *steps; i++) {
+        int sound, r = pause_menu_update(&pm, steps[i].b, 1 / 60.0f, &sound);
+        for (float t = 0; t < steps[i].wait; t += 1 / 60.0f) r = pause_menu_update(&pm, 0, 1 / 60.0f, &sound);
+        if (r != PM_OPEN) printf("step %zu: closes with %d\n", i, r);
+        if (!steps[i].what) continue;
+        if (have_back) memcpy(px, back, sizeof back), memset(stencil, 0, (size_t)W * H);
+        else clear((const uint8_t[3]){90, 130, 70});
+        render_begin(&vb);
+        vb.view[2] = W;
+        vb.view[3] = H;
+        pause_menu_build(&pm, m, W / 848.0f, &vb);
+        rasterise(&vb);
+        printf("%zu: %s (page %d, line %d)\n", i, steps[i].what, pm.page, pm.sel);
+        write_frame(argv[3], (int)i);
+    }
+    return 0;
+}
+
+// Help & Options' books: --help PAUSE.swf out_prefix [backdrop.ppm 960x544]; CC_STRINGS for the words
+static int help_mode(int argc, char **argv) {
+    if (argc < 4) { fprintf(stderr, "usage: %s --help PAUSE.swf out_prefix [backdrop.ppm]\n", argv[0]); return 1; }
+    char err[256];
+    Movie *m = swf_load(argv[2], err, sizeof err);
+    if (!m) { fprintf(stderr, "%s\n", err); return 1; }
+    cc_buttons_playstation(m, CC_BTN_STYLE_GREY);
+    if (getenv("CC_FONT_DIR")) {
+        char fnt[600], dds[600];
+        snprintf(fnt, sizeof fnt, "%s/synjUnicode_20.fnt", getenv("CC_FONT_DIR"));
+        snprintf(dds, sizeof dds, "%s/synjUnicode_20_0.dds", getenv("CC_FONT_DIR"));
+        HostFont *hf = hostfont_load(fnt, dds, err, sizeof err);
+        if (hf) as_render_set_font(hf);
+        else printf("font: %s\n", err);
+    }
+    if (getenv("CC_STRINGS")) printf("strings: %d\n", strtab_load(getenv("CC_STRINGS")));
+    if (getenv("CC_FRESHLOGO")) {   // CC_FRESHLOGO=FRESHLOGO.swf: its sticker on Settings' FRESH row
+        help_book_fresh_logo = swf_load(getenv("CC_FRESHLOGO"), err, sizeof err);
+        if (help_book_fresh_logo) render_tessellate_all(help_book_fresh_logo);
+        else printf("FRESHLOGO: %s\n", err);
+    }
+    W = 960; H = 544;
+    static uint8_t back[960 * 544 * 3];
+    FILE *bf = argc > 4 ? fopen(argv[4], "rb") : NULL;
+    int have_back = 0;
+    if (bf) {
+        int w, h;
+        if (fscanf(bf, "P6 %d %d 255", &w, &h) == 2 && w == 960 && h == 544 && fgetc(bf) != EOF)
+            have_back = fread(back, 1, sizeof back, bf) == sizeof back;
+        fclose(bf);
+    }
+    DrawList vb = {0};
+    int shot = 0;
+    {   // the list itself (as the title's Help & Options shows it), Settings chosen
+        PauseMenu pm = {0};
+        int sound;
+        pause_menu_open_help(&pm);
+        pause_menu_update(&pm, PM_DOWN, 1 / 60.0f, &sound);
+        pause_menu_update(&pm, PM_DOWN, 1 / 60.0f, &sound);
+        for (int t = 0; t < 40; t++) pause_menu_update(&pm, 0, 1 / 60.0f, &sound);
+        if (have_back) memcpy(px, back, sizeof back), memset(stencil, 0, (size_t)W * H);
+        else clear((const uint8_t[3]){40, 44, 52});
+        render_begin(&vb);
+        vb.view[2] = W;
+        vb.view[3] = H;
+        pause_menu_build(&pm, m, W / 848.0f, &vb);
+        rasterise(&vb);
+        printf("%d: Help & Options list\n", shot);
+        write_frame(argv[3], shot++);
+    }
+    for (int book = 0; book < 4; book++) {
+        HelpBook hb;
+        help_book_open(&hb, book, 7, 10, 1, getenv("HB_NO_FRESH") ? -1 : 1);
+        if (book == HB_SETTINGS && getenv("HB_ROW")) hb.row = atoi(getenv("HB_ROW"));
+        if (getenv("HB_HUD")) hb.hud_size = atoi(getenv("HB_HUD"));
+        hb.achieved = 1 << 2 | 1 << 4 | 1 << 7 | 1 << 11;
+        int pages = book == HB_HOWTO ? HB_HOWTO_PAGES : book == HB_CONTROLS || book == HB_SETTINGS ? 2 : 1;
+        for (int pg = 0; pg < pages; pg++) {
+            int sound;
+            if (book == HB_SETTINGS && pg == 1) {   // Item Switch chosen, on front touch
+                unsigned keys[] = {HB_UP, HB_RIGHT};
+                for (int i = 0; i < 2; i++) help_book_update(&hb, keys[i], 1 / 60.0f, &sound);
+            }
+            if (book == HB_CONTROLS && pg == 1) {   // Square chosen, and Jump moved onto it
+                unsigned keys[] = {HB_DOWN, HB_DOWN, HB_DOWN, HB_RIGHT, HB_RIGHT};
+                for (int i = 0; i < 5; i++) help_book_update(&hb, keys[i], 1 / 60.0f, &sound);
+            }
+            for (int t = 0; t < 40; t++) help_book_update(&hb, 0, 1 / 60.0f, &sound);
+            if (have_back) memcpy(px, back, sizeof back), memset(stencil, 0, (size_t)W * H);
+            else clear((const uint8_t[3]){40, 44, 52});
+            render_begin(&vb);
+            vb.view[2] = W;
+            vb.view[3] = H;
+            help_book_build(&hb, m, W / 848.0f, &vb);
+            rasterise(&vb);
+            printf("%d: book %d page %d%s\n", shot, book, hb.page, cc_bind_is_default() ? "" : " (buttons moved)");
+            write_frame(argv[3], shot++);
+            if (book == HB_HOWTO && pg + 1 < pages) {   // a picture mid-turn on the first turn
+                help_book_update(&hb, HB_NEXT, 1 / 60.0f, &sound);
+                if (pg == 0) {
+                    for (int t = 0; t < 10; t++) help_book_update(&hb, 0, 1 / 60.0f, &sound);
+                    if (have_back) memcpy(px, back, sizeof back), memset(stencil, 0, (size_t)W * H);
+                    else clear((const uint8_t[3]){40, 44, 52});
+                    render_begin(&vb);
+                    vb.view[2] = W;
+                    vb.view[3] = H;
+                    help_book_build(&hb, m, W / 848.0f, &vb);
+                    rasterise(&vb);
+                    printf("%d: turning\n", shot);
+                    write_frame(argv[3], shot++);
+                }
+            }
+        }
+    }
+    {   // the Wi-Fi lobby's pages (as main.c builds them)
+        static const char *menu[] = {"Host a Game", "Host a Public Game", "Join on this Wi-Fi", "Join by Game Code", "Public Games"};
+        HbPage pages[6] = {{0}};
+        pages[0] = (HbPage){.title = "Multiplayer", .nlines = 5, .chosen = 4, .code_chosen = -1,
+                            .note = "Games anyone can join, from all over.",
+                            .accept = "Select", .back = "Back"};
+        for (int i = 0; i < 5; i++) pages[0].line[i] = menu[i];
+        pages[1] = (HbPage){.title = "Your Game", .nlines = 4, .chosen = -1, .code = "A88M-AS9",
+                            .code_chosen = -1, .code_line = 4, .note = "Game code: friends over the internet join with it",
+                            .accept = "Play", .back = "Close"};
+        pages[1].line[0] = "1   Jah  (you)";
+        pages[1].line[1] = "2   PC";
+        pages[1].line[2] = "3   waiting...";
+        pages[1].line[3] = "4   waiting...";
+        pages[2] = (HbPage){.title = "Join by Game Code", .chosen = -1, .code = "A88M-A  ", .code_chosen = -1,
+                            .code_line = 1, .note = "Type in the game code the host's Multiplayer page shows",
+                            .accept = "Type Code", .back = "Back"};
+        pages[3] = (HbPage){.title = "Join on this Wi-Fi", .nlines = 2, .chosen = 1, .code_chosen = -1, .accept = "Join",
+                            .back = "Back"};
+        pages[3].line[0] = "Jah   1/4";
+        pages[3].line[1] = "Friend   2/4";
+        pages[4] = (HbPage){.title = "Public Games", .nlines = 3, .chosen = 0, .code_chosen = -1, .accept = "Join",
+                            .back = "Back"};
+        pages[4].line[0] = "Jah   1/4";
+        pages[4].line[1] = "KnightFan99   3/4";
+        pages[4].line[2] = "PS Vita   2/4";
+        pages[5] = (HbPage){.title = "Your Public Game", .nlines = 4, .chosen = -1, .code = "A88M-AS9",
+                            .code_chosen = -1, .code_line = 4, .note = "In the Public Games list: anyone can join",
+                            .accept = "Play", .back = "Close"};
+        pages[5].line[0] = "1   Jah  (you)";
+        pages[5].line[1] = "2   waiting...";
+        pages[5].line[2] = "3   waiting...";
+        pages[5].line[3] = "4   waiting...";
+        for (int i = 0; i < 6; i++) {
+            pages[i].alpha = 1;
+            pages[i].time = 0.4f;
+            if (i == 3) { pages[i].turn = HB_TURN_SECONDS * 0.4f; pages[i].turn_dir = 1; }   // mid-turn
+            if (have_back) memcpy(px, back, sizeof back), memset(stencil, 0, (size_t)W * H);
+            else clear((const uint8_t[3]){40, 44, 52});
+            render_begin(&vb);
+            vb.view[2] = W;
+            vb.view[3] = H;
+            help_book_build_page(&pages[i], m, W / 848.0f, &vb);
+            rasterise(&vb);
+            printf("%d: lobby page %d\n", shot, i);
+            write_frame(argv[3], shot++);
+        }
+    }
+    return 0;
+}
+
 int main(int argc, char **argv) {
+    if (getenv("CC_TEXT_SCALE")) pause_menu_text_scale = atof(getenv("CC_TEXT_SCALE"));   // Settings' Menu Text Size
+    if (argc > 1 && !strcmp(argv[1], "--help")) return help_mode(argc, argv);
     if (argc > 1 && !strcmp(argv[1], "--as")) return as_mode(argc, argv);
-    if (argc > 1 && !strcmp(argv[1], "--dress")) return dress_mode(argc, argv);
     if (argc > 1 && !strcmp(argv[1], "--sprite")) return sprite_mode(argc, argv);
     if (argc > 1 && !strcmp(argv[1], "--clips")) return clips_mode(argc, argv);
-    if (argc > 1 && !strcmp(argv[1], "--level")) return level_mode(argc, argv);
-    if (argc > 1 && !strcmp(argv[1], "--player")) return player_mode(argc, argv);
+    if (argc > 1 && !strcmp(argv[1], "--pause")) return pause_mode(argc, argv);
     if (argc < 4) { fprintf(stderr, "usage: %s file.swf label out_prefix [frames]\n", argv[0]); return 1; }
     int frames = argc > 4 ? atoi(argv[4]) : 4;
     char err[256];

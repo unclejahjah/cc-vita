@@ -1,5 +1,5 @@
 // Minimal SWF reader for Castle Crashers' decompiled assets.
-// C port of code/swfproto/swf.py. Reads game files at runtime; ships no data.
+// Reads game files at runtime; ships no data.
 #ifndef CC_SWF_H
 #define CC_SWF_H
 
@@ -172,6 +172,8 @@ typedef struct {
     Character chars[65536];
     Sprite root;
     int truncated;             // file shorter than its header says
+    int is_level;              // came from the levels folder (the loader sets it)
+    int is_player;             // PLAYER.swf (custom characters paint its part clips)
     uint8_t bg[3];             // SetBackgroundColor
     int nnames;                // instance names; names[0] is ""
     char **names;
@@ -182,10 +184,12 @@ typedef struct {
 } Movie;
 
 Movie *swf_load(const char *path, char *err, int errlen);
+// called for each bitmap as soon as it is decoded, so the platform can take the pixels
+// (and free rgba) before the next one: big files then never hold all their pixels at once
+extern void (*swf_bitmap_loaded)(Bitmap *bm);
 void swf_free(Movie *m);
 int sprite_frame_at(const Sprite *s, int tick);
 int sprite_find_label(const Sprite *s, const char *name);
-const Place *frame_find_name(const Movie *m, const Frame *f, const char *name);
 
 Mat mat_mul(Mat m, Mat n);      // apply n first, then m
 CXform cx_mul(CXform outer, CXform inner);

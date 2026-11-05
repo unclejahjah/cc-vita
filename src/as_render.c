@@ -1,7 +1,12 @@
 // Drawing and measuring the ActionScript runtime's live clip tree.
 #include "as_render.h"
 #include "hostfont.h"
+#include "custom_char.h"
+#include "custom_animal.h"
+#include "paint_jr.h"
+#include "weapon_look.h"
 
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -16,11 +21,13 @@ static CXform cx_with_alpha(CXform cx, float alpha) {
 // ---- text fields --------------------------------------------------------------------
 
 static AsVm *g_vm;
-static AsStr *A_text;
+static AsStr *A_text, *A_p_type, *A_player_pt;
 
 void as_render_init(AsVm *vm) {
     g_vm = vm;
     A_text = as_atom(vm, "text");
+    A_p_type = as_atom(vm, "p_type");
+    A_player_pt = as_atom(vm, "player_pt");
 }
 
 // What a field shows: its variable (a path from the clip it's on) or its "text".
@@ -127,6 +134,51 @@ static void draw_line(const TextFont *t, const char *s, const char *end, float x
     }
 }
 
+// A line of the executable's own menu text, as castle.exe draws it: (x, y) in stage pixels
+// through m, y the middle of the lines; align 0 ends at x, 1 starts there, 2 centres;
+// sx/sy scale the font pixels. cx colours the white glyphs. The executable's sizes are for
+// the 20 pixel font (synjUnicode_20); newer copies of the game ship it drawn at 60, so its
+// pixels are scaled to 20.
+static float host_unit(void) { return g_host_font->size > 0 ? 20.0f / g_host_font->size : 1; }
+
+void as_render_host_text(const char *s, float x, float y, float sx, float sy, int align, Mat m, CXform cx,
+                         DrawList *out) {
+    if (!g_host_font || !s || !*s) return;
+    sx *= host_unit();
+    sy *= host_unit();
+    TextFont t = {g_host_font, NULL, 1};
+    int lines = 1;
+    for (const char *p = s; *p; p++) lines += *p == '\n';
+    float top = y + roundf((g_host_font->line_height + 1) * lines * -0.5f) * sy;
+    while (*s) {
+        const char *e = s;
+        while (*e && *e != '\n') e++;
+        float w = line_width(&t, s, e) * sx;
+        float lx = align == 0 ? x - w : align == 2 ? x - roundf(w / sx * 0.5f) * sx : x;
+        Mat lm = mat_mul(m, (Mat){sx, 0, 0, sy, lx, top});
+        draw_line(&t, s, e, 0, 0, 0, lm, cx, out);
+        top += g_host_font->line_height * sy;
+        s = *e ? e + 1 : e;
+    }
+}
+
+void as_render_host_text_outlined(const char *s, float x, float y, float sx, float sy, int align, float o, Mat m,
+                                  CXform cx, DrawList *out) {
+    CXform black = {{0, 0, 0, cx.mul[3]}, {0, 0, 0, 0}};
+    for (int dx = -1; dx <= 1; dx++)
+        for (int dy = -1; dy <= 1; dy++)
+            if (dx || dy) as_render_host_text(s, x + dx * o, y + dy * o, sx, sy, align, m, black, out);
+    as_render_host_text(s, x, y, sx, sy, align, m, cx, out);
+}
+
+float as_render_host_text_width(const char *s) {
+    if (!g_host_font || !s) return 0;
+    TextFont t = {g_host_font, NULL, 1};
+    return line_width(&t, s, s + strlen(s)) * host_unit();
+}
+
+float as_render_host_line_height(void) { return g_host_font ? g_host_font->line_height * host_unit() : 0; }
+
 static void draw_text(AsMc *tf, Mat m, CXform cx, DrawList *out) {
     const EditText *et = tf->text;
     const Character *fc = &tf->movie->chars[et->font];
@@ -189,11 +241,140 @@ static void draw_text(AsMc *tf, Mat m, CXform cx, DrawList *out) {
     }
 }
 
+extern Mat as_mc_global_matrix(AsMc *mc);
+
+static Mat mat_inverse(Mat s) {
+    float det = s.a * s.d - s.b * s.c;
+    if (!det) return MAT_IDENTITY;
+    return (Mat){s.d / det, -s.b / det, -s.c / det, s.a / det, (s.c * s.ty - s.d * s.tx) / det,
+                 (s.b * s.tx - s.a * s.ty) / det};
+}
+
+static int named(const AsMc *mc, const char *name) { return mc && mc->name && !strcmp(mc->name->s, name); }
+
+// What a custom character (custom_char.h) paints over: PLAYER.swf's part clips on its player
+// (the part's nearest ancestor with a p_type: f_GetPlayerClip looks up to 7 levels), the HUD's
+// face (hudN.pic.pic, on hudN.player_pt) and its character select portrait (portrait_mid/top/bot
+// on frame p_type + 3).
+static int p_type_of(AsMc *mc) {
+    AsProp *pt = mc ? as_own(&mc->obj, A_p_type) : NULL;
+    return pt && pt->v.t == V_NUM ? (int)pt->v.n : 0;
+}
+
+static const BitmapFill *custom_part(AsMc *mc) {
+    if (!cc_custom_count() || !mc->def || !A_p_type) return NULL;
+    // the portrait goes to frame p_type + 3: past its last frame for most custom characters, so
+    // the frame asked for is what tells
+    if (mc->name && !strncmp(mc->name->s, "portrait_", 9))
+        return cc_custom_named(CC_PORTRAIT, (mc->frame == mc->goto_got ? mc->goto_want : mc->frame) - 2);
+    if (named(mc, "pic") && named(mc->parent, "pic") && mc->parent->parent) {
+        AsProp *pp = as_own(&mc->parent->parent->obj, A_player_pt);
+        AsVal v = pp ? pp->v : (AsVal){0};
+        if (v.t == V_OBJ && v.o->type == OBJ_MC) return cc_custom_named(CC_ICON, p_type_of((AsMc *)v.o));
+        return NULL;
+    }
+    if (!mc->movie->is_player) return NULL;
+    AsMc *p = mc->parent;
+    for (int i = 0; p && i < 8; i++, p = p->parent) {
+        int t = p_type_of(p);
+        if (t) return cc_custom_part(mc->movie, mc->def, mc->frame, t);
+    }
+    return NULL;
+}
+
+// The players' corners on _root (hud1..hud4: face, health, magic, XP, gold), out at the
+// screen's edges: the game spreads them over a 1280 screen's safe area, which leaves wide
+// borders on the Vita. Each is drawn at Settings' HUD Size, its top HUD_EDGE from the top,
+// hud1's left HUD_EDGE from the left, hud4's right HUD_EDGE from the right, and the two
+// between them evenly in the gaps (so even Extra Large's four don't overlap).
+float as_render_hud_scale = 1;
+#define HUD_EDGE 8.0f   // stage pixels
+
+static Mat hud_placed(AsMc *mc, Mat parent, Mat m) {
+    const char *n = mc->name ? mc->name->s : "";
+    if (strncmp(n, "hud", 3) || n[3] < '1' || n[3] > '4' || n[4]) return m;
+    // its box from its own point, measured again only when its frame changes (what it shows
+    // moves as it plays: a steady box keeps it from wobbling)
+    static AsMc *seen[4];
+    static int seen_frame[4];
+    static float box[4][4];
+    int i = n[3] - '1';
+    if (seen[i] != mc || seen_frame[i] != mc->frame) {
+        Mat at = {mc->m.a, mc->m.b, mc->m.c, mc->m.d, 0, 0};
+        float b[4];
+        render_mc_bounds(mc, at, b);   // twips, from its point
+        if (b[2] <= b[0]) return m;
+        seen[i] = mc;
+        seen_frame[i] = mc->frame;
+        memcpy(box[i], b, sizeof b);
+    }
+    float s = as_render_hud_scale, e = HUD_EDGE * 20, w = (box[i][2] - box[i][0]) * s;
+    float left = e + i * (848 * 20 - 2 * e - w) / 3;   // where its box's left goes
+    // the box's top-left (stage twips) is at mc->m.t + box; scaled about it, then moved
+    float ax = mc->m.tx + box[i][0], ay = mc->m.ty + box[i][1];
+    Mat z = {s, 0, 0, s, ax * (1 - s) + left - ax, ay * (1 - s) + e - ay};
+    return mat_mul(parent, mat_mul(z, mc->m));
+}
+
 void as_render_mc(AsMc *mc, Mat parent, CXform pcx, DrawList *out) {
     if (mc->removed || !mc->visible) return;
+    if (mc->is_mask && !out->masking) return;   // a setMask mask only draws as its clip's mask
     Mat m = mat_mul(parent, mc->m);
+    if (mc->parent && !mc->parent->parent) m = hud_placed(mc, parent, m);
     CXform cx = cx_mul(pcx, cx_with_alpha(mc->cx, mc->alpha));
     if (cx.mul[3] <= 0 && cx.add[3] <= 0 && !out->masking) return;
+    // select portraits (paint_jr.h): Paint Jr.'s (his slot's frame is empty), and everyone's newer
+    // ones with the FRESH look
+    if (mc->def && mc->name && !strncmp(mc->name->s, "portrait_", 9)) {
+        int f = cc_portrait_frame(mc->frame, mc->def->nframes);
+        if (f >= 0) {
+            render_display_list((Movie *)mc->movie, &mc->def->frames[f], m, cx, 0, out);
+            return;
+        }
+    }
+    const BitmapFill *look = cc_look_custom_part(mc);   // a weapon look of the painting's weapon
+    if (look) {
+        render_bitmap_fill(look, m, cx, out);
+        return;
+    }
+    Mat at;
+    const BitmapFill *spot = cc_look_custom_spot(mc, &at);   // the armoury's spot for it
+    if (spot) render_bitmap_fill(spot, mat_mul(m, at), cx, out);
+    if (mc->def && cc_paintjr_is_part(mc->movie, mc->def)) {   // Paint Jr., the FRESH look (paint_jr.h)
+        int t = 0;   // the player it's on (the nearest p_type up to 8 levels, as custom_part)
+        AsMc *p = mc->parent;
+        for (int i = 0; p && !t && i < 8; i++, p = p->parent) t = p_type_of(p);
+        Movie *pm;
+        const Frame *pf;
+        if (cc_paintjr_part(mc->movie, mc->def, mc->frame, t, &pm, &pf)) {
+            render_display_list(pm, pf, m, cx, 0, out);
+            return;
+        }
+    }
+    const BitmapFill *painted = custom_part(mc);
+    if (painted) {
+        render_bitmap_fill(painted, m, cx, out);
+        return;
+    }
+    Mat box, tail_box;
+    const BitmapFill *tail;
+    const BitmapFill *pet = cc_animal_art(mc, g_vm ? g_vm->tick : 0, &box, &tail, &tail_box);   // a custom animal orb
+    if (pet) {
+        if (tail) render_bitmap_fill(tail, mat_mul(m, tail_box), cx, out);
+        render_bitmap_fill(pet, mat_mul(m, box), cx, out);
+        return;
+    }
+    AsMc *mask = mc->mask;
+    if (mask && (mask->removed || out->masking)) mask = NULL;
+    if (mask) {
+        // the mask's place on screen: this clip's screen matrix, back to the stage, then to the
+        // mask's parent (the mask may sit anywhere in the tree, often inside this clip)
+        Mat to_stage = mat_mul(m, mat_inverse(as_mc_global_matrix(mc)));
+        Mat mp = mask->parent ? mat_mul(to_stage, as_mc_global_matrix(mask->parent)) : to_stage;
+        render_mask_push(out);
+        as_render_mc(mask, mp, pcx, out);
+        render_mask_apply(out);
+    }
     int heat_here = 0;   // one heat haze per frame: this clip's own items shimmer
     if (mc->shader == 1 && out->heat_at < 0 && !out->masking && !out->level) {
         float b[4];
@@ -202,6 +383,22 @@ void as_render_mc(AsMc *mc, Mat parent, CXform pcx, DrawList *out) {
             out->heat_at = out->n;
             memcpy(out->heat, b, sizeof b);
             heat_here = 1;
+        }
+    }
+    int box_cid;   // the armoury's reset spot: its box without the level square (weapon_look.h)
+    Mat box_m;
+    CXform box_cx;
+    if (cc_look_box(mc, &box_cid, &box_m, &box_cx) && mc->movie->chars[box_cid].type == CHAR_SHAPE) {
+        Shape *sh = mc->movie->chars[box_cid].ptr;
+        const float *b = render_shape_bounds(sh);
+        Mat flip = {-1, 0, 0, 1, 0, 0};   // the bubble's tail is at its x 0
+        for (int side = 0; side < 2; side++) {
+            Mat bm = mat_mul(m, side ? mat_mul(box_m, flip) : box_m);
+            render_mask_push(out);
+            render_mask_rect(out, bm, b[0] - 40, b[1] - 40, 0, b[3] + 40);
+            render_mask_apply(out);
+            render_char((Movie *)mc->movie, box_cid, bm, cx_mul(cx, box_cx), 0, out);
+            render_mask_pop(out);
         }
     }
     // a mask entry covers the entries after it up to its clip depth
@@ -226,6 +423,7 @@ void as_render_mc(AsMc *mc, Mat parent, CXform pcx, DrawList *out) {
         }
     }
     while (open--) render_mask_pop(out);
+    if (mask) render_mask_pop(out);
     if (heat_here) out->heat_end = out->n;
 }
 
@@ -258,4 +456,15 @@ void render_mc_bounds(AsMc *mc, Mat m, float out[4]) {
     out[0] = out[1] = 1e30f;
     out[2] = out[3] = -1e30f;
     bounds_into(mc, m, out);
+}
+
+// Bounds (twips) of a clip's own shapes only, not its child clips, through matrix m.
+void render_mc_shape_bounds(AsMc *mc, Mat m, float out[4]) {
+    out[0] = out[1] = 1e30f;
+    out[2] = out[3] = -1e30f;
+    for (int i = 0; i < mc->ndisp; i++) {
+        const AsDisp *e = &mc->disp[i];
+        const Character *c = &mc->movie->chars[e->cid];
+        if (e->kind == DISP_SHAPE && c->type == CHAR_SHAPE) grow(out, render_shape_bounds(c->ptr), mat_mul(m, e->m));
+    }
 }

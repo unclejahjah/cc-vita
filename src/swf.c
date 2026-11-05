@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #if __has_include(<zlib.h>)
 #include <zlib.h>
 #else   // desktop test builds without zlib's headers (the library itself is linked)
@@ -234,12 +235,16 @@ static int64_t pkey(Pt p) {
     return (x << 32) ^ (y & 0xffffffff);
 }
 
+// how far a flattened curve may stray from the true one (twips), for the file being loaded
+// (one load at a time): a quarter pixel (5), more for art drawn much smaller than its stage
+static float g_curve_tolerance = 5.0f;
+
 static void flatten_quad(Pt p0, Pt c, Pt p1, PtVec *out) {
     // The curve strays at most |p0 - 2c + p1| / 4 from its chord, and n segments
-    // cut that by n^2. Aim for a quarter pixel (5 twips).
+    // cut that by n^2. Aim for g_curve_tolerance.
     float ex = p0.x - 2 * c.x + p1.x, ey = p0.y - 2 * c.y + p1.y;
     float dev = sqrtf(ex * ex + ey * ey) / 4;
-    int n = (int)ceilf(sqrtf(dev / 5.0f));
+    int n = (int)ceilf(sqrtf(dev / g_curve_tolerance));
     if (n < 1) n = 1;
     if (n > 16) n = 16;
     for (int i = 1; i <= n; i++) {
@@ -459,6 +464,8 @@ static Font *parse_font(const uint8_t *d, size_t len, size_t pos, size_t end, in
     return f;
 }
 
+void (*swf_bitmap_loaded)(Bitmap *bm);
+
 // DefineBitsLossless (20) / DefineBitsLossless2 (36).
 static Bitmap *parse_lossless(const uint8_t *d, size_t body, size_t len, int code) {
     if (len < 7) return NULL;
@@ -474,11 +481,15 @@ static Bitmap *parse_lossless(const uint8_t *d, size_t body, size_t len, int cod
     uint8_t *raw = malloc(raw_len);
     if (!raw) return NULL;
     if (uncompress(raw, &raw_len, p + hdr, len - hdr) != Z_OK) { free(raw); return NULL; }
-    Bitmap *bm = calloc(1, sizeof(Bitmap));
+    // 32-bit pixels are turned into RGBA where they are: a 2048x2048 sky is 16 MB, and a
+    // second buffer of that size may not be there on the Vita
+    uint8_t *rgba = fmt == 5 ? raw : malloc((size_t)w * h * 4);
+    Bitmap *bm = rgba ? calloc(1, sizeof(Bitmap)) : NULL;
+    if (!bm) { if (rgba != raw) free(rgba); free(raw); return NULL; }
     bm->id = p[0] | (p[1] << 8);
     bm->w = w;
     bm->h = h;
-    bm->rgba = malloc((size_t)w * h * 4);
+    bm->rgba = rgba;
     for (int y = 0; y < h; y++) {
         const uint8_t *row = raw + ncolors * csize + stride * y;
         for (int x = 0; x < w; x++) {
@@ -491,15 +502,16 @@ static Bitmap *parse_lossless(const uint8_t *d, size_t body, size_t len, int cod
                 int v = row[x * 2] << 8 | row[x * 2 + 1];
                 o[0] = ((v >> 10) & 31) * 255 / 31; o[1] = ((v >> 5) & 31) * 255 / 31; o[2] = (v & 31) * 255 / 31; o[3] = 255;
             } else {
-                const uint8_t *c = row + x * 4;   // A (or reserved), R, G, B
-                o[3] = alpha ? c[0] : 255;
-                o[0] = c[1]; o[1] = c[2]; o[2] = c[3];
+                const uint8_t *c = row + x * 4;   // A (or reserved), R, G, B; o is the same pixel
+                uint8_t a = c[0], r = c[1], g = c[2], b = c[3];
+                o[0] = r; o[1] = g; o[2] = b; o[3] = alpha ? a : 255;
             }
             if (alpha && o[3] && o[3] < 255)   // Lossless2 colours are premultiplied
                 for (int k = 0; k < 3; k++) { int v = o[k] * 255 / o[3]; o[k] = v > 255 ? 255 : v; }
         }
     }
-    free(raw);
+    if (rgba != raw) free(raw);
+    if (swf_bitmap_loaded) swf_bitmap_loaded(bm);
     return bm;
 }
 
@@ -753,12 +765,6 @@ int sprite_find_label(const Sprite *s, const char *name) {
     return -1;
 }
 
-const Place *frame_find_name(const Movie *m, const Frame *f, const char *name) {
-    for (int i = 0; i < f->count; i++)
-        if (f->places[i].name && !strcmp(m->names[f->places[i].name], name)) return &f->places[i];
-    return NULL;
-}
-
 // ---- movie -------------------------------------------------------------------
 
 Movie *swf_load(const char *path, char *err, int errlen) {
@@ -777,6 +783,11 @@ Movie *swf_load(const char *path, char *err, int errlen) {
     }
     Movie *m = calloc(1, sizeof(Movie));
     m->version = d[3];
+    const char *base = strrchr(path, '/');
+    m->is_player = !strcasecmp(base ? base + 1 : path, "PLAYER.swf");
+    // the PC title's scenes: a 1920x1080 stage drawn at half that, so their curves needn't be
+    // finer than under a pixel there (fewer triangles, less memory)
+    g_curve_tolerance = !strcasecmp(base ? base + 1 : path, "MENU_VIGNETTES.swf") ? 30.0f : 5.0f;
     m->names = malloc(sizeof(char *));
     m->names[0] = strdup("");
     m->nnames = 1;

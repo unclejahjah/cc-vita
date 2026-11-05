@@ -11,7 +11,9 @@ endif()
 project(cc_vita C)
 include("$ENV{VITASDK}/share/vita.cmake" REQUIRED)
 
-set(VITA_APP_NAME "CC Vita Renderer Test")
+# CC_NET: Wi-Fi and internet co-op, on by default (one app since 2026-10-23); OFF builds without it
+option(CC_NET "Wi-Fi co-op" ON)
+set(VITA_APP_NAME "Castle Crashers")
 set(VITA_TITLEID  "CCRV00001")
 set(VITA_VERSION  "00.02")
 
@@ -19,14 +21,7 @@ set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O2 -Wall -std=gnu11")
 
 include_directories(third_party/libtess2/Include)
 
-# Default: the game's own scripts on the ActionScript engine.
-# -DCC_VIEWER=ON: the earlier level/animation viewer with hand-written gameplay.
-option(CC_VIEWER "build the level and animation viewer" OFF)
-if(CC_VIEWER)
-  set(APP_SOURCES src/viewer.c src/level.c src/player.c src/enemy.c)
-else()
-  set(APP_SOURCES src/main.c src/as_core.c src/as_mc.c src/as_lib.c src/as_render.c src/cc_host.c src/cc_native.c src/hostfont.c src/audio.c src/strtab.c src/cc_buttons.c)
-endif()
+set(APP_SOURCES src/main.c src/as_core.c src/as_mc.c src/as_lib.c src/as_render.c src/cc_host.c src/cc_native.c src/hostfont.c src/audio.c src/strtab.c src/cc_buttons.c src/pause_menu.c src/help_book.c src/custom_char.c src/workshop_pak.c src/custom_animal.c src/paint_jr.c src/weapon_look.c)
 
 add_executable(${PROJECT_NAME}
   ${APP_SOURCES}
@@ -58,6 +53,7 @@ target_link_libraries(${PROJECT_NAME}
   SceCommonDialog_stub
   SceAppMgr_stub
   ScePower_stub
+  SceRtc_stub
   freetype
   png
   jpeg
@@ -66,8 +62,50 @@ target_link_libraries(${PROJECT_NAME}
   c
 )
 
+if(CC_NET)
+target_sources(${PROJECT_NAME} PRIVATE src/net.c src/netplay.c src/upnp.c src/lobby.c)
+target_compile_definitions(${PROJECT_NAME} PRIVATE CC_NET)
+target_link_libraries(${PROJECT_NAME} SceNet_stub SceNetCtl_stub SceAppUtil_stub SceHttp_stub SceSsl_stub pthread)
+endif()
+
+# Vita trophies (need the NoTrpDrm plugin): an unsigned trophy pack and its NP communication id.
+# TROPHY_ICONS=dir: your own ICON0.PNG / TROPnnn.PNG instead of the drawn ones.
+# Set up like Rinnegatamante's own NoTrpDrm ports (World of Goo): unsafe self, plain
+# SceNpTrophy stub, and NO NP_COMMUNICATION_ID in param.sfo (with it the 2026-10-20 builds
+# failed to start: "Could not prepare the application to start").
+option(CC_TROPHIES "Vita trophies through NoTrpDrm (experimental)" OFF)
+set(TROPHY_ICONS "" CACHE PATH "folder with trophy icons")
+if(CC_TROPHIES)
+target_sources(${PROJECT_NAME} PRIVATE src/trophies.c)
+target_compile_definitions(${PROJECT_NAME} PRIVATE CC_TROPHIES)
+target_link_libraries(${PROJECT_NAME} SceNpTrophy_stub)
+add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/TROPHY.TRP
+  COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/tools/make_trp.py ${CMAKE_CURRENT_BINARY_DIR}/TROPHY.TRP ${TROPHY_ICONS}
+  DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/tools/make_trp.py)
+set(TROPHY_FILES FILE ${CMAKE_CURRENT_BINARY_DIR}/TROPHY.TRP sce_sys/trophy/CCRV00001_00/TROPHY.TRP)
+endif()
+
+# LiveArea (bubble icon, background, tap-to-start logo): LIVEAREA_DIR=dir made by
+# tools/livearea/make_livearea.sh from your own game files (never committed). Without it the VPK
+# gets VitaSDK's default bubble.
+set(LIVEAREA_DIR "" CACHE PATH "folder with sce_sys/ LiveArea art")
+if(LIVEAREA_DIR)
+set(LIVEAREA_FILES
+  FILE ${LIVEAREA_DIR}/sce_sys/icon0.png sce_sys/icon0.png
+  FILE ${LIVEAREA_DIR}/sce_sys/livearea/contents/bg.png sce_sys/livearea/contents/bg.png
+  FILE ${LIVEAREA_DIR}/sce_sys/livearea/contents/startup.png sce_sys/livearea/contents/startup.png
+  FILE ${CMAKE_CURRENT_SOURCE_DIR}/sce_sys/livearea/contents/template.xml sce_sys/livearea/contents/template.xml)
+endif()
+
+# Wi-Fi hosting binds ports, which a "safe" homebrew may not (sceNetBind gives EACCES)
+if(CC_NET)
+vita_create_self(${PROJECT_NAME}.self ${PROJECT_NAME} UNSAFE)
+else()
 vita_create_self(${PROJECT_NAME}.self ${PROJECT_NAME})
+endif()
 vita_create_vpk(${PROJECT_NAME}.vpk ${VITA_TITLEID} ${PROJECT_NAME}.self
   VERSION ${VITA_VERSION}
   NAME ${VITA_APP_NAME}
+  ${TROPHY_FILES}
+  ${LIVEAREA_FILES}
 )

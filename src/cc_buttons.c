@@ -162,9 +162,10 @@ static ShapeFill fill_from(Poly *p, const uint8_t colour[4]) {
 // Drops every loop that lies inside box b and is no bigger than max_area from every fill:
 // the letter, its black outline (part of the button's outline fill) and the hole it cuts
 // in the colour fills. The button's own body loops are bigger, so they stay.
-static void remove_loops_in(Shape *s, Box b, float max_area) {
+static void remove_loops_in(Shape *s, Box b, float max_area, int black_only) {
     for (int f = 0; f < s->nfills; f++) {
         ShapeFill *sf = &s->fills[f];
+        if (black_only && !is_black(sf->style.color)) continue;
         int out_pts = 0, out_loops = 0;
         for (int l = 0; l < sf->nloops; l++) {
             int a = sf->loop_start[l], e = sf->loop_start[l + 1];
@@ -216,6 +217,14 @@ static const uint8_t SYMBOL_COLOUR[][4] = {
     [CC_BTN_SQUARE] = {0xff, 0x8c, 0xd9, 255}, [CC_BTN_TRIANGLE] = {0x4c, 0xe0, 0xae, 255},
 };
 
+// the grey of PlayStation's face buttons, and the symbols in their own colours
+static const uint8_t GREY_SHADE[4] = {0x86, 0x88, 0x8e, 255}, GREY_BASE[4] = {0xb4, 0xb6, 0xbc, 255},
+                     GREY_LIGHT[4] = {0xe2, 0xe3, 0xe6, 255};
+static const uint8_t GREY_SYMBOL[][4] = {
+    [CC_BTN_CROSS] = {0x48, 0x6d, 0xb1, 255}, [CC_BTN_CIRCLE] = {0xbb, 0x40, 0x49, 255},
+    [CC_BTN_SQUARE] = {0xba, 0x67, 0xa4, 255}, [CC_BTN_TRIANGLE] = {0x36, 0x93, 0x77, 255},
+};
+
 static void make_ball(Shape *s, int which, int style) {
     // the letter: the white fill; the ball: the coloured fills, darkest to lightest
     int letter_i = -1, ncol = 0, col[8];
@@ -231,6 +240,7 @@ static void make_ball(Shape *s, int which, int style) {
     for (int k = 0; k < ncol; k++) {
         const uint8_t *to;
         if (style == CC_BTN_STYLE_DARK) to = k == 0 ? DARK_SHADE : k == ncol - 1 ? DARK_LIGHT : DARK_BASE;
+        else if (style == CC_BTN_STYLE_GREY) to = k == 0 ? GREY_SHADE : k == ncol - 1 ? GREY_LIGHT : GREY_BASE;
         else to = k == 0 ? COLOURED[which].shade : k == ncol - 1 ? COLOURED[which].light : COLOURED[which].base;
         memcpy(s->fills[col[k]].style.color, to, 3);
     }
@@ -238,11 +248,15 @@ static void make_ball(Shape *s, int which, int style) {
     // the symbol goes where the ball's colour is, sized like the letter
     Box lb = fill_box(&s->fills[letter_i]), bb = ncol ? fill_box(&s->fills[col[0]]) : lb;
     float size = fmaxf(lb.x1 - lb.x0, lb.y1 - lb.y0) * 1.0f;
-    remove_loops_in(s, grow_box(lb, 0.6f), (lb.x1 - lb.x0) * (lb.y1 - lb.y0) * 1.6f);
+    // the letter's black outline goes; the letter itself (the colour fills have its shape cut
+    // out) turns the ball's colour, so the ball is whole under the symbol
+    remove_loops_in(s, grow_box(lb, 0.6f), (lb.x1 - lb.x0) * (lb.y1 - lb.y0) * 1.6f, 1);
+    if (ncol) memcpy(s->fills[letter_i].style.color, s->fills[col[ncol / 2]].style.color, 3);
     Poly p = {0};
     symbol(&p, which, (lb.x0 + lb.x1) / 2, (lb.y0 + lb.y1) / 2, size);
     (void)bb;
-    append_fill(s, fill_from(&p, style == CC_BTN_STYLE_DARK ? SYMBOL_COLOUR[which] : COLOURED[which].symbol));
+    append_fill(s, fill_from(&p, style == CC_BTN_STYLE_DARK ? SYMBOL_COLOUR[which]
+                                 : style == CC_BTN_STYLE_GREY ? GREY_SYMBOL[which] : COLOURED[which].symbol));
 }
 
 // one closed loop: a box with its own radius per corner (tl, tr, br, bl)
@@ -306,11 +320,46 @@ static void make_trigger(Shape *s, char c) {
 }
 
 // ---- the title's "Steam Edition" badge becomes "Vita Edition" -------------------------
-// MENU.swf's title is a bitmap with the badge (hand-lettered "STEAM EDITION" and the Steam
-// pin, white on the yellow sky right of the logo) painted in. Fills added to the logo shape
-// (drawn above the bitmap) cover it with the sky's colour and put "VITA EDITION" there in
+// MENU.swf's title shows the hand-lettered "STEAM EDITION" and the Steam pin as white loops
+// in shape 601 (with the flying green knight and his cloud). Those loops are taken out, so
+// the sky behind shows through as it always did, and "VITA EDITION" goes in their place in
 // one of the file's own fonts, with the four PlayStation symbols where the pin was.
 // Positions are worked out on the 960 x 544 screen and mapped back into the logo's space.
+
+// Drops the loops of one fill whose box lies inside x0..x1, y0..y1 (twips).
+static void drop_loops(ShapeFill *sf, float x0, float y0, float x1, float y1) {
+    int out = 0, pts = 0;
+    for (int l = 0; l < sf->nloops; l++) {
+        int s = sf->loop_start[l], e = sf->loop_start[l + 1];
+        float bx0 = 1e30f, by0 = 1e30f, bx1 = -1e30f, by1 = -1e30f;
+        for (int i = s; i < e; i++) {
+            float x = sf->pts[i * 2], y = sf->pts[i * 2 + 1];
+            if (x < bx0) bx0 = x;
+            if (y < by0) by0 = y;
+            if (x > bx1) bx1 = x;
+            if (y > by1) by1 = y;
+        }
+        if (bx0 >= x0 && bx1 <= x1 && by0 >= y0 && by1 <= y1) continue;
+        memmove(sf->pts + pts * 2, sf->pts + s * 2, sizeof(float) * 2 * (e - s));
+        sf->loop_start[out++] = pts;
+        pts += e - s;
+    }
+    sf->loop_start[out] = pts;
+    sf->nloops = out;
+    sf->npoints = pts;
+}
+
+static void remove_steam_badge(Movie *m) {
+    if (m->chars[601].type != CHAR_SHAPE) return;
+    Shape *s = m->chars[601].ptr;
+    if (s->tessellated) return;
+    for (int f = 0; f < s->nfills; f++) {
+        const uint8_t *c = s->fills[f].style.color;
+        // the white letters and pin: left of the knight, below his cloud (x -190..-78, y -11..78 px)
+        if (s->fills[f].style.type == FILL_SOLID && c[0] == 255 && c[1] == 255 && c[2] == 255)
+            drop_loops(&s->fills[f], -200 * 20, -12 * 20, -77 * 20, 80 * 20);
+    }
+}
 
 typedef struct { Mat to_shape; float k; } BadgeSpace;   // screen px -> logo shape twips
 
@@ -334,14 +383,14 @@ static Mat mat_mul2(Mat p, Mat c) {   // p after c
                  p.a * c.tx + p.c * c.ty + p.tx, p.b * c.tx + p.d * c.ty + p.ty};
 }
 
-// a font with every letter of the badge, the one with the most glyphs
-static const Font *badge_font(const Movie *m) {
+// a font with every one of the letters, the one with the most glyphs
+static const Font *badge_font(const Movie *m, const char *letters) {
     const Font *best = NULL;
     for (int c = 0; c < 65536; c++) {
         if (m->chars[c].type != CHAR_FONT) continue;
         const Font *f = m->chars[c].ptr;
         int ok = 1;
-        for (const char *s = "VITAEDON"; *s && ok; s++) ok = font_glyph(f, *s) >= 0 && f->glyphs[font_glyph(f, *s)];
+        for (const char *s = letters; *s && ok; s++) ok = font_glyph(f, *s) >= 0 && f->glyphs[font_glyph(f, *s)];
         if (ok && (!best || f->nglyphs > best->nglyphs)) best = f;
     }
     return best;
@@ -367,20 +416,12 @@ static float badge_text(Poly *p, const BadgeSpace *bs, const Font *f, const char
             }
         }
         float adv = f->has_layout && gi >= 0 ? f->advance[gi] : f->em * 0.6f;
-        pen += adv;
+        pen += adv * 1.1f;   // a little apart, like the hand lettering
     }
     return pen * scale;
 }
 
-// where the old badge is on the 960 x 544 screen: the sky patch is a box from x2..x1, y0..y1 with its
-// top-left corner (left of x0, above y2) cut away, which is where the logo's "RS" reaches down
-#define SKY_X0 392
-#define SKY_X1 456
-#define SKY_X2 314
-#define SKY_Y0 32
-#define SKY_Y1 164
-#define SKY_Y2 90
-
+int cc_menu_badge_outline;
 int cc_menu_vita_badge(Movie *m) {
     // MENU.swf: the title sprite 631 shows the logo (shape 354) at depth 60; the root's "main"
     // frame shows 631 as "body"
@@ -396,28 +437,37 @@ int cc_menu_vita_badge(Movie *m) {
     Shape *s = m->chars[354].ptr;
     if (s->tessellated) return 0;
     BadgeSpace bs = {mat_invert(mat_mul2(body->m, logo->m)), 960.0f / m->stage_w};
-    static const uint8_t SKY[4] = {255, 212, 87, 255}, WHITE[4] = {255, 255, 255, 255}, EDGE[4] = {255, 236, 160, 255};
-    // the sky over the old badge, clear of the logo's "RS" (left, top) and the green knight (right)
-    Poly sky = {0};
-    poly_begin_loop(&sky);
-    bpt(&sky, &bs, SKY_X0, SKY_Y0); bpt(&sky, &bs, SKY_X1, SKY_Y0); bpt(&sky, &bs, SKY_X1, SKY_Y1);
-    bpt(&sky, &bs, SKY_X2, SKY_Y1); bpt(&sky, &bs, SKY_X2, SKY_Y2); bpt(&sky, &bs, SKY_X0, SKY_Y2);
-    append_fill(s, fill_from(&sky, SKY));
-    const Font *f = badge_font(m);
+    static const uint8_t WHITE[4] = {255, 255, 255, 255};
+    remove_steam_badge(m);
+    const Font *f = badge_font(m, "VITAEDON");
+    if (f && cc_menu_badge_outline) {   // over the PC's moving scenes, not the painted cloud: a dark rim
+        static const uint8_t DARK[4] = {35, 31, 32, 255};
+        for (int o = 0; o < 8; o++) {
+            float a = o * 3.14159265f / 4, dx = 2.2f * cosf(a), dy = 2.2f * sinf(a);
+            Poly rim = {0};
+            badge_text(&rim, &bs, f, "VITA", 358 + dx, 92 + dy, 22, -0.12f);
+            badge_text(&rim, &bs, f, "EDITION", 340 + dx, 117 + dy, 16, -0.12f);
+            append_fill(s, fill_from(&rim, DARK));
+        }
+    }
     if (f) {
-        Poly txt = {0};
         float slope = -0.12f;   // the original lettering rises to the right
-        badge_text(&txt, &bs, f, "VITA", 352, 92, 20, slope);
-        badge_text(&txt, &bs, f, "EDITION", 342, 116, 16, slope);
-        append_fill(s, fill_from(&txt, WHITE));
+        // drawn a few times a pixel apart: as heavy as the hand-lettered original
+        static const float OFF[3][2] = {{0, 0}, {0.8f, 0}, {0, 0.8f}};
+        for (int o = 0; o < 3; o++) {
+            Poly txt = {0};
+            badge_text(&txt, &bs, f, "VITA", 358 + OFF[o][0], 92 + OFF[o][1], 22, slope);
+            badge_text(&txt, &bs, f, "EDITION", 340 + OFF[o][0], 117 + OFF[o][1], 16, slope);
+            append_fill(s, fill_from(&txt, WHITE));
+        }
     }
     // the PlayStation symbols where the pin was, in their colours
     static const uint8_t COLS[4][4] = {{122, 160, 230, 255}, {230, 90, 100, 255}, {220, 120, 200, 255}, {90, 200, 160, 255}};
-    static const float POS[4][2] = {{432, 124}, {443, 112}, {421, 112}, {432, 100}};   // cross bottom, circle right, square left, triangle top
+    static const float POS[4][2] = {{452, 128}, {464, 115}, {440, 115}, {452, 102}};   // cross bottom, circle right, square left, triangle top
     static const int SYM[4] = {CC_BTN_CROSS, CC_BTN_CIRCLE, CC_BTN_SQUARE, CC_BTN_TRIANGLE};
     for (int i = 0; i < 4; i++) {
         Poly sp = {0}, mapped = {0};
-        symbol(&sp, SYM[i], POS[i][0], POS[i][1], 11);
+        symbol(&sp, SYM[i], POS[i][0], POS[i][1], 12);
         poly_begin_loop(&sp);
         sp.nloops--;
         for (int l = 0; l < sp.nloops; l++) {
@@ -430,6 +480,78 @@ int cc_menu_vita_badge(Movie *m) {
     }
     return 1;
 }
+
+// ---- the "BETA" sticker on the title's Multiplayer button ------------------------------
+// Drawn in the style of the PC title's FRESH* sticker (FRESHLOGO.swf): fat white letters that
+// bounce and lean a little each, a tan shade below and right of them and a thick dark outline
+// round both, the letters from MENU.swf's hand-lettered font. A shape of its own (about 80 x 30
+// pixels, centred on 0,0, in twips); the app draws it over the button.
+
+static Shape beta_sticker;
+static int beta_built;
+
+// the word's loops, centred on cx, cy (px), caps h px tall, shifted by ox, oy; each letter turned
+// by tilt[i] degrees round its own middle and raised by lift[i] px
+static void beta_text(Poly *p, const Font *f, const char *s, float cx, float cy, float h, float ox, float oy,
+                      const float *tilt, const float *lift) {
+    float scale = h / (f->ascent ? f->ascent * 0.72f : f->em * 0.7f), width = 0;
+    for (const char *c = s; *c; c++) {
+        int gi = font_glyph(f, *c);
+        width += (f->has_layout && gi >= 0 ? f->advance[gi] : f->em * 0.6f) * 1.16f;
+    }
+    float x = cx - width * scale / 2 + ox, y = cy + h / 2 + oy, pen = 0;
+    for (int i = 0; s[i]; i++) {
+        int gi = font_glyph(f, s[i]);
+        float adv = (f->has_layout && gi >= 0 ? f->advance[gi] : f->em * 0.6f) * 1.16f;
+        float a = tilt[i] * 3.14159265f / 180, ca = cosf(a), sa = sinf(a);
+        float mx = x + (pen + adv / 2) * scale, my = y - h / 2 - lift[i];   // the letter's middle
+        if (gi >= 0 && f->glyphs[gi]) {
+            const Shape *g = f->glyphs[gi];
+            for (int fi = 0; fi < g->nfills; fi++) {
+                const ShapeFill *sf = &g->fills[fi];
+                for (int l = 0; l < sf->nloops; l++) {
+                    poly_begin_loop(p);
+                    for (int q = sf->loop_start[l]; q < sf->loop_start[l + 1]; q++) {
+                        float gx = x + (pen + sf->pts[q * 2]) * scale - mx, gy = y + sf->pts[q * 2 + 1] * scale - lift[i] - my;
+                        poly_pt(p, (mx + gx * ca - gy * sa) * 20, (my + gx * sa + gy * ca) * 20);
+                    }
+                }
+            }
+        }
+        pen += adv;
+    }
+}
+
+// the word fattened by r px (copies round a ring, each a fill of its own so they add up)
+static void beta_layer(Shape *s, const Font *f, float ox, float oy, float r, int n, const uint8_t colour[4]) {
+    static const float TILT[] = {-7, 4, -3, 6}, LIFT[] = {1.0f, -0.5f, 0.8f, -0.8f};
+    for (int k = 0; k <= n; k++) {
+        Poly p = {0};
+        float a = k * 6.2831853f / (n ? n : 1), d = k == n ? 0 : r;   // and one in the middle
+        beta_text(&p, f, "BETA", 0, 0.5f, 15, ox + cosf(a) * d, oy + sinf(a) * d, TILT, LIFT);
+        append_fill(s, fill_from(&p, colour));
+    }
+}
+
+int cc_menu_beta_sticker_build(const Movie *m) {
+    if (beta_built || m->chars[631].type != CHAR_SPRITE) return 0;   // MENU.swf's title only, once
+    const Font *f = badge_font(m, "BETA");
+    if (!f) return 0;
+    // FRESHLOGO.swf's own colours
+    static const uint8_t INK[4] = {0x41, 0x3e, 0x3e, 255}, SHADE[4] = {0xff, 0xcc, 0x7e, 255},
+                         WHITE[4] = {0xff, 0xff, 0xff, 255};
+    Shape *s = &beta_sticker;
+    memset(s, 0, sizeof *s);
+    const float sx = 2.6f, sy = 3.6f;   // the shade, down and right
+    beta_layer(s, f, sx / 2, sy / 2, 7.0f, 24, INK);   // the outline round letters and shade
+    beta_layer(s, f, sx / 2, sy / 2, 3.5f, 12, INK);
+    beta_layer(s, f, sx, sy, 0.9f, 8, SHADE);
+    beta_layer(s, f, 0, 0, 0.9f, 8, WHITE);
+    beta_built = 1;
+    return 1;
+}
+
+Shape *cc_menu_beta_sticker(void) { return beta_built ? &beta_sticker : NULL; }
 
 // debugging: every loop of a shape's fills with its box (px) and colour
 void cc_dump_shape(Movie *m, int cid) {
@@ -476,4 +598,139 @@ int cc_buttons_playstation(Movie *m, int style) {
     if (l && !l->tessellated) { make_trigger(l, 'L'); done++; }
     if (r && !r->tessellated) { make_trigger(r, 'R'); done++; }
     return done;
+}
+
+// ---- a PS Vita for the Help & Options controls page ------------------------------------
+// Drawn the way the game draws things: a thick black outline, a flat base colour, a darker
+// shade along the bottom and a lighter band along the top. Designed in pixels on a body
+// 300 wide (centred on 0,0), stored in twips like any shape. The face buttons and the
+// shoulder buttons aren't in it: the page puts the game's own (PlayStation) button clips
+// on the spots it reports.
+
+static const uint8_t V_BLACK[4] = {0x14, 0x14, 0x18, 255};
+
+static void vbox(Shape *s, float x0, float y0, float x1, float y1, float r, const uint8_t c[4]) {
+    float rr[4] = {r * 20, r * 20, r * 20, r * 20};
+    Poly p = {0};
+    round_box(&p, x0 * 20, y0 * 20, x1 * 20, y1 * 20, rr);
+    append_fill(s, fill_from(&p, c));
+}
+
+static void vdisc(Shape *s, float cx, float cy, float r, const uint8_t c[4]) {
+    Poly p = {0};
+    ring(&p, cx * 20, cy * 20, r * 20, 40);
+    append_fill(s, fill_from(&p, c));
+}
+
+// a body-coloured part with the game's shading: outline, shade, base, top light
+static void vpart(Shape *s, float x0, float y0, float x1, float y1, float r, float o, const uint8_t shade[4],
+                  const uint8_t base[4], const uint8_t light[4]) {
+    vbox(s, x0 - o, y0 - o, x1 + o, y1 + o, r + o, V_BLACK);
+    vbox(s, x0, y0, x1, y1, r, shade);
+    float h = y1 - y0, rb = fminf(r, (h - h * 0.08f) * 0.5f);
+    vbox(s, x0, y0, x1, y1 - h * 0.08f, rb, base);
+    float lh = h * 0.30f, rl = fminf(r * 0.8f, lh * 0.5f);
+    vbox(s, x0 + r * 0.35f, y0 + h * 0.04f, x1 - r * 0.35f, y0 + h * 0.04f + lh, rl, light);
+}
+
+static void vstick(Shape *s, float cx, float cy) {
+    static const uint8_t RIM[4] = {0x2e, 0x30, 0x36, 255}, CAP[4] = {0x4a, 0x4d, 0x56, 255},
+                         TOP[4] = {0x6c, 0x70, 0x7a, 255};
+    vdisc(s, cx, cy, 15, V_BLACK);
+    vdisc(s, cx, cy, 12.5f, RIM);
+    vdisc(s, cx, cy - 1.5f, 10, V_BLACK);
+    vdisc(s, cx, cy - 1.5f, 8.5f, CAP);
+    vdisc(s, cx - 1.5f, cy - 4, 4.5f, TOP);
+}
+
+static void vdpad(Shape *s, float cx, float cy) {
+    static const uint8_t SHADE[4] = {0x5e, 0x61, 0x6a, 255}, BASE[4] = {0x8c, 0x8f, 0x98, 255},
+                         LIGHT[4] = {0xb8, 0xbb, 0xc3, 255}, ARROW[4] = {0x3a, 0x3c, 0x44, 255};
+    float a = 17, w = 6.5f, o = 2.2f;
+    vbox(s, cx - a - o, cy - w - o, cx + a + o, cy + w + o, 3 + o, V_BLACK);
+    vbox(s, cx - w - o, cy - a - o, cx + w + o, cy + a + o, 3 + o, V_BLACK);
+    vbox(s, cx - a, cy - w, cx + a, cy + w, 3, SHADE);
+    vbox(s, cx - w, cy - a, cx + w, cy + a, 3, SHADE);
+    vbox(s, cx - a, cy - w, cx + a, cy + w - 2, 3, BASE);
+    vbox(s, cx - w, cy - a, cx + w, cy + a - 2, 3, BASE);
+    vbox(s, cx - w + 1.5f, cy - a + 1.5f, cx + w - 1.5f, cy - a + 6, 2, LIGHT);
+    vbox(s, cx - a + 1.5f, cy - w + 1.5f, cx + a - 1.5f, cy - w + 4, 2, LIGHT);
+    Poly p = {0};   // the four arrows
+    static const float dir[4][2] = {{0, -1}, {1, 0}, {0, 1}, {-1, 0}};
+    for (int k = 0; k < 4; k++) {
+        float ux = dir[k][0], uy = dir[k][1], tx = cx + ux * (a - 3.5f), ty = cy + uy * (a - 3.5f);
+        float bx = cx + ux * (a - 8), by = cy + uy * (a - 8);
+        poly_begin_loop(&p);
+        poly_pt(&p, tx * 20, ty * 20);
+        poly_pt(&p, (bx + uy * 3.2f) * 20, (by - ux * 3.2f) * 20);
+        poly_pt(&p, (bx - uy * 3.2f) * 20, (by + ux * 3.2f) * 20);
+    }
+    append_fill(s, fill_from(&p, ARROW));
+}
+
+int cc_vita_drawing(Shape *s, float spots[CC_VITA_SPOTS][2]) {
+    memset(s, 0, sizeof *s);
+    static const uint8_t SHADE[4] = {0x1f, 0x21, 0x27, 255}, BASE[4] = {0x34, 0x37, 0x3f, 255},
+                         LIGHT[4] = {0x4b, 0x4f, 0x5a, 255}, BEZEL[4] = {0x0e, 0x0f, 0x12, 255},
+                         SCREEN[4] = {0x1d, 0x26, 0x33, 255}, GLARE[4] = {0x2a, 0x36, 0x47, 255},
+                         SMALL[4] = {0x5c, 0x5f, 0x68, 255}, SMALL_HI[4] = {0x8a, 0x8d, 0x96, 255},
+                         GRILLE[4] = {0x16, 0x17, 0x1b, 255};
+    vpart(s, -150, -68, 150, 68, 60, 3.5f, SHADE, BASE, LIGHT);
+    // the screen: black glass round it, the picture, a glare across it
+    vbox(s, -98, -58, 98, 56, 9, BEZEL);
+    vbox(s, -90, -51, 90, 50, 2, V_BLACK);
+    vbox(s, -88.5f, -49.5f, 88.5f, 48.5f, 1.5f, SCREEN);
+    Poly g = {0};
+    poly_begin_loop(&g);
+    poly_pt(&g, -88.5f * 20, -49.5f * 20);
+    poly_pt(&g, -20 * 20, -49.5f * 20);
+    poly_pt(&g, -70 * 20, 48.5f * 20);
+    poly_pt(&g, -88.5f * 20, 48.5f * 20);
+    poly_begin_loop(&g);
+    poly_pt(&g, -8 * 20, -49.5f * 20);
+    poly_pt(&g, 6 * 20, -49.5f * 20);
+    poly_pt(&g, -44 * 20, 48.5f * 20);
+    poly_pt(&g, -58 * 20, 48.5f * 20);
+    append_fill(s, fill_from(&g, GLARE));
+    // speaker grilles under the top corners
+    for (int side = -1; side <= 1; side += 2)
+        for (int i = 0; i < 3; i++) vdisc(s, side * (130 - i * 5.5f), 50 + (i == 1 ? 2.5f : 0), 1.6f, GRILLE);
+    vdpad(s, -123, -22);
+    vstick(s, -108, 26);
+    vstick(s, 108, 26);
+    // PS button (left), SELECT and START (right): small pills
+    vdisc(s, -127, 49, 6.5f, V_BLACK);
+    vdisc(s, -127, 49, 4.5f, SMALL);
+    vdisc(s, -128, 47.5f, 2.2f, SMALL_HI);
+    for (int i = 0; i < 2; i++) {
+        float x = 114 + i * 17;
+        vbox(s, x - 7.5f, 45 - 4, x + 7.5f, 45 + 4, 4, V_BLACK);
+        vbox(s, x - 5.5f, 45 - 2.2f, x + 5.5f, 45 + 2.2f, 2.2f, SMALL);
+        vbox(s, x - 4, 45 - 2.2f, x + 4, 45 - 0.4f, 1, SMALL_HI);
+    }
+    static const float at[CC_VITA_SPOTS][2] = {
+        [CC_VITA_L] = {-112, -71}, [CC_VITA_R] = {112, -71}, [CC_VITA_DPAD] = {-123, -22},
+        [CC_VITA_LSTICK] = {-108, 26}, [CC_VITA_RSTICK] = {108, 26}, [CC_VITA_TRIANGLE] = {123, -38},
+        [CC_VITA_CIRCLE] = {139, -22}, [CC_VITA_CROSS] = {123, -6}, [CC_VITA_SQUARE] = {107, -22},
+        [CC_VITA_SELECT] = {114, 45}, [CC_VITA_START] = {131, 45}, [CC_VITA_PS] = {-127, 49},
+    };
+    for (int i = 0; i < CC_VITA_SPOTS; i++) spots[i][0] = at[i][0] * 20, spots[i][1] = at[i][1] * 20;
+    return s->nfills;
+}
+
+int cc_dpad_icon(Shape *s, int right) {
+    memset(s, 0, sizeof *s);
+    static const uint8_t PRESSED[4] = {0xe2, 0xe3, 0xe6, 255}, ARROW[4] = {0x26, 0x26, 0x2c, 255};
+    vdpad(s, 0, 0);
+    // the arm being pointed at: lit, with a bolder arrow
+    float side = right ? 1 : -1, a = 17, w = 6.5f;
+    vbox(s, right ? w - 0.5f : -a + 1.2f, -w + 1.2f, right ? a - 1.2f : -w + 0.5f, w - 1.2f, 2.2f, PRESSED);
+    Poly p = {0};
+    float tx = side * (a - 3), bx = side * (a - 9.5f);
+    poly_begin_loop(&p);
+    poly_pt(&p, tx * 20, 0);
+    poly_pt(&p, bx * 20, -4.2f * 20);
+    poly_pt(&p, bx * 20, 4.2f * 20);
+    append_fill(s, fill_from(&p, ARROW));
+    return s->nfills;
 }
