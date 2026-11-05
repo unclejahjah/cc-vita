@@ -15,13 +15,22 @@ enum { HB_UP = 1, HB_DOWN = 2, HB_LEFT = 4, HB_RIGHT = 8, HB_PREV = 16, HB_NEXT 
 #define HB_VOLUME_STEPS 10
 // Settings' Item Switch: bit 1 the front touch screen, bit 2 the rear pad (left half previous, right next)
 enum { HB_SWITCH_STICK, HB_SWITCH_FRONT, HB_SWITCH_REAR, HB_SWITCH_BOTH, HB_SWITCH_N };
+// Settings' rows, top to bottom (FRESH Look only on the title's, with its files)
+enum { HB_ROW_MUSIC, HB_ROW_SFX, HB_ROW_AUTO_POTION, HB_ROW_ITEM_SWITCH, HB_ROW_HUD, HB_ROW_TEXT, HB_ROW_FRESH };
+// Settings' HUD Size (the players' corners in levels) and Menu Text Size (the pause menu's
+// words): their choices and the scale each draws at
+#define HB_HUD_N 4
+#define HB_HUD_NORMAL 1
+#define HB_TEXT_N 3
+extern const float hb_hud_scale[HB_HUD_N], hb_text_scale[HB_TEXT_N];
 
 typedef struct {
     int book, page;            // page: How to Play's page, 0..6
-    int row;                   // Settings: 0 music, 1 sound effects, 2 auto potion, 3 item switch,
-                               // 4 FRESH look (the title's only); Controls: the chosen button
+    int row;                   // Settings: HB_ROW_*; Controls: the chosen button
     int volume[2];             // 0..HB_VOLUME_STEPS
     int item_switch;           // HB_SWITCH_*: touch that switches items, besides the right stick
+    int hud_size;              // 0..HB_HUD_N-1: Small, Normal, Large, Extra Large
+    int text_size;             // 0..HB_TEXT_N-1: Normal, Large, Extra Large
     int auto_potion;           // 1: a hit that would end you drinks a health potion instead
     int fresh;                 // 1: the PC's redrawn knights and portraits (paint_jr.h); -1: no row (no files)
     int changed;               // the settings or buttons (cc_bind) changed since the book opened

@@ -1021,8 +1021,11 @@ typedef struct {
 static int g_volume[2] = {HB_VOLUME_STEPS, HB_VOLUME_STEPS};
 static int g_auto_potion;
 static int g_fresh;   // "fresh = 0/1": the FRESH look (paint_jr.h)
+static int g_hud_size = HB_HUD_NORMAL, g_text_size;   // "hudsize = 0..3", "textsize = 0..2"
 
 static void settings_apply(void) {
+    as_render_hud_scale = hb_hud_scale[g_hud_size];
+    pause_menu_text_scale = hb_text_scale[g_text_size];
     audio_set_volume(g_volume[0] / (float)HB_VOLUME_STEPS, g_volume[1] / (float)HB_VOLUME_STEPS);
 }
 
@@ -1036,6 +1039,8 @@ static void settings_load(void) {
             if (sscanf(line, " sfx = %d", &v) == 1 && v >= 0 && v <= HB_VOLUME_STEPS) g_volume[1] = v;
             if (sscanf(line, " autopotion = %d", &v) == 1) g_auto_potion = v != 0;
             if (sscanf(line, " fresh = %d", &v) == 1) g_fresh = v != 0;
+            if (sscanf(line, " hudsize = %d", &v) == 1 && v >= 0 && v < HB_HUD_N) g_hud_size = v;
+            if (sscanf(line, " textsize = %d", &v) == 1 && v >= 0 && v < HB_TEXT_N) g_text_size = v;
             if (sscanf(line, " itemswitch = %d", &v) == 1 && v >= 0 && v < HB_SWITCH_N) g_item_switch = v;
             int nb[CC_ACTIONS], used = 0;
             if (sscanf(line, " buttons = %d %d %d %d %d %d", &nb[0], &nb[1], &nb[2], &nb[3], &nb[4], &nb[5]) ==
@@ -1053,8 +1058,8 @@ static void settings_load(void) {
 static void settings_save(void) {
     FILE *f = fopen(SETTINGS_PATH, "w");
     if (!f) return;
-    fprintf(f, "music = %d\nsfx = %d\nautopotion = %d\nitemswitch = %d\nfresh = %d\n", g_volume[0], g_volume[1],
-            g_auto_potion, g_item_switch, g_fresh);
+    fprintf(f, "music = %d\nsfx = %d\nautopotion = %d\nitemswitch = %d\nfresh = %d\nhudsize = %d\ntextsize = %d\n",
+            g_volume[0], g_volume[1], g_auto_potion, g_item_switch, g_fresh, g_hud_size, g_text_size);
     fprintf(f, "buttons = %d %d %d %d %d %d\n", cc_bind[0], cc_bind[1], cc_bind[2], cc_bind[3], cc_bind[4],
             cc_bind[5]);
     fclose(f);
@@ -1191,6 +1196,8 @@ static void help_input(Pause *ps, unsigned pressed, float dt) {
         help_book_open(&ps->hb, ps->m.book, g_volume[0], g_volume[1], g_auto_potion,
                        ps->title && cc_fresh_available() ? g_fresh : -1);
         ps->hb.item_switch = g_item_switch;
+        ps->hb.hud_size = g_hud_size;
+        ps->hb.text_size = g_text_size;
         ps->hb.achieved = cc_achievements();
         ps->m.book_new = 0;
     }
@@ -1200,9 +1207,12 @@ static void help_input(Pause *ps, unsigned pressed, float dt) {
                  (pressed & SCE_CTRL_CIRCLE ? HB_BACK : 0) | (pressed & SCE_CTRL_TRIANGLE ? HB_RESET : 0);
     int sound;
     int open = help_book_update(&ps->hb, b, dt, &sound);
-    if (ps->hb.volume[0] != g_volume[0] || ps->hb.volume[1] != g_volume[1]) {   // heard straight away
+    if (ps->hb.volume[0] != g_volume[0] || ps->hb.volume[1] != g_volume[1] || ps->hb.hud_size != g_hud_size ||
+        ps->hb.text_size != g_text_size) {   // heard (and seen) straight away
         g_volume[0] = ps->hb.volume[0];
         g_volume[1] = ps->hb.volume[1];
+        g_hud_size = ps->hb.hud_size;
+        g_text_size = ps->hb.text_size;
         settings_apply();
     }
     g_auto_potion = ps->hb.auto_potion;   // the game's VM picks it up (not mid Wi-Fi game)

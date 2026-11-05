@@ -16,6 +16,8 @@
 #define STAGE_W 848.0f
 #define STAGE_H 480.0f
 
+float pause_menu_text_scale = 1;
+
 enum { A_NONE, A_BACK, A_RESUME, A_HELP, A_INFO, A_MAP, A_EXIT, A_ACHIEVEMENTS, A_NO, A_YES, A_HOWTO, A_CONTROLS,
        A_SETTINGS };
 typedef struct { const char *text; int act; } Line;   // act A_NONE: not selectable
@@ -216,15 +218,16 @@ static void prompt(DrawList *out, Movie *mv, float k, int right, const char *lab
             if (cid[i] >= 0) clip_size(mv, cid[i], size[i]);
         }
     }
-    float x0 = STAGE_W * 0.1428571492433548f + (right ? STAGE_W * 0.5f : 0), y0 = 425;
+    float ts = pause_menu_text_scale;   // bigger, they grow up and to the right from the bottom
+    float x0 = STAGE_W * 0.1428571492433548f + (right ? STAGE_W * 0.5f : 0), y0 = 425 - size[right][1] * (ts - 1);
     if (cid[right] >= 0) {
-        Mat m = {k / 20, 0, 0, k / 20, x0 * k, y0 * k};
+        Mat m = {ts * k / 20, 0, 0, ts * k / 20, x0 * k, y0 * k};
         CXform cx = {{1, 1, 1, alpha}, {0, 0, 0, 0}};
         render_char(mv, cid[right], m, cx, 0, out);
     }
-    float th = as_render_host_line_height() * 0.7f + 1;
-    text(out, k, label, size[right][0] * 0.5f + x0 + 5, size[right][1] * 0.5f + y0 - th * 0.5f, 0.7f, 1, 0xaaaaaa,
-         alpha);
+    float th = as_render_host_line_height() * 0.7f * ts + 1;
+    text(out, k, label, size[right][0] * 0.5f * ts + x0 + 5 * ts, size[right][1] * 0.5f * ts + y0 - th * 0.5f, 0.7f * ts, 1,
+         0xaaaaaa, alpha);
 }
 
 void pause_menu_build(const PauseMenu *pm, Movie *mv, float k, DrawList *out) {
@@ -240,10 +243,13 @@ void pause_menu_build(const PauseMenu *pm, Movie *mv, float k, DrawList *out) {
     int n = page_lines(pm, &title, &lines);
     if (!n) return;
     float a = pm->alpha;
-    if (title) text(out, k, title, STAGE_W / 2, 70, 1.25f, 2, 0xdddddd, a);
+    float ts = pause_menu_text_scale;
+    if (title) text(out, k, title, STAGE_W / 2, 70 + 10 * (ts - 1), 1.25f * ts, 2, 0xdddddd, a);
     int rows = n + (title != NULL);
+    // bigger words: the lines further apart and their middle a little higher, clear of the prompts
+    float gap = 30.0f * ts, mid = STAGE_H / 2 + 60 - 60 * (ts - 1);
     for (int i = 0; i < n; i++) {
-        float y = 30.0f * (i + (title != NULL)) + (STAGE_H / 2 - rows * 15.0f) + 60;
+        float y = gap * (i + (title != NULL)) + mid - rows * gap / 2;
         uint32_t c = lines[i].act ? 0x777777 : 0xaaaaaa;
         if (i == pm->sel) {
             if (pm->flash > 0) {
@@ -253,7 +259,7 @@ void pause_menu_build(const PauseMenu *pm, Movie *mv, float k, DrawList *out) {
                 c = (uint32_t)v << 16 | (uint32_t)v << 8;
             }
         }
-        text(out, k, lines[i].text, STAGE_W / 2, y, 0.8421052694320679f, 2, c, a);
+        text(out, k, lines[i].text, STAGE_W / 2, y, 0.8421052694320679f * ts, 2, c, a);
     }
     prompt(out, mv, k, 0, "Select", a);
     prompt(out, mv, k, 1, "Back", a);
@@ -261,5 +267,6 @@ void pause_menu_build(const PauseMenu *pm, Movie *mv, float k, DrawList *out) {
 
 void pause_menu_saving(float k, float alpha, DrawList *out) {
     const char *w = strtab_number(596);
-    text(out, k, w ? w : "Saving...", STAGE_W / 2, STAGE_H - 24, 0.7f, 2, 0xffffff, alpha);
+    text(out, k, w ? w : "Saving...", STAGE_W / 2, STAGE_H - 24 * pause_menu_text_scale, 0.7f * pause_menu_text_scale, 2,
+         0xffffff, alpha);
 }

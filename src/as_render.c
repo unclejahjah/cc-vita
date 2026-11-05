@@ -282,10 +282,39 @@ static const BitmapFill *custom_part(AsMc *mc) {
     return NULL;
 }
 
+// Settings' HUD Size: the players' corners on _root (hud1..hud4: face, health, magic, XP,
+// gold) drawn bigger or smaller. Each grows from its own top corner: the top-left of the
+// stage's left half for the left two, the top-right for the right two, so neither runs off
+// the screen nor (on Large, with four players) much over its neighbour.
+float as_render_hud_scale = 1;
+
+static Mat hud_scaled(AsMc *mc, Mat parent, Mat m) {
+    const char *n = mc->name ? mc->name->s : "";
+    if (strncmp(n, "hud", 3) || n[3] < '1' || n[3] > '4' || n[4]) return m;
+    // its corner from its own point, measured once per clip (what it shows changes as it
+    // plays: a steady corner keeps it from wobbling)
+    static AsMc *seen[4];
+    static float corner[4][2];
+    int i = n[3] - '1';
+    if (seen[i] != mc) {
+        Mat at = {mc->m.a, mc->m.b, mc->m.c, mc->m.d, 0, 0};
+        float b[4];
+        render_mc_bounds(mc, at, b);   // twips, from its point
+        if (b[2] <= b[0]) return m;
+        seen[i] = mc;
+        corner[i][0] = mc->m.tx < 848 * 20 / 2 ? b[0] : b[2];
+        corner[i][1] = b[1];
+    }
+    float s = as_render_hud_scale, ax = mc->m.tx + corner[i][0], ay = mc->m.ty + corner[i][1];
+    Mat z = {s, 0, 0, s, ax * (1 - s), ay * (1 - s)};   // stage twips about (ax, ay)
+    return mat_mul(parent, mat_mul(z, mc->m));
+}
+
 void as_render_mc(AsMc *mc, Mat parent, CXform pcx, DrawList *out) {
     if (mc->removed || !mc->visible) return;
     if (mc->is_mask && !out->masking) return;   // a setMask mask only draws as its clip's mask
     Mat m = mat_mul(parent, mc->m);
+    if (as_render_hud_scale != 1 && mc->parent && !mc->parent->parent) m = hud_scaled(mc, parent, m);
     CXform cx = cx_mul(pcx, cx_with_alpha(mc->cx, mc->alpha));
     if (cx.mul[3] <= 0 && cx.add[3] <= 0 && !out->masking) return;
     // select portraits (paint_jr.h): Paint Jr.'s (his slot's frame is empty), and everyone's newer

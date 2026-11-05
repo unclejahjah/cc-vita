@@ -32,9 +32,13 @@ void help_book_open(HelpBook *hb, int book, int music, int sfx, int auto_potion,
     hb->volume[1] = sfx;
     hb->auto_potion = auto_potion;
     hb->fresh = fresh;
+    hb->hud_size = HB_HUD_NORMAL;
 }
 
-static int settings_rows(const HelpBook *hb) { return hb->fresh < 0 ? 4 : 5; }   // FRESH Look: the title's only
+const float hb_hud_scale[HB_HUD_N] = {0.85f, 1, 1.2f, 1.4f};
+const float hb_text_scale[HB_TEXT_N] = {1, 1.2f, 1.4f};
+
+static int settings_rows(const HelpBook *hb) { return hb->fresh < 0 ? HB_ROW_FRESH : HB_ROW_FRESH + 1; }
 
 int help_book_update(HelpBook *hb, unsigned pressed, float dt, int *sound) {
     *sound = -1;
@@ -85,25 +89,32 @@ int help_book_update(HelpBook *hb, unsigned pressed, float dt, int *sound) {
             *sound = 0;
         }
         int step = pressed & HB_RIGHT ? 1 : pressed & HB_LEFT ? -1 : 0;
-        if (hb->row == 2 || hb->row == 4) {   // On / Off: left or right flips it
-            if (step) {
-                if (hb->row == 2) hb->auto_potion ^= 1;
-                else hb->fresh ^= 1;
+        if (!step) return 1;
+        int *size = hb->row == HB_ROW_HUD ? &hb->hud_size : hb->row == HB_ROW_TEXT ? &hb->text_size : NULL;
+        if (size) {   // the sizes: left smaller, right bigger, stopping at the ends
+            int n = hb->row == HB_ROW_HUD ? HB_HUD_N : HB_TEXT_N;
+            if (*size + step >= 0 && *size + step < n) {
+                *size += step;
                 hb->changed = 1;
                 *sound = 0;
             }
             return 1;
         }
-        if (hb->row == 3) {   // Item Switch: left / right go round its four choices
-            if (step) {
-                hb->item_switch = (hb->item_switch + step + HB_SWITCH_N) % HB_SWITCH_N;
-                hb->changed = 1;
-                *sound = 0;
-            }
+        if (hb->row == HB_ROW_AUTO_POTION || hb->row == HB_ROW_FRESH) {   // On / Off: left or right flips it
+            if (hb->row == HB_ROW_AUTO_POTION) hb->auto_potion ^= 1;
+            else hb->fresh ^= 1;
+            hb->changed = 1;
+            *sound = 0;
+            return 1;
+        }
+        if (hb->row == HB_ROW_ITEM_SWITCH) {   // Item Switch: left / right go round its four choices
+            hb->item_switch = (hb->item_switch + step + HB_SWITCH_N) % HB_SWITCH_N;
+            hb->changed = 1;
+            *sound = 0;
             return 1;
         }
         int v = hb->volume[hb->row] + step;
-        if (step && v >= 0 && v <= HB_VOLUME_STEPS) {
+        if (v >= 0 && v <= HB_VOLUME_STEPS) {
             hb->volume[hb->row] = v;
             hb->changed = 1;
             *sound = 0;
@@ -532,67 +543,87 @@ static void volume_bar(DrawList *out, Art *a, float k, float x, float y, float w
     }
 }
 
+// Settings: one line a row, its name on the left of the middle and its setting on the right
+// (the volume bars small beside their names, the choices between arrows), so the seven rows
+// fit the page
 static void settings_page(DrawList *out, Art *a, float k, const HelpBook *hb, float alpha) {
     book_art(out, a, k, alpha);
     page_title(out, a, k, words("help.title.settings", "Settings"), alpha);
     float mx, my, bw;
     book_middle(a, &mx, &my, &bw);
-    static const char *keys[5] = {"help.settings.music", "help.settings.sfx", "help.settings.autopotion",
-                                  "help.settings.itemswitch", "help.settings.fresh"};
-    static const char *fb[5] = {"Music Volume", "SFX Volume", "Auto Potion", "Item Switch", "FRESH Look"};
+    static const char *keys[] = {"help.settings.music",      "help.settings.sfx",     "help.settings.autopotion",
+                                 "help.settings.itemswitch", "help.settings.hudsize", "help.settings.textsize",
+                                 "help.settings.fresh"};
+    static const char *fb[] = {"Music Volume", "SFX Volume",     "Auto Potion", "Item Switch",
+                               "HUD Size",     "Menu Text Size", "FRESH Look"};
     float sc = place_scale(a);
     int rows = settings_rows(hb);
-    static const float Y5[5] = {-146, -70, 2, 64, 126};   // five rows (the title's): tighter
+    float gap = 18 * sc, ls = 26 * sc;   // between the two columns; the words' size
+    float step = (rows > HB_ROW_FRESH ? 46 : 52) * sc;
+    float y0 = my - 110 * sc - step * (rows - 6) / 2;
     for (int r = 0; r < rows; r++) {
-        float y = my + (rows == 5 ? Y5[r] : -138 + r * 94) * sc;   // (the bars sit under the first two)
+        float y = y0 + r * step;
         uint32_t c = INK;
         if (r == hb->row) {   // the chosen row pulses yellow like the pause menu's chosen line
             int v = (int)(sinf(hb->time * 10) * 34 + 221) & 255;
             c = (uint32_t)v << 16 | (uint32_t)v << 8;
         }
-        float ls = (rows == 5 ? 26 : 30) * sc;   // the row's name
-        if (r == 4) {   // FRESH Look is a beta: heavy on the Vita, so it says so
+        float lx = mx - gap, vx = mx + gap;   // the name ends at lx, the setting starts at vx
+        if (r == HB_ROW_FRESH) {   // FRESH Look is a beta: heavy on the Vita, so it says so
             char label[96];
             int logo = fresh_logo_cid();
             if (logo >= 0) {   // the title's FRESH sticker in place of the word, then "Look (BETA)"
                 snprintf(label, sizeof label, "%s %s", words("help.settings.fresh_rest", "Look"),
                          words("help.settings.beta", "(BETA)"));
-                float lh = ls * 1.4f, lw = lh * g_logo_w / g_logo_h, gap = ls * 0.3f;
+                float lh = ls * 1.4f, lw = lh * g_logo_w / g_logo_h, sp = ls * 0.3f;
                 float tw = as_render_host_text_width(label) * ls / 20;
-                float x0 = mx - (lw + gap + tw) / 2;
+                float x0 = lx - (lw + sp + tw);
                 button(out, help_book_fresh_logo, logo, g_logo_b, k, x0 + lw / 2, y, fmaxf(lw, lh), alpha);
-                text(out, k, label, x0 + lw + gap, y, ls, 1, c, alpha);
+                text(out, k, label, x0 + lw + sp, y, ls, 1, c, alpha);
             } else {
                 snprintf(label, sizeof label, "%s %s", words(keys[r], fb[r]), words("help.settings.beta", "(BETA)"));
-                text(out, k, label, mx, y, ls, 2, c, alpha);
+                text(out, k, label, lx, y, ls, 0, c, alpha);
             }
         } else {
-            text(out, k, words(keys[r], fb[r]), mx, y, ls, 2, c, alpha);
+            text(out, k, words(keys[r], fb[r]), lx, y, ls, 0, c, alpha);
         }
-        if (r < 2) {
-            volume_bar(out, a, k, mx, y + (rows == 5 ? 36 : 42) * sc, bw * 0.26f, hb->volume[r], r == hb->row, alpha);
+        if (r <= HB_ROW_SFX) {
+            float w = bw * 0.2f;
+            volume_bar(out, a, k, vx + w / 2, y + 2 * sc, w, hb->volume[r], r == hb->row, alpha);
             continue;
         }
-        if (r == 3) {   // Item Switch: the choice under it, between arrows
+        const char *v;
+        int first = 0, last = 0;   // no arrow past the ends of the sizes
+        if (r == HB_ROW_ITEM_SWITCH) {
             static const char *sk[HB_SWITCH_N] = {"help.settings.switch.stick", "help.settings.switch.front",
                                                   "help.settings.switch.rear", "help.settings.switch.both"};
             static const char *sf[HB_SWITCH_N] = {"Right Stick", "Front Touch", "Rear Touch", "Front + Rear Touch"};
-            float vy = (rows == 5 ? 32 : 40) * sc;
-            const char *v = words(sk[hb->item_switch], sf[hb->item_switch]);
-            float w = as_render_host_text_width(v) * 26 * sc / 20;
-            text(out, k, v, mx, y + vy, 26 * sc, 2, c, alpha);
-            text(out, k, "<", mx - w / 2 - 16 * sc, y + vy, 26 * sc, 2, c, alpha);
-            text(out, k, ">", mx + w / 2 + 16 * sc, y + vy, 26 * sc, 2, c, alpha);
-            continue;
+            v = words(sk[hb->item_switch], sf[hb->item_switch]);
+        } else if (r == HB_ROW_HUD) {
+            static const char *hk[HB_HUD_N] = {"help.settings.size.small", "help.settings.size.normal",
+                                               "help.settings.size.large", "help.settings.size.xlarge"};
+            static const char *hf[HB_HUD_N] = {"Small", "Normal", "Large", "Extra Large"};
+            v = words(hk[hb->hud_size], hf[hb->hud_size]);
+            first = hb->hud_size == 0;
+            last = hb->hud_size == HB_HUD_N - 1;
+        } else if (r == HB_ROW_TEXT) {
+            static const char *tk[HB_TEXT_N] = {"help.settings.size.normal", "help.settings.size.large",
+                                                "help.settings.size.xlarge"};
+            static const char *tf[HB_TEXT_N] = {"Normal", "Large", "Extra Large"};
+            v = words(tk[hb->text_size], tf[hb->text_size]);
+            first = hb->text_size == 0;
+            last = hb->text_size == HB_TEXT_N - 1;
+        } else {
+            static const char *vk[2] = {"help.settings.off", "help.settings.on"};
+            static const char *vf[2] = {"Off", "On"};
+            int on = r == HB_ROW_AUTO_POTION ? hb->auto_potion : hb->fresh;
+            v = words(vk[on], vf[on]);
         }
-        // On and Off side by side under it, the one set in the row's colour, the other dimmed
-        static const char *vk[2] = {"help.settings.off", "help.settings.on"};
-        static const char *vf[2] = {"Off", "On"};
-        for (int o = 0; o < 2; o++) {
-            int set = o == (r == 2 ? hb->auto_potion : hb->fresh);
-            text(out, k, words(vk[o], vf[o]), mx + (o ? 70 : -70) * sc, y + (rows == 5 ? 32 : 40) * sc, 30 * sc, 2,
-                 set ? c : INK, set ? alpha : alpha * 0.45f);
-        }
+        float aw = as_render_host_text_width("<") * ls / 20 + 8 * sc;
+        float w = as_render_host_text_width(v) * ls / 20;
+        text(out, k, "<", vx, y, ls, 1, c, first ? alpha * 0.3f : alpha);
+        text(out, k, v, vx + aw, y, ls, 1, c, alpha);
+        text(out, k, ">", vx + aw + w + 8 * sc, y, ls, 1, c, last ? alpha * 0.3f : alpha);
     }
 }
 

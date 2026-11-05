@@ -381,6 +381,7 @@ static int as_mode(int argc, char **argv) {
             snprintf(cc_net_names[p++], sizeof cc_net_names[0], "%s", t);
     }
     if (getenv("CC_AUTO_POTION")) cc_set_auto_potion(vm, 1);   // Help & Options' Auto Potion on
+    if (getenv("CC_HUD_SCALE")) as_render_hud_scale = atof(getenv("CC_HUD_SCALE"));   // Settings' HUD Size
     // CC_SAVE=path: start from a save file (cc_host.c's "CCS2" format), like the Vita's save.dat
     if (getenv("CC_SAVE") && !cc_storage_load(getenv("CC_SAVE")))
         printf("  couldn't read save %s\n", getenv("CC_SAVE"));
@@ -1107,6 +1108,7 @@ static int help_mode(int argc, char **argv) {
         HelpBook hb;
         help_book_open(&hb, book, 7, 10, 1, getenv("HB_NO_FRESH") ? -1 : 1);
         if (book == HB_SETTINGS && getenv("HB_ROW")) hb.row = atoi(getenv("HB_ROW"));
+        if (getenv("HB_HUD")) hb.hud_size = atoi(getenv("HB_HUD"));
         hb.achieved = 1 << 2 | 1 << 4 | 1 << 7 | 1 << 11;
         int pages = book == HB_HOWTO ? HB_HOWTO_PAGES : book == HB_CONTROLS || book == HB_SETTINGS ? 2 : 1;
         for (int pg = 0; pg < pages; pg++) {
@@ -1198,6 +1200,7 @@ static int help_mode(int argc, char **argv) {
 }
 
 int main(int argc, char **argv) {
+    if (getenv("CC_TEXT_SCALE")) pause_menu_text_scale = atof(getenv("CC_TEXT_SCALE"));   // Settings' Menu Text Size
     if (argc > 1 && !strcmp(argv[1], "--help")) return help_mode(argc, argv);
     if (argc > 1 && !strcmp(argv[1], "--as")) return as_mode(argc, argv);
     if (argc > 1 && !strcmp(argv[1], "--sprite")) return sprite_mode(argc, argv);

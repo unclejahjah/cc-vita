@@ -34,6 +34,8 @@ int pause_menu_update(PauseMenu *pm, unsigned pressed, float dt, int *sound);
 // The backdrop (PAUSE.swf's level frame), the page's words and its button prompts, through
 // k (stage pixels -> screen pixels). The book pages get only the backdrop. Needs the game
 // font (as_render_set_font) for the words.
+// Settings' Menu Text Size: the words, their spacing and the prompts at this scale (1 as the game)
+extern float pause_menu_text_scale;
 void pause_menu_build(const PauseMenu *pm, Movie *pause_swf, float k, DrawList *out);
 // The executable's "Saving..." note (its string 596), small at the bottom of the screen while
 // the save is written; alpha fades it.
