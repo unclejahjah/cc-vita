@@ -1150,7 +1150,7 @@ static int help_mode(int argc, char **argv) {
         pages[3] = (HbPage){.title = "Join on this Wi-Fi", .nlines = 2, .chosen = 1, .code_chosen = -1, .accept = "Join",
                             .back = "Back"};
         pages[3].line[0] = "Jah   1/4";
-        pages[3].line[1] = "Alex   2/4";
+        pages[3].line[1] = "Friend   2/4";
         pages[4] = (HbPage){.title = "Public Games", .nlines = 3, .chosen = 0, .code_chosen = -1, .accept = "Join",
                             .back = "Back"};
         pages[4].line[0] = "Jah   1/4";
