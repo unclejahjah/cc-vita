@@ -303,6 +303,83 @@ void cc_enemies_back_inside(AsVm *vm) {
     }
 }
 
+// ---- bees nobody can hit (Flowery Field) ------------------------------------------------
+// Jah 2026-11-10: now and then, after one of the grey knights died, a bee went over to the
+// knights' side and couldn't be hurt. Not caught on the PC yet. A player's hits only test the
+// enemies in _root.enemyArrayOb (f_SetTargets rebuilds it from the e1..eN slots), and
+// f_MeleeCheckHit skips one with nohit or jumping set, so a bee that is up and about but
+// missing from that list, or stuck with one of those flags, can't be hit. Twice a second each
+// such bee is put right (and log.txt says which and how, so the cause can be found):
+//  - missing from the list two checks running: f_SetTargets, and if its slot is gone,
+//    f_InsertEnemy first;
+//  - nohit / jumping still set after 4 s in a stand/walk/dash/fly frame: cleared;
+//  - hanging in the air for 20 s: sent down (fly_timer > 0 makes f_BeeWalk land it).
+// EBEE.swf frames: 3 stand, 4 walk, 5 dash, 6 fly, 12 spawn, 17 die.
+#define BEE_SLOTS 30
+void cc_bees_hittable(AsVm *vm) {
+    static int tick, unlisted[BEE_SLOTS + 1], flagged[BEE_SLOTS + 1], aloft[BEE_SLOTS + 1];
+    if (++tick % 15) return;
+    AsVal root = as_objv(&vm->root->obj), game = game_clip(vm);
+    if (game.t != V_OBJ) return;
+    AsStr *A_alive = as_atom(vm, "alive"), *A_nohit = as_atom(vm, "nohit"), *A_jumping = as_atom(vm, "jumping"),
+          *A_flying = as_atom(vm, "flying"), *A_body_y = as_atom(vm, "body_y"), *A_e_pt = as_atom(vm, "e_pt");
+    AsVal list = as_get(vm, root, as_atom(vm, "enemyArrayOb"));
+    int n = (int)num_of(vm, root, as_atom(vm, "active_enemies"));
+    double level = num_of(vm, root, as_atom(vm, "level"));
+    for (int i = 1; i <= BEE_SLOTS; i++) {
+        char name[32];
+        snprintf(name, sizeof name, "e_bee%d", i);
+        AsVal e = as_get(vm, game, as_atom(vm, name));
+        AsMc *mc = e.t == V_OBJ && e.o->type == OBJ_MC ? (AsMc *)e.o : NULL;
+        int frame = mc ? mc->frame + 1 : 0;
+        if (!mc || !as_tobool(vm, as_get(vm, e, A_active)) || !as_tobool(vm, as_get(vm, e, A_alive)) ||
+            frame == 2 || frame == 12 || frame == 17) {
+            unlisted[i] = flagged[i] = aloft[i] = 0;
+            continue;
+        }
+        int listed = 0;
+        for (int k = 1; k <= n && k <= 64 && list.t == V_OBJ; k++) {
+            snprintf(name, sizeof name, "e%d", k);
+            AsVal x = as_get(vm, list, as_atom(vm, name));
+            if (x.t == V_OBJ && x.o == e.o) { listed = 1; break; }
+        }
+        if (listed) unlisted[i] = 0;
+        else if (++unlisted[i] >= 2) {
+            double pt = num_of(vm, e, A_e_pt);
+            int in_slot = 0;
+            if (pt == (int)pt && pt >= 1) {
+                snprintf(name, sizeof name, "e%d", (int)pt);
+                AsVal x = as_get(vm, game, as_atom(vm, name));
+                in_slot = x.t == V_OBJ && x.o == e.o;
+            }
+            AsVal prey = as_get(vm, e, as_atom(vm, "prey"));
+            AsMc *pm = prey.t == V_OBJ && prey.o->type == OBJ_MC ? (AsMc *)prey.o : NULL;
+            as_warn(vm, "bee fix: level %g e_bee%d alive but not in the enemy list (e_pt %s%s, frame %d, prey %s)", level, i,
+                    as_tostr(vm, as_get(vm, e, A_e_pt))->s, in_slot ? "" : ", slot lost", frame,
+                    pm && pm->name ? pm->name->s : "-");
+            if (!in_slot) as_call_method(vm, root, "f_InsertEnemy", 1, &e);
+            as_call_method(vm, root, "f_SetTargets", 0, NULL);
+            unlisted[i] = 0;
+        }
+        int stuck = (frame >= 3 && frame <= 6) &&
+                    (as_tobool(vm, as_get(vm, e, A_nohit)) || as_tobool(vm, as_get(vm, e, A_jumping)));
+        if (!stuck) flagged[i] = 0;
+        else if (++flagged[i] >= 8) {
+            as_warn(vm, "bee fix: level %g e_bee%d stuck with nohit %s jumping %s (frame %d)", level, i,
+                    as_tostr(vm, as_get(vm, e, A_nohit))->s, as_tostr(vm, as_get(vm, e, A_jumping))->s, frame);
+            as_set(vm, e, A_nohit, as_bool(0));
+            as_set(vm, e, A_jumping, as_bool(0));
+            flagged[i] = 0;
+        }
+        if (!(as_tobool(vm, as_get(vm, e, A_flying)) && num_of(vm, e, A_body_y) < -20)) aloft[i] = 0;
+        else if (++aloft[i] >= 40) {
+            as_warn(vm, "bee fix: level %g e_bee%d in the air for 20 s (body_y %g), sent down", level, i, num_of(vm, e, A_body_y));
+            as_set(vm, e, as_atom(vm, "fly_timer"), as_num(30));
+            aloft[i] = 0;
+        }
+    }
+}
+
 // ---- f_GetDefaultWeapon(hud): the weapon each character starts with --------------------
 // Same table as the script. One addition: f_LoadCharacterData calls it right after
 // reading the saved weapon and just before the four stats, and a character that was

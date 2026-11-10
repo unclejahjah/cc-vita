@@ -441,3 +441,17 @@ screen-sized texture without MSAA once per tick (main.c vignette_rt_draw; a smal
 the wrong size on the Vita), and on
 boot the knights' loading screen covers from the intro end while it's read (cc_loading_hold); it's
 not read during the intro (that slowed the intro down).
+
+### Bees nobody can hit (2026-11-10, Flowery Field = LEVEL28)
+- Jah: rarely, after a grey knight (the level's NPC friends, p5-p10 from f_MakeFriend) dies, a bee
+  sides with the knights and can't be hurt. Not reproduced: 70+ hosttest runs (seeds, knights
+  killed by bees or by f_Damage) all fine. A player's hits only test _root.enemyArrayOb (rebuilt by
+  f_SetTargets from the e1..e30 slots) and f_MeleeCheckHit skips nohit/jumping targets.
+- Safety net cc_bees_hittable (cc_native.c, every 15 ticks, any level): an up-and-about e_beeN
+  (not frame 2 blank / 12 spawn / 17 die) missing from the list twice running -> f_InsertEnemy if its
+  slot is gone, then f_SetTargets; nohit/jumping stuck 4 s in frames 3-6 -> cleared; flying 20 s
+  -> fly_timer 30 (lands). Each writes a "bee fix: ..." line to log.txt: read it to find the cause.
+- hosttest: CC_BEE_LOG=N prints the bees, the e-slots and p1-p12 every N frames; CC_SEED=n gives
+  random() another sequence. EBEE.swf: onLoad of the spawn clip sets alive false and calls
+  s_SetTargets; when spawn_timer runs out, alive true, s_SetTargets, "fly".
+

@@ -503,6 +503,7 @@ static int as_mode(int argc, char **argv) {
     const char *keys = getenv("CC_KEYS");
     int covering = 0;   // CC_RESTART_COVER: the loading screen comes in before the restart, as on the Vita
     for (int f = 0; f < frames; f++) {
+        if (getenv("CC_SEED") && f == 0) vm->rand_state = (uint32_t)atoll(getenv("CC_SEED"));   // CC_SEED=n: another random() sequence
         if (cc_loading_hold > 1 && f >= cc_loading_hold) cc_loading_hold = 0;   // CC_BOOT_LOADING=N lets go
         if (getenv("CC_RESTART_AT") && f == atoi(getenv("CC_RESTART_AT")) && getenv("CC_RESTART_COVER") && !covering)
             covering = 1;
@@ -690,6 +691,71 @@ static int as_mode(int argc, char **argv) {
                        as_tostr(vm, as_get(vm, e, as_str(vm, "x")))->s, as_tostr(vm, as_get(vm, e, as_str(vm, "y")))->s,
                        as_tostr(vm, as_resolve_path(vm, vm->root, "kills", &found))->s,
                        as_tostr(vm, as_resolve_path(vm, vm->root, "kills_goal", &found))->s);
+            }
+        }
+        // CC_BEE_LOG=every: each bee's state every N frames (Flowery Field's bees)
+        if (getenv("CC_BEE_LOG") && f % atoi(getenv("CC_BEE_LOG")) == 0) {
+            int found;
+            AsVal eo = as_resolve_path(vm, vm->root, "enemyArrayOb", &found);
+            int nact = (int)as_tonum(vm, as_resolve_path(vm, vm->root, "active_enemies", &found));
+            for (int i = 1; i <= 30; i++) {
+                char path[64];
+                snprintf(path, sizeof path, "loader.game.game.e_bee%d", i);
+                AsVal e = as_resolve_path(vm, vm->root, path, &found);
+                if (!found || e.t != V_OBJ || (!as_tobool(vm, as_get(vm, e, as_str(vm, "active"))) && !as_tobool(vm, as_get(vm, e, as_str(vm, "alive"))))) continue;
+                int listed = 0;
+                for (int k = 1; k <= nact && eo.t == V_OBJ; k++) {
+                    char kn[16]; snprintf(kn, sizeof kn, "e%d", k);
+                    AsVal x = as_get(vm, eo, as_str(vm, kn));
+                    if (x.t == V_OBJ && x.o == e.o) listed = 1;
+                }
+                AsVal prey = as_get(vm, e, as_str(vm, "prey"));
+                AsMc *pm = prey.t == V_OBJ && prey.o->type == OBJ_MC ? (AsMc *)prey.o : NULL;
+                AsMc *em = e.o->type == OBJ_MC ? (AsMc *)e.o : NULL;
+                printf("  [bee] f%d e_bee%d act %d alive %s hp %s x %s y %s body_y %s fly %s frame %d listed %d e_pt %s prey %s spawn_timer %s jumping %s nohit %s inv %s\n", f, i, as_tobool(vm, as_get(vm, e, as_str(vm, "active"))),
+                       as_tostr(vm, as_get(vm, e, as_str(vm, "alive")))->s, as_tostr(vm, as_get(vm, e, as_str(vm, "health")))->s,
+                       as_tostr(vm, as_get(vm, e, as_str(vm, "x")))->s, as_tostr(vm, as_get(vm, e, as_str(vm, "y")))->s,
+                       as_tostr(vm, as_get(vm, e, as_str(vm, "body_y")))->s, as_tostr(vm, as_get(vm, e, as_str(vm, "flying")))->s,
+                       em ? em->frame + 1 : -1, listed, as_tostr(vm, as_get(vm, e, as_str(vm, "e_pt")))->s,
+                       pm && pm->name ? pm->name->s : "-", as_tostr(vm, as_get(vm, e, as_str(vm, "spawn_timer")))->s,
+                       as_tostr(vm, as_get(vm, e, as_str(vm, "jumping")))->s, as_tostr(vm, as_get(vm, e, as_str(vm, "nohit")))->s,
+                       as_tostr(vm, as_get(vm, e, as_str(vm, "invincible_timer")))->s);
+            }
+        }
+        if (getenv("CC_BEE_LOG") && f % atoi(getenv("CC_BEE_LOG")) == 0) {   // the e1..e30 slots: taken, by whom
+            int found, taken = 0, dup = 0;
+            AsObj *seen[64]; char line[2048]; int ln = 0;
+            for (int i = 1; i <= 40; i++) {
+                char path[64];
+                snprintf(path, sizeof path, "loader.game.game.e%d", i);
+                AsVal e = as_resolve_path(vm, vm->root, path, &found);
+                if (!found || e.t != V_OBJ) continue;
+                int act = as_tobool(vm, as_get(vm, e, as_str(vm, "active")));
+                if (act) taken++;
+                for (int k = 0; k < taken - act && k < 64; k++) if (seen[k] == e.o) dup++;
+                if (act && taken <= 64) seen[taken - 1] = e.o;
+                AsMc *em = e.o->type == OBJ_MC ? (AsMc *)e.o : NULL;
+                ln += snprintf(line + ln, sizeof line - ln, " e%d=%s%s/%s", i, em && em->name ? em->name->s : "?", act ? "" : "(off)",
+                               as_tostr(vm, as_get(vm, e, as_str(vm, "e_pt")))->s);
+                if (ln > 1900) break;
+            }
+            printf("  [slots] f%d taken %d dup %d:%s\n", f, taken, dup, line);
+        }
+        if (getenv("CC_BEE_LOG") && f % atoi(getenv("CC_BEE_LOG")) == 0) {   // and the players / knights
+            int found;
+            for (int i = 1; i <= 12; i++) {
+                char path[64];
+                snprintf(path, sizeof path, "loader.game.game.p%d", i);
+                AsVal e = as_resolve_path(vm, vm->root, path, &found);
+                if (!found || e.t != V_OBJ || !as_tobool(vm, as_get(vm, e, as_str(vm, "active")))) continue;
+                AsVal prey = as_get(vm, e, as_str(vm, "prey"));
+                AsMc *pm = prey.t == V_OBJ && prey.o->type == OBJ_MC ? (AsMc *)prey.o : NULL;
+                AsMc *em = e.o->type == OBJ_MC ? (AsMc *)e.o : NULL;
+                printf("  [plr] f%d p%d alive %s hp %s x %s y %s frame %d npc %s prey %s follow %s\n", f, i,
+                       as_tostr(vm, as_get(vm, e, as_str(vm, "alive")))->s, as_tostr(vm, as_get(vm, e, as_str(vm, "health")))->s,
+                       as_tostr(vm, as_get(vm, e, as_str(vm, "x")))->s, as_tostr(vm, as_get(vm, e, as_str(vm, "y")))->s,
+                       em ? em->frame + 1 : -1, as_tostr(vm, as_get(vm, e, as_str(vm, "npc")))->s,
+                       pm && pm->name ? pm->name->s : "-", as_tostr(vm, as_get(vm, e, as_str(vm, "follow")))->s);
             }
         }
         static int prof_from = -1;
