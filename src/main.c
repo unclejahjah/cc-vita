@@ -1971,7 +1971,10 @@ static int title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, siz
     unsigned frame = 0;
     for (;;) {
         if (frame < 4 || frame % 60 == 0 && frame <= 600) TITLE_TRACE("title: frame %u (video memory %d MB free)", frame, cdram_free_mb());
-        if (lazy_meshes("MENU.swf") && frame % 30 == 15) title_upload_menu(cache, cache_mem, cache_bytes);
+        if (lazy_meshes("MENU.swf") && frame % 30 == 15) {
+            title_upload_menu(cache, cache_mem, cache_bytes);
+            upload_drawn_meshes(cache, cache_mem, cache_bytes);   // the title scene's other files
+        }
         preload_step(PRELOAD_TITLE);
         if (vignette_file && !vignettes && cached_movie_peek("MENU_VIGNETTES.swf")) {   // read: it's cached now
             TITLE_TRACE("title: scenes read");
