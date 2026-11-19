@@ -636,9 +636,26 @@ static AsVal set_player_magic(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
     return call_script(vm, "f_SetPlayerMagic", set_player_magic, this_, 3, args);
 }
 
+// f_PunchSet2(zone): a Pink Knight-based custom character's magic would start with PLAYER.swf's
+// "pink_cast", a pre-drawn Pink Knight (not built from the part clips the painting covers); it
+// casts with the knights' "magic1" instead, which throws the same magic.
+static AsVal punch_set2(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
+    AsVal r = call_script(vm, "f_PunchSet2", punch_set2, this_, argc, argv);
+    AsVal z = argc > 0 ? argv[0] : as_undef();
+    if (z.t != V_OBJ) return r;
+    int t = as_toint32(vm, as_get(vm, z, as_atom(vm, "p_type")));
+    if (cc_custom_slot(t) < 0 || as_toint32(vm, as_get(vm, z, as_atom(vm, "magic_type"))) != 30) return r;
+    AsMc *mc = as_mc_resolve_target(vm, vm->root, z);
+    if (!mc) return r;
+    int pink = as_mc_frame_of(mc, as_strv(as_str(vm, "pink_cast"))), magic = as_mc_frame_of(mc, as_strv(as_str(vm, "magic1")));
+    if (pink >= 0 && magic >= 0 && mc->frame == pink) as_mc_goto(vm, mc, magic, 0);
+    return r;
+}
+
 void cc_custom_init(AsVm *vm) {
     if (!cc_custom_count() && !cc_paintjr_p_type()) return;
     as_override(vm, "f_InitSaveSystem", init_save_system);
     as_override(vm, "f_InitCharColors", init_char_colors);
     if (cc_custom_count()) as_override(vm, "f_SetPlayerMagic", set_player_magic);
+    if (cc_custom_count()) as_override(vm, "f_PunchSet2", punch_set2);
 }
