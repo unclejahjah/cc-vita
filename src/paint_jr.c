@@ -1,5 +1,6 @@
 // Paint Jr. as an add-on: see paint_jr.h.
 #include "paint_jr.h"
+#include "custom_char.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -132,7 +133,8 @@ int cc_paintjr_part(const Movie *m, const Sprite *s, int frame, int p_type, Movi
         file = 0, f = PENCIL - 1;
     } else if (p_type == CC_PAINTJR_P_TYPE && cc_paintjr_p_type()) {   // his frame
         file = 0, f = CC_PAINTJR_P_TYPE;
-    } else if (p_type >= 1 && cc_fresh()) {   // the PC's version of the frame it shows
+    } else if (p_type >= 1 && p_type < CC_CUSTOM_P_TYPE && cc_fresh()) {   // the PC's version of the frame it shows
+        // (not for custom characters: they paint the original part clips with their own painting)
         file = frame + 1, f = frame;
     } else {
         return 0;
