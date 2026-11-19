@@ -619,6 +619,23 @@ static int as_mode(int argc, char **argv) {
             }
             as_mouse(vm, tx, ty, down);
         }
+        // CC_PRINT="path,...|every": print values (debugging)
+        if (getenv("CC_PRINT")) {
+            char buf[256];
+            snprintf(buf, sizeof buf, "%s", getenv("CC_PRINT"));
+            char *bar = strchr(buf, '|');
+            int ev = bar ? atoi(bar + 1) : 10;
+            if (bar) *bar = 0;
+            if (ev > 0 && f % ev == 0) {
+                printf("  [print %d]", f);
+                for (char *a = strtok(buf, ","); a; a = strtok(NULL, ",")) {
+                    int found;
+                    AsVal v = as_resolve_path(vm, vm->root, a, &found);
+                    printf(" %s=%s", a, found ? as_tostr(vm, v)->s : "?");
+                }
+                printf("\n");
+            }
+        }
         // CC_SET="frame:object_path.name=number,...": set a script variable (e.g. move a player)
         for (const char *p = getenv("CC_SET"); p && *p;) {
             char lhs[160] = "";

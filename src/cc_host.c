@@ -1274,6 +1274,7 @@ void cc_host_init(AsVm *vm) {
     // character select offers every unlocked character, not just the four knights (the
     // executable sets this for the full game; the DLC characters are treated as owned)
     cc_set_flash_global(vm, "g_bAllowHiddenCharacters", as_bool(1));
+    if (cc_mod_refracted && getenv("CC_NEWGFX")) cc_set_flash_global(vm, "g_bEnableNewGraphics", as_bool(1));
     cc_own_dlc_characters();
     cc_own_dlc_items();
     as_def_fn(vm, g, "GetGameMode", game_mode);
@@ -1321,8 +1322,8 @@ void cc_host_init(AsVm *vm) {
     // GetCheat(n): MAIN.swf ships a developer version on _root that turns most cheats on
     // (every combo and magic at level 1, every character, animals without unlocking). The
     // executable's answer is no cheats, so both the global and MAIN's own are replaced.
-    as_def_fn(vm, g, "GetCheat", ret_false);
-    as_override(vm, "GetCheat", ret_false);
+    as_def_fn(vm, g, "GetCheat", getenv("CC_CHEATS") ? ret_true : ret_false);   // (hosttest: CC_CHEATS)
+    as_override(vm, "GetCheat", getenv("CC_CHEATS") ? ret_true : ret_false);
     // MAIN defines its own IsFullGame on _root, but level scripts call the executable's
     // (they can't see _root's functions): this is the full game
     as_def_fn(vm, g, "IsFullGame", ret_true);
