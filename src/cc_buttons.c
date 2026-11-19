@@ -4,6 +4,7 @@
 // trigger shapes with dark "LT"/"RT"). Here the letter fill is swapped for a
 // PlayStation symbol and the ball recoloured, so prompts keep the game's look.
 #include "cc_buttons.h"
+#include "cc_host.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -593,6 +594,34 @@ int cc_buttons_playstation(Movie *m, int style) {
     for (int i = 0; i < 4; i++) {
         Shape *s = exported_shape(m, balls[i].name);
         if (s && !s->tessellated) { make_ball(s, balls[i].which, style); done++; }
+    }
+    // Refracted's own files (the PDA games, Volleyball's menu) draw the same balls without
+    // exporting them: know them by their colours
+    if (!done && cc_mod_refracted) {
+        static const struct { uint32_t a, b; int which; } sig[] = {
+            {0x66cc33, 0x66ff66, CC_BTN_CROSS}, {0xcc0000, 0xff0000, CC_BTN_CIRCLE},
+            {0x6699ff, 0x66ccff, CC_BTN_SQUARE}, {0xffcc00, 0xffff00, CC_BTN_TRIANGLE}};
+        for (int c = 0; c < 65536; c++) {
+            if (m->chars[c].type != CHAR_SHAPE) continue;
+            Shape *s = m->chars[c].ptr;
+            if (s->tessellated || s->nfills < 4 || s->nfills > 8) continue;
+            int black = 0, white = 0;
+            uint32_t have[8];
+            for (int f = 0; f < s->nfills; f++) {
+                const uint8_t *k = s->fills[f].style.color;
+                have[f] = (uint32_t)k[0] << 16 | k[1] << 8 | k[2];
+                black |= have[f] == 0;
+                white |= have[f] == 0xffffff;
+            }
+            Box b = fill_box(&s->fills[0]);
+            float w = (b.x1 - b.x0) / 20, h = (b.y1 - b.y0) / 20;
+            if (!black || !white || w > 60 || h > 60) continue;
+            for (int i = 0; i < 4; i++) {
+                int ga = 0, gb = 0;
+                for (int f = 0; f < s->nfills; f++) { ga |= have[f] == sig[i].a; gb |= have[f] == sig[i].b; }
+                if (ga && gb) { make_ball(s, sig[i].which, style); done++; break; }
+            }
+        }
     }
     Shape *l = exported_shape(m, "Ltrigger"), *r = exported_shape(m, "Rtrigger");
     if (l && !l->tessellated) { make_trigger(l, 'L'); done++; }

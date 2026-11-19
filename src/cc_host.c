@@ -93,6 +93,10 @@ static AsVal set_port_state(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
 
 // ---- console settings -------------------------------------------------------------
 
+static AsVal ret_one(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
+    (void)vm; (void)this_; (void)argc; (void)argv;
+    return as_num(1);
+}
 static AsVal ret_true(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
     (void)vm; (void)this_; (void)argc; (void)argv;
     return as_bool(1);
@@ -1328,6 +1332,8 @@ void cc_host_init(AsVm *vm) {
         as_def_fn(vm, g, "IsPlayerInSession", is_player_in_session);
         as_def_fn(vm, g, "GetPlayerPort", get_player_port);
         as_def_fn(vm, g, "SetControllerLEDs", ret_undef);
+        as_def_fn(vm, g, "ResetControllerLEDs", ret_undef);
+        as_def_fn(vm, g, "GetHostPort", ret_one);   // Volleyball's menu (console_version): player 1 hosts
     }
     as_def_fn(vm, g, "RichPresence", ret_undef);       // platform presence text
     as_def_fn(vm, g, "UnlockAchievement", unlock_achievement);

@@ -524,7 +524,8 @@ static int find_file(const char *base, char *path, size_t n, int *is_level) {
         // levels/ (and All You Can Quaff, whose scripts run the developer's quick start where
         // it's false): console_version reads true in its scripts (cc_host.c)
         // (and Refracted's PDA games; Back Off Barbarian is a PC game, 1280x720: its PC path)
-        *is_level = i == 1 || !strcasecmp(base, "QUOFF.swf") || !strcasecmp(base, "PDAGAMES.swf");
+        *is_level = i == 1 || !strcasecmp(base, "QUOFF.swf") || !strcasecmp(base, "PDAGAMES.swf") ||
+                    (cc_mod_refracted && !strcasecmp(base, "VMENU.swf"));   // console_version true, as Steam
         return 1;
     }
     return 0;

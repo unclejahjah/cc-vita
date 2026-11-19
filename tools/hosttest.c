@@ -269,7 +269,8 @@ static Movie *host_loader(AsVm *vm, const char *url) {
                 snprintf(path, sizeof path, "%s/%s", dirpath, de->d_name);
                 closedir(d);
                 Movie *m = swf_load(path, err, sizeof err);
-                if (m) m->is_level = i == 1 || !strcasecmp(base, "QUOFF.swf") || !strcasecmp(base, "PDAGAMES.swf");   // as the Vita
+                if (m) m->is_level = i == 1 || !strcasecmp(base, "QUOFF.swf") || !strcasecmp(base, "PDAGAMES.swf") ||
+                                      (cc_mod_refracted && !strcasecmp(base, "VMENU.swf"));   // as the Vita
                 int fixed = m ? cc_repair_level(m) : 0;
     if (m && getenv("CC_DUMP_SHAPE") && !strcmp(base, "MENU.swf")) {
         extern void cc_dump_shape(Movie *m, int cid);
@@ -338,6 +339,7 @@ static int as_mode(int argc, char **argv) {
     if (argc < 5) { fprintf(stderr, "usage: %s --as GAME_DIR START.swf out_prefix [frames] [snap_every]\n", argv[0]); return 1; }
     snprintf(game_dir, sizeof game_dir, "%s", argv[2]);
     int frames = argc > 5 ? atoi(argv[5]) : 60, every = argc > 6 ? atoi(argv[6]) : 30;
+    if (getenv("CC_REFRACTED")) cc_mod_refracted = 1;   // before the first load (its buttons)
     Movie *start = host_loader(NULL, argv[3]);
     if (!start) return 1;
     printf("root: %d frames, %d scripts:", start->root.nframes, start->root.nactions);
