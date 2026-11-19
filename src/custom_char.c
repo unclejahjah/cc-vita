@@ -143,7 +143,9 @@ int cc_custom_slot(int p_type) {
 }
 int cc_custom_base(int p_type) {
     int i = cc_custom_slot(p_type);
-    return i < 0 ? 0 : g_slot[i]->base;
+    if (i < 0) return 0;
+    // base 32 (Paint Jr.) only while his files are there, else the Green Knight
+    return g_slot[i]->base == CC_PAINTJR_P_TYPE && !cc_paintjr_p_type() ? 1 : g_slot[i]->base;
 }
 const char *cc_custom_name(int i) { return i >= 0 && i < g_count ? g_slot[i]->name : ""; }
 void cc_custom_new_frame(void) { g_frame++; }
@@ -480,7 +482,7 @@ static Slot *load_slot(const Source *src) {
     s->base = 1;
     char v[64];
     if (xml_attr(xml, "displayname", v, sizeof v)) snprintf(s->name, sizeof s->name, "%s", v);
-    if (xml_attr(xml, "base", v, sizeof v) && atoi(v) >= 1 && atoi(v) <= CC_CHARACTERS) s->base = atoi(v);
+    if (xml_attr(xml, "base", v, sizeof v) && atoi(v) >= 1 && atoi(v) <= CC_PAINTJR_P_TYPE) s->base = atoi(v);   // 32: Paint Jr.
     return s;
 }
 
@@ -598,7 +600,7 @@ static AsVal init_char_colors(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
     AsVal colors = as_get(vm, root, as_atom(vm, "char_colors"));
     if (cc_paintjr_p_type()) copy_color(vm, colors, as_get(vm, root, as_atom(vm, "color_blue")), CC_PAINTJR_P_TYPE);
     for (int i = 0; i < cc_custom_count(); i++) {
-        int b = g_slot[i]->base;
+        int b = cc_custom_base(CC_CUSTOM_P_TYPE + i);
         AsVal base = b <= 4 ? as_get(vm, root, as_atom(vm, KNIGHT[b]))
                             : (colors.t == V_OBJ && b < colors.o->nitems ? colors.o->items[b] : as_undef());
         copy_color(vm, colors, base, CC_CUSTOM_P_TYPE + i);
