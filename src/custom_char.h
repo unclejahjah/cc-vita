@@ -63,7 +63,7 @@ const BitmapFill *cc_custom_weapon(void);
 
 // Clips outside PLAYER.swf that show a character's face, found by their instance names
 // (as_render.c): the HUD's face and the character select portrait of custom character p_type.
-enum { CC_ICON, CC_PORTRAIT };
+enum { CC_ICON, CC_PORTRAIT, CC_MAPPIC };   // CC_MAPPIC: MAP.swf's stats panel character.pic
 const BitmapFill *cc_custom_named(int which, int p_type);
 
 #endif

@@ -267,6 +267,12 @@ static const BitmapFill *custom_part(AsMc *mc) {
     // the frame asked for is what tells
     if (mc->name && !strncmp(mc->name->s, "portrait_", 9))
         return cc_custom_named(CC_PORTRAIT, (mc->frame == mc->goto_got ? mc->goto_want : mc->frame) - 2);
+    // MAP.swf's stats panels (statsN.character.pic, after a level and on the map): frame p_type,
+    // or 103 + p_type with the newer pictures (its "player_new" frames)
+    if (named(mc, "pic") && named(mc->parent, "character")) {
+        int f = mc->frame == mc->goto_got ? mc->goto_want : mc->frame;
+        return cc_custom_named(CC_MAPPIC, f >= 103 ? f - 102 : f + 1);
+    }
     if (named(mc, "pic") && named(mc->parent, "pic") && mc->parent->parent) {
         AsProp *pp = as_own(&mc->parent->parent->obj, A_player_pt);
         AsVal v = pp ? pp->v : (AsVal){0};

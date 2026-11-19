@@ -104,6 +104,9 @@ static const Part PARTS[] = {
     // extent) and the character select portrait (LOBBY.swf portrait_mid/top/bot)
     {G_NAMED, CC_ICON, 36, PART_ALWAYS, 2.75f, 0, 0, 267.1f, -238.9f},
     {G_NAMED, CC_PORTRAIT, 37, PART_ALWAYS, 1.05f, 0, 0, 126.0f, 250.0f},
+    // MAP.swf's stats panel picture (character.pic, a head and shoulders): the HUD face box,
+    // fitted across the width of the Green Knight's picture there (frame 1's art extent)
+    {G_NAMED, CC_MAPPIC, 36, PART_ALWAYS, 0.405f, 0, 0, 67.4f, 55.5f},
 };
 #define NPARTS ((int)(sizeof PARTS / sizeof PARTS[0]))
 
@@ -128,6 +131,7 @@ typedef struct {
     Bitmap small_bm[NSMALL];
     int16_t small_rect[NSMALL][4];   // the template rect each small texture covers
     BitmapFill small[NSMALL];
+    BitmapFill mappic;           // the HUD face box, placed for MAP.swf's character.pic
 } Slot;
 
 static Slot *g_slot[CC_CUSTOM_MAX];
@@ -258,6 +262,7 @@ const BitmapFill *cc_custom_weapon(void) {
 const BitmapFill *cc_custom_named(int which, int p_type) {
     int i = cc_custom_slot(p_type);
     if (i < 0) return NULL;
+    if (which == CC_MAPPIC) return &g_slot[i]->mappic;
     return &g_slot[i]->small[which == CC_ICON ? SMALL_ICON : SMALL_PORTRAIT];
 }
 
@@ -476,7 +481,9 @@ static Slot *load_slot(const Source *src) {
     for (int i = 0; i < NPARTS; i++) make_fill(&PARTS[i], &s->fill[i], &s->bm, whole);
     for (int k = 0; k < NSMALL; k++) {
         for (int i = 0; i < NPARTS; i++)
-            if (PARTS[i].box == SMALL_BOX[k]) make_fill(&PARTS[i], &s->small[k], &s->small_bm[k], s->small_rect[k]);
+            if (PARTS[i].box == SMALL_BOX[k])
+                make_fill(&PARTS[i], PARTS[i].group == G_NAMED && PARTS[i].nth == CC_MAPPIC ? &s->mappic : &s->small[k],
+                          &s->small_bm[k], s->small_rect[k]);
     }
     snprintf(s->name, sizeof s->name, "CUSTOM");
     s->base = 1;
