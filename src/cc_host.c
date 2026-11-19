@@ -97,6 +97,14 @@ static AsVal ret_true(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
     (void)vm; (void)this_; (void)argc; (void)argv;
     return as_bool(1);
 }
+// GetMagicTypeOverride(type, human): the PC executable's magic type for a character (a Workshop
+// character's own pick, else the character's): the character's. Refracted's f_SetPlayerMagic
+// asks it for every knight, and undefined there left the magic blank (casting locked the knight).
+static AsVal magic_type_override(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
+    (void)vm; (void)this_;
+    return ARG(0);
+}
+
 static AsVal ret_false(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
     (void)vm; (void)this_; (void)argc; (void)argv;
     return as_bool(0);
@@ -1277,6 +1285,8 @@ void cc_host_init(AsVm *vm) {
     // MAIN defines its own IsFullGame on _root, but level scripts call the executable's
     // (they can't see _root's functions): this is the full game
     as_def_fn(vm, g, "IsFullGame", ret_true);
+    as_def_fn(vm, g, "GetMagicTypeOverride", magic_type_override);   // the Steam executable (Refracted)
+    as_def_fn(vm, g, "EnablePostProcess", ret_undef);
     as_def_fn(vm, g, "RichPresence", ret_undef);       // platform presence text
     as_def_fn(vm, g, "UnlockAchievement", unlock_achievement);
     as_def_fn(vm, g, "VibrateController", ret_undef);  // the Vita has no rumble
