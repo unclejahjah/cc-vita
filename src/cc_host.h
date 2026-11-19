@@ -33,7 +33,8 @@ int cc_bind_is_default(void);
 // (CC_MODE_VOLLEYBALL is the PS3's volleyball mini game, its mode 1: cc_volleyball_tick sends
 // character select on to the PS3's court picker (VMENU.swf) and makes MAIN.swf play as the PS3's
 // does in that mode; nothing of it is saved)
-enum { CC_MODE_STORY = 0, CC_MODE_QUAFF = 1, CC_MODE_ARENA = 3, CC_MODE_VOLLEYBALL = 10 };
+// CC_MODE_MINIGAMES: Refracted's mini games (its lobby goes on to MMENU.swf: Quaff, Volleyball...)
+enum { CC_MODE_STORY = 0, CC_MODE_QUAFF = 1, CC_MODE_ARENA = 3, CC_MODE_MINIGAMES = 4, CC_MODE_VOLLEYBALL = 10 };
 // Refracted build (CC_MOD_REFRACTED): the mod's own MAIN/PLAYER/... run as they are, so the
 // vanilla-only add-ons (custom characters, Paint Jr., custom animal, weapon looks) stay off and
 // the natives follow the mod's versions of the functions they stand in for.
@@ -44,6 +45,10 @@ void cc_volleyball_tick(AsVm *vm);   // before every game tick
 // title shows Cross); before every game tick too
 int cc_quaff_title(AsVm *vm);
 extern int cc_quit_requested;   // a mini game called QuitTo/ChangeMovie: back to the title
+// Refracted: QuitTo("pdagames.cok6") / QuitTo("backoffb.cok6") from its mini games menu: the
+// next game starts in that file (PDAGAMES.swf, BACKOFFB.swf) instead of the title
+extern char cc_quit_to_file[32];
+void cc_stage_init(AsVm *vm);   // Stage.width/height (Refracted), after the root is made
 extern int cc_net_port;
 extern char cc_net_names[4][32];
 

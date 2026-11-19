@@ -100,6 +100,15 @@ static AsVal ret_true(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
 // GetMagicTypeOverride(type, human): the PC executable's magic type for a character (a Workshop
 // character's own pick, else the character's): the character's. Refracted's f_SetPlayerMagic
 // asks it for every knight, and undefined there left the magic blank (casting locked the knight).
+static AsVal is_player_in_session(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
+    (void)this_;
+    return as_bool(as_toint32(vm, ARG(0)) == 0);
+}
+static AsVal get_player_port(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
+    (void)this_;
+    return as_num(as_toint32(vm, ARG(0)));
+}
+
 static AsVal magic_type_override(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
     (void)vm; (void)this_;
     return ARG(0);
@@ -344,9 +353,16 @@ static int volley_courts(AsVm *vm, int port) {
     return bits;
 }
 
+char cc_quit_to_file[32];
 static AsVal quit_to(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
-    (void)vm; (void)this_; (void)argc; (void)argv;
+    (void)this_;
     cc_quit_requested = 1;
+    cc_quit_to_file[0] = 0;
+    if (cc_mod_refracted && argc >= 1) {
+        const char *w = as_tostr(vm, argv[0])->s;
+        if (!strcasecmp(w, "pdagames.cok6")) snprintf(cc_quit_to_file, sizeof cc_quit_to_file, "PDAGAMES.swf");
+        if (!strcasecmp(w, "backoffb.cok6")) snprintf(cc_quit_to_file, sizeof cc_quit_to_file, "BACKOFFB.swf");
+    }
     return as_undef();
 }
 
@@ -1145,7 +1161,12 @@ static const char *volley_text(int n) {
 static const char *text_for_number(AsVm *vm, int n) {
     const char *s = cc_game_mode == CC_MODE_VOLLEYBALL ? volley_text(n) : NULL;
     if (!s) s = cc_animal_text(vm, n);   // the Vet's words for a custom animal orb
-    return s ? s : strtab_number(n);
+    if (!s) s = strtab_number(n);
+    if (!s && cc_mod_refracted) {   // Refracted's mini games menu: two names the PC's table doesn't have
+        if (n == 805) s = "Back Off Barbarian";
+        if (n == 389) s = "All You Can Quaff";
+    }
+    return s;
 }
 
 // Auto Potion: inside f_CheckHealthPots(zone), active_players reads 2 when it's on and zone's
@@ -1167,6 +1188,17 @@ int cc_mod_refracted = 1;
 #else
 int cc_mod_refracted;
 #endif
+
+// Stage.width / Stage.height: the root file's own size. Refracted's Back Off Barbarian (a PC
+// game, 1280x720) fits itself to the window with them.
+void cc_stage_init(AsVm *vm) {
+    if (!cc_mod_refracted || !vm->root || !vm->root->movie) return;
+    AsObj *st = as_obj_new(vm, OBJ_PLAIN, vm->object_proto);
+    as_def(vm, vm->global, "Stage", as_objv(st));
+    as_def(vm, st, "width", as_num(vm->root->movie->stage_w));
+    as_def(vm, st, "height", as_num(vm->root->movie->stage_h));
+    as_def(vm, st, "scaleMode", as_strv(as_str(vm, "noScale")));
+}
 
 void cc_host_init(AsVm *vm) {
     bsp_pending = 0;   // a new game: nothing left over from the last one
@@ -1291,6 +1323,11 @@ void cc_host_init(AsVm *vm) {
     as_def_fn(vm, g, "IsFullGame", ret_true);
     as_def_fn(vm, g, "GetMagicTypeOverride", magic_type_override);   // the Steam executable (Refracted)
     as_def_fn(vm, g, "EnablePostProcess", ret_undef);
+    if (cc_mod_refracted) {   // Back Off Barbarian (a PC game, Refracted's mini games): one player, port 1
+        as_def_fn(vm, g, "IsPlayerInSession", is_player_in_session);
+        as_def_fn(vm, g, "GetPlayerPort", get_player_port);
+        as_def_fn(vm, g, "SetControllerLEDs", ret_undef);
+    }
     as_def_fn(vm, g, "RichPresence", ret_undef);       // platform presence text
     as_def_fn(vm, g, "UnlockAchievement", unlock_achievement);
     as_def_fn(vm, g, "VibrateController", ret_undef);  // the Vita has no rumble

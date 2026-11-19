@@ -523,7 +523,8 @@ static int find_file(const char *base, char *path, size_t n, int *is_level) {
         sceIoClose(fd);
         // levels/ (and All You Can Quaff, whose scripts run the developer's quick start where
         // it's false): console_version reads true in its scripts (cc_host.c)
-        *is_level = i == 1 || !strcasecmp(base, "QUOFF.swf");
+        // (and Refracted's PDA games; Back Off Barbarian is a PC game, 1280x720: its PC path)
+        *is_level = i == 1 || !strcasecmp(base, "QUOFF.swf") || !strcasecmp(base, "PDAGAMES.swf");
         return 1;
     }
     return 0;
@@ -2024,7 +2025,11 @@ static int title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, siz
             // Quaff, Volleyball and Arena down the left one. Up and down go through them all in
             // the book's order; left and right turn to the other page (left: where the hand last was)
             enum { M_STORY, M_ARENA, M_QUAFF, M_VOLLEY };
+#ifdef CC_MOD_REFRACTED   // the mod's book: the mini games and Arena on the left page, no Volleyball of ours
+            static const int down[] = {M_QUAFF, M_STORY, M_ARENA, M_ARENA}, up[] = {M_ARENA, M_QUAFF, M_STORY, M_STORY};
+#else
             static const int down[] = {M_QUAFF, M_STORY, M_VOLLEY, M_ARENA}, up[] = {M_ARENA, M_VOLLEY, M_STORY, M_QUAFF};
+#endif
             static int left_page = M_QUAFF;
             int to = mode;
             if (pressed & SCE_CTRL_LEFT) to = mode == M_STORY ? left_page : mode;
@@ -2047,7 +2052,11 @@ static int title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, siz
             }
             if (pressed & SCE_CTRL_CROSS) {
                 audio_sfx_play("sound_player_select.wav", 1, 0, 0, &controls);
+#ifdef CC_MOD_REFRACTED
+                static const int game_mode[CC_MODE_ITEMS] = {CC_MODE_STORY, CC_MODE_ARENA, CC_MODE_MINIGAMES, CC_MODE_STORY};
+#else
                 static const int game_mode[CC_MODE_ITEMS] = {CC_MODE_STORY, CC_MODE_ARENA, CC_MODE_QUAFF, CC_MODE_VOLLEYBALL};
+#endif
                 cc_game_mode = game_mode[mode];
 #ifdef CC_NET
                 if (g_wifi.page == W_MODE) {   // the host's pick: everyone starts it now
@@ -2345,7 +2354,10 @@ int main(void) {
     int from_game = 0;
 new_game:   // the title again after Exit to Main Menu
     g_npreloaded = 0;
-    g_netgame = title_screen(&vb, &cache, cache_mem, cache_bytes, from_game);
+    char next_file[32];   // a mini game the last game's menu chose (Refracted): straight into it
+    snprintf(next_file, sizeof next_file, "%s", cc_quit_to_file);
+    cc_quit_to_file[0] = 0;
+    g_netgame = next_file[0] ? 0 : title_screen(&vb, &cache, cache_mem, cache_bytes, from_game);
     // the title's moving scenes aren't wanted in the game: their meshes are video memory the
     // levels need (read again under the loading screen on the way back)
     free_movie_named("MENU_VIGNETTES.swf", &cache, cache_mem, cache_bytes);
@@ -2397,12 +2409,17 @@ new_game:   // the title again after Exit to Main Menu
     // All You Can Quaff is a file of its own (its title, joining, the feast, the results); the
     // story and Arena start in MAIN, which asks GetGameMode() which one it is
     Movie *first = start;
-    if (cc_game_mode == CC_MODE_QUAFF) {
+    if (next_file[0]) {
+        first = vita_loader(NULL, next_file);
+        if (!first) first = start;
+    } else if (cc_game_mode == CC_MODE_QUAFF) {
         first = vita_loader(NULL, "QUOFF.swf");
         if (!first) { first = start; cc_game_mode = CC_MODE_STORY; }
     }
-    log_line("game mode %d (%s)", cc_game_mode, first == start ? "MAIN.swf" : "QUOFF.swf");
+    log_line("game mode %d (%s)", cc_game_mode, first == start ? "MAIN.swf" : next_file[0] ? next_file : "QUOFF.swf");
     vm->root = as_mc_new(vm, first, &first->root, NULL, 0);
+    cc_stage_init(vm);
+    if (next_file[0] && first != start) cc_native_root_functions(vm, &vm->root->obj);   // (f_GetButtonArt: MAIN's, not there)
     cc_loading_attach(vm);   // the game's loading screen over level changes
 
     SceCtrlData pad, old = {0}, pads_old[LOCAL_PADS] = {{0}};

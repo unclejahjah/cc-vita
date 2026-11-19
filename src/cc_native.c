@@ -722,7 +722,7 @@ AsMc *cc_modemenu_attach(AsVm *vm, float x, float y) {
     as_drain(vm);
     static const char *const words[][3] = {{"txt1", "vita.mode.quaff", "All You Can Quaff"},
                                            {"txt2", "vita.mode.arena", "Arena"}};
-    for (int i = 0; i < 2; i++) {
+    for (int i = 0; i < 2 && !cc_mod_refracted; i++) {   // (the mod's book has its own words)
         AsMc *field = panel_path(vm, menu, words[i][0]);
         const char *w = strtab_get(words[i][1]);
         if (field) as_set(vm, as_objv(&field->obj), as_atom(vm, "text"), as_strv(as_str(vm, w ? w : words[i][2])));
@@ -741,8 +741,10 @@ AsMc *cc_modemenu_attach(AsVm *vm, float x, float y) {
     set_num(vm, menu, "_yscale", 100 * k);
     set_num(vm, menu, "_x", x - (bb[0] + bb[2]) / 40 * k);
     set_num(vm, menu, "_y", y - (bb[1] + bb[3]) / 40 * k);
-    modemenu_small_arena(vm, menu);
-    modemenu_extras(vm, menu);
+    if (!cc_mod_refracted) {   // Refracted's book stays as the mod drew it (mini games, Arena, the story)
+        modemenu_small_arena(vm, menu);
+        modemenu_extras(vm, menu);
+    }
     modemenu_hand(vm, menu);
     // the dark veil behind it was made for a 4:3 screen: over all of this one
     for (int i = 0; i < menu->ndisp; i++) {
@@ -1011,7 +1013,7 @@ static void modemenu_hand(AsVm *vm, AsMc *menu) {
 }
 
 void cc_modemenu_tick(AsVm *vm, AsMc *menu) {
-    modemenu_extras(vm, menu);
+    if (!cc_mod_refracted) modemenu_extras(vm, menu);
     AsVal o = as_objv(&menu->obj);
     double at = as_tonum(vm, as_get(vm, o, as_atom(vm, "cc_hand_at")));
     double to = as_tonum(vm, as_get(vm, o, as_atom(vm, "cc_hand_to")));

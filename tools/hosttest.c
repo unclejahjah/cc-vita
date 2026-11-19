@@ -269,7 +269,7 @@ static Movie *host_loader(AsVm *vm, const char *url) {
                 snprintf(path, sizeof path, "%s/%s", dirpath, de->d_name);
                 closedir(d);
                 Movie *m = swf_load(path, err, sizeof err);
-                if (m) m->is_level = i == 1 || !strcasecmp(base, "QUOFF.swf");   // as the Vita
+                if (m) m->is_level = i == 1 || !strcasecmp(base, "QUOFF.swf") || !strcasecmp(base, "PDAGAMES.swf");   // as the Vita
                 int fixed = m ? cc_repair_level(m) : 0;
     if (m && getenv("CC_DUMP_SHAPE") && !strcmp(base, "MENU.swf")) {
         extern void cc_dump_shape(Movie *m, int cid);
@@ -482,6 +482,8 @@ static int as_mode(int argc, char **argv) {
         vm->prefetch = netplay_prefetch;
     }
     vm->root = as_mc_new(vm, start, &start->root, NULL, 0);
+    cc_stage_init(vm);
+    if (cc_mod_refracted && strcasecmp(argv[3], "MAIN.swf")) cc_native_root_functions(vm, &vm->root->obj);
     if (!strcasecmp(argv[3], "MAIN.swf") && !getenv("CC_NO_LOADING")) cc_loading_attach(vm);
     AsMc *vignettes = NULL;   // CC_VIGNETTES=1 with MENU.swf: the PC's moving scenes (MENU_VIGNETTES.swf) under the title
     if (getenv("CC_VIGNETTES") && !strcasecmp(argv[3], "MENU.swf"))
@@ -532,6 +534,7 @@ static int as_mode(int argc, char **argv) {
             cc_host_init(vm);
             as_render_init(vm);
             vm->root = as_mc_new(vm, first, &first->root, NULL, 0);
+            cc_stage_init(vm);
             if (first != start) {
                 cc_native_root_functions(vm, &vm->root->obj);
                 if (covering) cc_loading_reveal(vm);
