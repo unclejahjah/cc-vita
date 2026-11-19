@@ -1084,6 +1084,8 @@ static int as_mode(int argc, char **argv) {
         }
         dump(top, 0);
     }
+    if (getenv("CC_SAVE_OUT"))   // CC_SAVE_OUT=path: write the storage as a save file at the end
+        printf("  save %s: %s\n", getenv("CC_SAVE_OUT"), cc_storage_save(getenv("CC_SAVE_OUT")) ? "written" : "FAILED");
     if (getenv("CC_STORAGE_DUMP")) {   // the non-zero save slots of port 1
         double *s = cc_storage(0);
         int shown = 0;

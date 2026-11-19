@@ -93,6 +93,16 @@ static AsVal set_port_state(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
 
 // ---- console settings -------------------------------------------------------------
 
+// Refracted's Astillano (pet 30): leaving the Animal Ark, f_AssignAnimal runs
+// f_UpdatePlayerAttributes before the new level's player has its health back, so the
+// health ratio is 0/0 and the HUD counter is asked to show NaN. f_ShowValSpecific's digit
+// loop never ends on NaN (the game froze); a value that isn't a number shows as 0 and
+// the counter is redrawn with the real health a moment later.
+static AsVal show_val_specific(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
+    if (argc >= 2 && !isfinite(as_tonum(vm, argv[1]))) argv[1] = as_num(0);
+    return as_call_script(vm, this_, argc, argv);
+}
+
 static AsVal ret_one(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
     (void)vm; (void)this_; (void)argc; (void)argv;
     return as_num(1);
@@ -1335,6 +1345,7 @@ void cc_host_init(AsVm *vm) {
         as_def_fn(vm, g, "SetControllerLEDs", ret_undef);
         as_def_fn(vm, g, "ResetControllerLEDs", ret_undef);
         as_def_fn(vm, g, "GetHostPort", ret_one);   // Volleyball's menu (console_version): player 1 hosts
+        as_override(vm, "f_ShowValSpecific", show_val_specific);
     }
     as_def_fn(vm, g, "RichPresence", ret_undef);       // platform presence text
     as_def_fn(vm, g, "UnlockAchievement", unlock_achievement);
