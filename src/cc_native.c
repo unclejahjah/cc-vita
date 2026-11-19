@@ -431,6 +431,24 @@ static AsVal native_get_default_weapon(AsVm *vm, AsVal this_, int argc, AsVal *a
     return as_num(w);
 }
 
+// ---- f_CharacterSlide(zone): Refracted's slide on punches -------------------------------
+// The mod rewrote it as speed -= 0.5 * speed / Math.abs(speed) whenever speed != 0. A
+// knight that never slid has speed_x_slide undefined, which isn't 0, so that gave NaN here
+// and the NaN went on into x and y: frozen in place on the first ground punch or magic.
+// In the executable that never happens, so an unset slide counts as 0 before the script runs.
+static AsVal native_character_slide(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
+    AsVal zone = ARG(0);
+    if (zone.t == V_OBJ) {
+        static const char *const names[] = { "speed_x_slide", "speed_y_slide" };
+        for (int i = 0; i < 2; i++) {
+            AsStr *k = as_atom(vm, names[i]);
+            AsVal v = as_get(vm, zone, k);
+            if (v.t != V_NUM || !isfinite(v.n)) as_set(vm, zone, k, as_num(0));
+        }
+    }
+    return as_call_script(vm, this_, argc, argv);
+}
+
 // ---- f_GetButtonArt(icon, code): which button a prompt icon shows ----------------------
 // Every prompt icon is an 8-frame clip: 1 X, 2 Y, 3 A, 4 B, 5 LT, 6 RT (Xbox art, turned into
 // Square, Triangle, Cross, Circle, L, R by cc_buttons.c), 7 a keyboard key, 8 blank. MAIN.swf
@@ -1161,6 +1179,7 @@ void cc_native_init(AsVm *vm) {
     as_override(vm, "f_GetDefaultWeapon", native_get_default_weapon);
     as_override(vm, "f_GetButtonArt", native_get_button_art);
     as_override(vm, "f_SpawnBear", native_spawn_bear);
+    if (cc_mod_refracted) as_override(vm, "f_CharacterSlide", native_character_slide);
     A_aBSP = as_atom(vm, "a_BSP");
     A_wl = as_atom(vm, "bsp_working_line");
     A_x1 = as_atom(vm, "x1");
