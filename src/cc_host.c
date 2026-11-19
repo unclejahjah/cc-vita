@@ -1193,6 +1193,7 @@ int cc_mod_refracted;
 // game, 1280x720) fits itself to the window with them.
 void cc_stage_init(AsVm *vm) {
     if (!cc_mod_refracted || !vm->root || !vm->root->movie) return;
+    as_mouse_init(vm);   // the PDA games' level editor and buttons (the touch screen)
     AsObj *st = as_obj_new(vm, OBJ_PLAIN, vm->object_proto);
     as_def(vm, vm->global, "Stage", as_objv(st));
     as_def(vm, st, "width", as_num(vm->root->movie->stage_w));

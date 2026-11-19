@@ -2565,6 +2565,18 @@ new_game:   // the title again after Exit to Main Menu
             }
 #endif
             SceUInt64 t0 = sceKernelGetProcessTimeWide();
+            // Refracted's PDA games (level editor, menu buttons) want a mouse: the front touch
+            // screen is it, unless Item Switch uses the front screen
+            if (cc_mod_refracted && !(g_item_switch & HB_SWITCH_FRONT)) {
+                SceTouchData td;
+                if (sceTouchPeek(SCE_TOUCH_PORT_FRONT, &td, 1) >= 1) {
+                    float tk = SCREEN_W / first->stage_w;   // touch is 1920x1088 for 960x544
+                    if (td.reportNum > 0)
+                        as_mouse(vm, td.report[0].x / 2 / tk, td.report[0].y / 2 / tk, 1);
+                    else
+                        as_mouse(vm, vm->mouse_x / 20, vm->mouse_y / 20, 0);
+                }
+            }
             cc_volleyball_tick(vm);
             as_tick(vm);
             SceUInt64 t1 = sceKernelGetProcessTimeWide();

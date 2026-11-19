@@ -603,6 +603,20 @@ static int as_mode(int argc, char **argv) {
             p = strchr(p, ',');
             if (p) p++;
         }
+        // CC_TOUCH="frame:x:y[:hold],...": a touch on the screen (the root's pixels), as the Vita's mouse
+        if (getenv("CC_TOUCH")) {
+            int down = 0;
+            float tx = vm->mouse_x / 20, ty = vm->mouse_y / 20;
+            for (const char *p = getenv("CC_TOUCH"); p && *p;) {
+                int tf = 0, hold = 2;
+                float x = 0, y = 0;
+                int n = sscanf(p, "%d:%f:%f:%d", &tf, &x, &y, &hold);
+                if (n >= 3 && f >= tf && f < tf + (n == 4 ? hold : 2)) { down = 1; tx = x; ty = y; }
+                p = strchr(p, ',');
+                if (p) p++;
+            }
+            as_mouse(vm, tx, ty, down);
+        }
         // CC_SET="frame:object_path.name=number,...": set a script variable (e.g. move a player)
         for (const char *p = getenv("CC_SET"); p && *p;) {
             char lhs[160] = "";

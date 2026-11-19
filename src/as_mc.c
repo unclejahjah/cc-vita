@@ -638,6 +638,14 @@ AsVal as_mc_get_prop(AsVm *vm, AsMc *mc, int i) {
     case 15: return as_strv(as_atom(vm, "file:///castlecrashers.swf"));
     case 16: return as_num(1);
     case 19: return as_strv(as_atom(vm, "HIGH"));
+    case 20: case 21: {   // _xmouse, _ymouse: the mouse in this clip's own space
+        Mat g = as_mc_global_matrix(mc);
+        float det = g.a * g.d - g.b * g.c;
+        if (det == 0 || (vm->mouse_x == 0 && vm->mouse_y == 0)) return as_num(0);   // (no mouse yet)
+        float dx = vm->mouse_x - g.tx, dy = vm->mouse_y - g.ty;
+        float lx = (g.d * dx - g.c * dy) / det, ly = (-g.b * dx + g.a * dy) / det;
+        return as_num((i == 20 ? lx : ly) / 20.0);
+    }
     default: return as_num(0);
     }
 }
@@ -783,4 +791,129 @@ void as_mc_mark(AsVm *vm, AsMc *mc) {
     if (mc->mask) as_mark_obj(vm, &mc->mask->obj);
     for (int i = 0; i < mc->ndisp; i++)
         if (mc->disp[i].mc) as_mark_obj(vm, &mc->disp[i].mc->obj);
+}
+
+// ---- the mouse (the touch screen) -----------------------------------------------------------
+#define MOUSE_LISTENERS 16
+
+static int has_fn(AsVm *vm, AsMc *mc, const char *name) {
+    AsVal f = as_get(vm, as_objv(&mc->obj), as_atom(vm, name));
+    return f.t == V_OBJ && f.o->type == OBJ_FUNC;
+}
+
+static int is_button(AsVm *vm, AsMc *mc) {
+    return has_fn(vm, mc, "onPress") || has_fn(vm, mc, "onRelease") || has_fn(vm, mc, "onReleaseOutside");
+}
+
+static int point_in(AsMc *mc, float x, float y) {
+    float b[4];
+    Mat g = as_mc_global_matrix(mc);
+    render_mc_bounds(mc, g, b);
+    return b[2] > b[0] && x >= b[0] && x <= b[2] && y >= b[1] && y <= b[3];
+}
+
+// the topmost visible clip with a button handler under (x, y): children over their parent, the
+// higher depth first
+static AsMc *mouse_hit(AsVm *vm, AsMc *mc, float x, float y) {
+    if (!mc->visible) return NULL;
+    for (int i = mc->ndisp - 1; i >= 0; i--) {
+        AsMc *c = mc->disp[i].mc;
+        if (!c || mc->disp[i].kind != DISP_MC) continue;
+        AsMc *h = mouse_hit(vm, c, x, y);
+        if (h) return h;
+    }
+    return is_button(vm, mc) && point_in(mc, x, y) ? mc : NULL;
+}
+
+static AsObj *mouse_obj(AsVm *vm) {
+    AsVal m = as_get(vm, as_objv(vm->global), as_atom(vm, "Mouse"));
+    return m.t == V_OBJ ? m.o : NULL;
+}
+
+static void mouse_broadcast(AsVm *vm, const char *event) {
+    AsObj *m = mouse_obj(vm);
+    if (!m) return;
+    for (int i = 0; i < MOUSE_LISTENERS; i++) {
+        char k[16];
+        snprintf(k, sizeof k, "__l%d", i);
+        AsVal l = as_get(vm, as_objv(m), as_atom(vm, k));
+        if (l.t != V_OBJ) continue;
+        AsVal f = as_get(vm, l, as_atom(vm, event));
+        if (f.t == V_OBJ && f.o->type == OBJ_FUNC) as_call(vm, f, l, 0, NULL);
+    }
+}
+
+static AsVal mouse_add(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
+    AsObj *m = mouse_obj(vm);
+    if (!m || argc < 1 || argv[0].t != V_OBJ) return as_bool(0);
+    int free_slot = -1;
+    for (int i = 0; i < MOUSE_LISTENERS; i++) {
+        char k[16];
+        snprintf(k, sizeof k, "__l%d", i);
+        AsVal l = as_get(vm, as_objv(m), as_atom(vm, k));
+        if (l.t == V_OBJ && l.o == argv[0].o) return as_bool(1);
+        if (l.t != V_OBJ && free_slot < 0) free_slot = i;
+    }
+    if (free_slot < 0) return as_bool(0);
+    char k[16];
+    snprintf(k, sizeof k, "__l%d", free_slot);
+    as_set(vm, as_objv(m), as_atom(vm, k), argv[0]);
+    (void)this_;
+    return as_bool(1);
+}
+
+static AsVal mouse_remove(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
+    AsObj *m = mouse_obj(vm);
+    (void)this_;
+    if (!m || argc < 1 || argv[0].t != V_OBJ) return as_bool(0);
+    for (int i = 0; i < MOUSE_LISTENERS; i++) {
+        char k[16];
+        snprintf(k, sizeof k, "__l%d", i);
+        AsVal l = as_get(vm, as_objv(m), as_atom(vm, k));
+        if (l.t == V_OBJ && l.o == argv[0].o) { as_set(vm, as_objv(m), as_atom(vm, k), as_undef()); return as_bool(1); }
+    }
+    return as_bool(0);
+}
+
+static AsVal mouse_nothing(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
+    (void)vm; (void)this_; (void)argc; (void)argv;
+    return as_undef();
+}
+
+void as_mouse_init(AsVm *vm) {
+    AsObj *m = as_obj_new(vm, OBJ_PLAIN, vm->object_proto);
+    as_def(vm, vm->global, "Mouse", as_objv(m));
+    as_def_fn(vm, m, "addListener", mouse_add);
+    as_def_fn(vm, m, "removeListener", mouse_remove);
+    as_def_fn(vm, m, "show", mouse_nothing);
+    as_def_fn(vm, m, "hide", mouse_nothing);
+}
+
+void as_mouse(AsVm *vm, float x, float y, int down) {
+    if (!vm->root) return;
+    float tx = x * 20, ty = y * 20;
+    int moved = tx != vm->mouse_x || ty != vm->mouse_y;
+    vm->mouse_x = tx;
+    vm->mouse_y = ty;
+    AsVal pressed = as_get(vm, as_objv(vm->global), as_atom(vm, "__mouse_pressed"));
+    if (down && !vm->mouse_down) {
+        vm->mouse_down = 1;
+        mouse_broadcast(vm, "onMouseDown");
+        AsMc *h = mouse_hit(vm, vm->root, tx, ty);
+        if (h) {
+            as_set(vm, as_objv(vm->global), as_atom(vm, "__mouse_pressed"), as_objv(&h->obj));
+            if (has_fn(vm, h, "onPress")) as_call_method(vm, as_objv(&h->obj), "onPress", 0, NULL);
+        }
+    } else if (!down && vm->mouse_down) {
+        vm->mouse_down = 0;
+        if (pressed.t == V_OBJ && pressed.o->type == OBJ_MC) {
+            AsMc *h = (AsMc *)pressed.o;
+            as_set(vm, as_objv(vm->global), as_atom(vm, "__mouse_pressed"), as_undef());
+            const char *ev = point_in(h, tx, ty) ? "onRelease" : "onReleaseOutside";
+            if (has_fn(vm, h, ev)) as_call_method(vm, as_objv(&h->obj), ev, 0, NULL);
+        }
+        mouse_broadcast(vm, "onMouseUp");
+    } else if (moved) {
+        mouse_broadcast(vm, "onMouseMove");
+    }
 }

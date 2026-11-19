@@ -237,6 +237,9 @@ struct AsVm {
     // queued frame scripts for this tick: (clip, frame) in order
     AsMc **queue;
     int nqueue, capqueue;
+    // the mouse (the Vita's touch screen; as_mouse): where, in the root's twips, and if down
+    float mouse_x, mouse_y;
+    int mouse_down;
 };
 
 // lifecycle
@@ -321,6 +324,10 @@ void as_mc_set_prop(AsVm *vm, AsMc *mc, int index, AsVal v);
 int as_mc_prop_index(const char *name);               // "_x" -> 0, ... ; -1 if not a clip property
 void as_mc_mark(AsVm *vm, AsMc *mc);
 Mat as_mc_global_matrix(AsMc *mc);                    // its placement through all its parents
+// The mouse, from the host (touch): x, y in the root's pixels, down or not. Calls the clips'
+// onPress / onRelease / onReleaseOutside and Mouse's listeners' onMouseDown/Up/Move.
+void as_mouse(AsVm *vm, float x, float y, int down);
+void as_mouse_init(AsVm *vm);   // the Mouse object (addListener, removeListener, show, hide)
 AsVal as_resolve_path(AsVm *vm, AsMc *from, const char *path, int *found);
 AsMc *as_mc_resolve_target(AsVm *vm, AsMc *base, AsVal target);   // clip, path string, or "" for base
 
