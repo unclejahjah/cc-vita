@@ -187,6 +187,10 @@ static AsVal native_hit_wall_group_h(AsVm *vm, AsVal this_, int argc, AsVal *arg
     for (double i = as_tonum(vm, ARG(3)); !(i > total); i++) {
         AsVal r1 = group_member(vm, game, name, i);
         if (!as_tobool(vm, as_get(vm, r1, A_active)) || (r1.t == V_OBJ && zone.t == V_OBJ && r1.o == zone.o)) continue;
+        if (cc_mod_refracted) {   // Refracted: a character doesn't bump into its own leafy_hostage
+            AsVal lh = as_get(vm, zone, as_atom(vm, "leafy_hostage"));
+            if (lh.t == V_OBJ && r1.t == V_OBJ && lh.o == r1.o) continue;
+        }
         AsVal z = as_get(vm, r1, A_zone);
         double top = num_of(vm, z, A_top), bottom = num_of(vm, z, A_bottom);
         if (zy < top || zy > bottom) continue;
@@ -417,6 +421,8 @@ static AsVal native_get_default_weapon(AsVm *vm, AsVal this_, int argc, AsVal *a
     AsVal zone = ARG(0);
     double t = as_tonum(vm, as_get(vm, zone, as_atom(vm, "p_type")));
     int w = t == (int)t ? cc_default_weapon((int)t) : 0;
+    if (cc_mod_refracted)   // the mod's own table (its new characters 32, 73-77...): no side effects
+        w = as_toint32(vm, as_call_script(vm, this_, argc, argv));
     AsStr *A_weapon = as_atom(vm, "weapon");
     if (w && zone.t == V_OBJ && as_tonum(vm, as_get(vm, zone, A_weapon)) == 0) {
         as_set(vm, zone, A_weapon, as_num(w));

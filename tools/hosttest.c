@@ -370,6 +370,7 @@ static int as_mode(int argc, char **argv) {
         if (getenv("CC_FRESH")) cc_fresh_set(atoi(getenv("CC_FRESH")));   // CC_FRESH=1: the FRESH look
         if (cc_fresh()) printf("FRESH look\n");
     }
+    if (getenv("CC_REFRACTED")) cc_mod_refracted = 1;   // the Refracted build (CC_MOD_REFRACTED)
     extern void cc_host_init(AsVm *vm);
     if (getenv("CC_GAME_MODE")) cc_game_mode = atoi(getenv("CC_GAME_MODE"));   // 1 Quaff, 3 Arena
     cc_host_init(vm);

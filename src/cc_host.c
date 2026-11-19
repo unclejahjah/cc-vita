@@ -409,6 +409,14 @@ double *cc_storage(int port) { return port >= 0 && port < 4 ? storage[port] : NU
 // Hattington, Blacksmith) are owned on the Vita: their "unlocked" bit is set in every
 // profile, as owning the DLC did. Everyone else is still earned through the game.
 void cc_own_dlc_characters(void) {
+    if (cc_mod_refracted) {   // Refracted: the three packs and Paint Jr. (32, in the mod's own files)
+        for (int p = 0; p < 4; p++)
+            for (int t = 29; t <= 32; t++) {
+                double *b = &storage[p][64 + 48 * (t - 1)];
+                if (!((int)*b & 128)) *b = (int)*b | 128;
+            }
+        return;
+    }
     for (int p = 0; p < 4; p++)
         for (int t = 29; t < CC_CUSTOM_P_TYPE + CC_CUSTOM_MAX; t++) {   // 32 Paint Jr. (paint_jr.h),
             if (t == CC_PAINTJR_P_TYPE && !cc_paintjr_p_type()) continue;   // 33 on the custom
@@ -439,7 +447,7 @@ void cc_own_dlc_items(void) {
             double *b = &storage[p][8 + dlc_animals[i] / 8];
             *b = (int)*b | 1 << (dlc_animals[i] % 8);
         }
-        if (cc_paintjr_p_type()) {   // Paint Jr.'s pencil (weapon 86, paint_jr.h)
+        if (cc_paintjr_p_type() || cc_mod_refracted) {   // Paint Jr.'s pencil (weapon 86, paint_jr.h)
             int id = 50 + 86;
             storage[p][28 + (id - 128) / 8] = (int)storage[p][28 + (id - 128) / 8] | 1 << (id % 8);
         }
@@ -1146,18 +1154,28 @@ void cc_set_auto_potion(AsVm *vm, int on) {
     auto_potion = on;
 }
 
+#ifdef CC_MOD_REFRACTED
+int cc_mod_refracted = 1;
+#else
+int cc_mod_refracted;
+#endif
+
 void cc_host_init(AsVm *vm) {
     bsp_pending = 0;   // a new game: nothing left over from the last one
     memset(cursor, 0, sizeof cursor);
-    cc_custom_init(vm);   // before MAIN's functions are defined: a painted character, if there is one
-    cc_paintjr_init(vm);  // and Paint Jr., if the PC files for him are there
+    if (!cc_mod_refracted) {
+        cc_custom_init(vm);   // before MAIN's functions are defined: a painted character, if there is one
+        cc_paintjr_init(vm);  // and Paint Jr., if the PC files for him are there
+    }
     vm->loaded = on_loaded;
     vm->hold_load = hold_load;
     vm->text_for_number = text_for_number;
     vm->after_frame_scripts = after_frame_scripts;
     cc_native_init(vm);
-    cc_animal_init(vm);   // a custom animal orb, if there is one
-    cc_look_init(vm);     // weapon looks in the armoury (weapon_look.h)
+    if (!cc_mod_refracted) {
+        cc_animal_init(vm);   // a custom animal orb, if there is one
+        cc_look_init(vm);     // weapon looks in the armoury (weapon_look.h)
+    }
     // console_version: the shipping executable's value is true. All the way, that hands the
     // front end (menus, profiles, QuitTo between files) to the executable, which isn't
     // reproduced yet; so the scripts' own front end runs, and the shipping behaviour is

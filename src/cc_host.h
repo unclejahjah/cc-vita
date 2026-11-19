@@ -34,6 +34,10 @@ int cc_bind_is_default(void);
 // character select on to the PS3's court picker (VMENU.swf) and makes MAIN.swf play as the PS3's
 // does in that mode; nothing of it is saved)
 enum { CC_MODE_STORY = 0, CC_MODE_QUAFF = 1, CC_MODE_ARENA = 3, CC_MODE_VOLLEYBALL = 10 };
+// Refracted build (CC_MOD_REFRACTED): the mod's own MAIN/PLAYER/... run as they are, so the
+// vanilla-only add-ons (custom characters, Paint Jr., custom animal, weapon looks) stay off and
+// the natives follow the mod's versions of the functions they stand in for.
+extern int cc_mod_refracted;
 extern int cc_game_mode;
 void cc_volleyball_tick(AsVm *vm);   // before every game tick
 // All You Can Quaff: 1 while its title waits for Start (there the Vita's Cross is Start; the

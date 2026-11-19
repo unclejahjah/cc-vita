@@ -73,7 +73,13 @@ static const char *server(void) {
     const char *e = getenv("LOBBY_URL");
     snprintf(g_url, sizeof g_url, "%s", e ? e : CC_LOBBY_URL);
 #ifdef __vita__
-    FILE *f = fopen("ux0:data/CastleCrashers/lobby.txt", "r");
+    FILE *f = fopen(
+#ifdef CC_MOD_REFRACTED
+        "ux0:data/CastleCrashersRefracted/lobby.txt",
+#else
+        "ux0:data/CastleCrashers/lobby.txt",
+#endif
+        "r");
     if (f) {
         char line[256];
         if (fgets(line, sizeof line, f)) {

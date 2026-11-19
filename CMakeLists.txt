@@ -13,8 +13,18 @@ include("$ENV{VITASDK}/share/vita.cmake" REQUIRED)
 
 # CC_NET: Wi-Fi and internet co-op, on by default (one app since 2026-10-23); OFF builds without it
 option(CC_NET "Wi-Fi co-op" ON)
+# CC_MOD_REFRACTED: a second app for the Refracted mod (Symm), beside the main one: its own title
+# id, data folder (ux0:data/CastleCrashersRefracted/: the game's files with the mod's over them)
+# and save. The mod's files are the user's own; never in git.
+option(CC_MOD_REFRACTED "Refracted mod app" OFF)
+if(CC_MOD_REFRACTED)
+set(VITA_APP_NAME "Castle Crashers Refracted")
+set(VITA_TITLEID  "CCRF00001")
+add_compile_definitions(CC_MOD_REFRACTED)
+else()
 set(VITA_APP_NAME "Castle Crashers")
 set(VITA_TITLEID  "CCRV00001")
+endif()
 set(VITA_VERSION  "00.02")
 
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O2 -Wall -std=gnu11")

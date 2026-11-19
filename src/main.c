@@ -52,7 +52,11 @@
 // parsed SWFs and the script heap (meshes live in GPU memory blocks outside it)
 int _newlib_heap_size_user = 160 * 1024 * 1024;
 
+#ifdef CC_MOD_REFRACTED
+#define DATA_DIR "ux0:data/CastleCrashersRefracted/"   // the Refracted app: its own folder and save
+#else
 #define DATA_DIR "ux0:data/CastleCrashers/"
+#endif
 #define SAVE_PATH DATA_DIR "save.dat"   // the game's storage (profiles, levels, unlocks)
 #define ACH_PATH DATA_DIR "achievements.dat"
 #define SETTINGS_PATH DATA_DIR "settings.txt"   // Help & Options' Settings: volumes, Auto Potion
@@ -2178,11 +2182,15 @@ int main(void) {
     {   // optional: Paint Jr. from the PC's files (paint_jr.h)
         char path[256];
         int lvl;
+#ifndef CC_MOD_REFRACTED   // Refracted has its own Paint Jr. in its MAIN/PLAYER_NEW
         cc_paintjr_set_available(find_file("FRESH01.swf", path, sizeof path, &lvl),
                                  find_file("PJPARTS.swf", path, sizeof path, &lvl),
                                  find_file("PAINTJR.swf", path, sizeof path, &lvl));
         int castle = find_file("LEVEL15_NEW.swf", path, sizeof path, &lvl);
         cc_paintjr_set_castle(castle);
+#else
+        int castle = 0;
+#endif
 #ifdef CC_NET
         net_my_caps = cc_paintjr_p_type() && castle ? NET_CAP_PAINT_JR : 0;   // he can play in Wi-Fi games
 #endif
