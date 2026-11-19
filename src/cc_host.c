@@ -1206,6 +1206,10 @@ void cc_host_init(AsVm *vm) {
     if (!getenv("CC_DEV_PATHS")) {
         for (size_t i = 0; i < sizeof console_fns / sizeof *console_fns; i++)
             as_pin(vm, "console_version", as_bool(1), console_fns[i]);
+        if (cc_mod_refracted) {   // the mod's own: the HUD's player name (not "Gamertag"), the bomb count
+            as_pin(vm, "console_version", as_bool(1), "f_HudLoadInit");
+            as_pin(vm, "console_version", as_bool(1), "f_PunchSetProj");
+        }
         // Level files are true all the way. Each level's f_Init writes console_version =
         // false and then, where it's still false, applies its developer test settings:
         // p1.magic, magic_pow, strength, punch_pow = 9999 (that was the "999 damage" and
