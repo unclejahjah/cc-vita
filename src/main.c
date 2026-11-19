@@ -529,13 +529,15 @@ static int find_file(const char *base, char *path, size_t n, int *is_level) {
     return 0;
 }
 
-// Refracted's MENU.swf holds every menu page of the mod (838 shapes, 47 MB of meshes against the
-// original's 11): with them all in video memory the title crashed the Vita. Its shapes are
-// tessellated when first drawn instead, and only those go up to video memory (title_upload_menu).
+// Refracted's files hold far more art than the original's (MENU 47 MB of meshes against 11,
+// lobby 31, fx 38, player 26, map 14): with them all tessellated the title crashed the Vita,
+// and later the game ran out of memory leaving a level (Jah 2026-11-19). Every file's shapes
+// are tessellated when first drawn instead, and only those go up to video memory
+// (title_upload_menu, upload_drawn_meshes).
 static int lazy_meshes(const char *path) {
 #ifdef CC_MOD_REFRACTED
-    const char *base = strrchr(path, '/');
-    return !strcasecmp(base ? base + 1 : path, "MENU.swf");
+    (void)path;
+    return 1;
 #else
     (void)path;
     return 0;
@@ -1859,6 +1861,24 @@ static void vignette_rt_draw(AsMc *vignettes, Mat m, RecolourCache *cache) {
     vita2d_wait_rendering_done();   // the texture is read by the next scene (as the heat haze's)
 }
 
+// in a game: the lazily tessellated shapes drawn so far go up (to video memory, else main)
+static int upload_drawn_meshes(RecolourCache *cache, void *cache_mem, size_t cache_bytes) {
+    size_t total = 0;
+    for (int i = 0; i < g_nmovies; i++) total += render_pending_bytes(g_movies[i].m);
+    if (total < 64 * 1024) return 0;   // a few small shapes: drawn from their CPU copy for now
+    vita2d_wait_rendering_done();
+    recolour_cache_free(cache);
+    recolour_cache_init(cache, cache_mem, cache_bytes);
+    for (int i = 0; i < g_nmovies; i++) {
+        Movie *m = g_movies[i].m;
+        if (!render_pending_bytes(m)) continue;
+        int n0 = g_movies[i].gpu.n;
+        render_upload(m, meshes_alloc, &g_movies[i].gpu);
+        if (g_movies[i].gpu.n > n0) render_release_cpu(m);
+    }
+    return 1;
+}
+
 // the lazily tessellated MENU.swf's shapes drawn so far go up to video memory (lazy_meshes)
 static void title_upload_menu(RecolourCache *cache, void *cache_mem, size_t cache_bytes) {
     for (int i = 0; i < g_nmovies; i++) {
@@ -2581,6 +2601,9 @@ new_game:   // the title again after Exit to Main Menu
                 last_free_count = g_nmovies;
                 hitch_what = " (freed files)";
             }
+#ifdef CC_MOD_REFRACTED
+            if (vm->tick % 60 == 30 && upload_drawn_meshes(&cache, cache_mem, cache_bytes)) hitch_what = " (drawn meshes up)";
+#endif
             // meshes in main memory: to video memory, once per change in the files kept
             if (g_nmovies != last_move_count) {
                 int any = 0;
