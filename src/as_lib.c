@@ -92,7 +92,7 @@ static AsVal arr_unshift(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
     if (!a) return as_undef();
     for (int i = 0; i < argc; i++) as_array_push(vm, a, as_undef());
     memmove(a->items + argc, a->items, sizeof(AsVal) * (a->nitems - argc));
-    for (int i = 0; i < argc; i++) a->items[i] = argv[i];
+    for (int i = 0; i < argc; i++) { as_wb(argv[i]); a->items[i] = argv[i]; }
     return as_num(a->nitems);
 }
 static AsVal arr_splice(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
@@ -110,7 +110,7 @@ static AsVal arr_splice(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
     int ins = argc > 2 ? argc - 2 : 0, nn = n - del + ins;
     AsVal *items = malloc(sizeof(AsVal) * (nn ? nn : 1));
     memcpy(items, a->items, sizeof(AsVal) * start);
-    for (int i = 0; i < ins; i++) items[start + i] = argv[2 + i];
+    for (int i = 0; i < ins; i++) { as_wb(argv[2 + i]); items[start + i] = argv[2 + i]; }
     memcpy(items + start + ins, a->items + start + del, sizeof(AsVal) * (n - start - del));
     free(a->items);
     a->items = items;
@@ -206,6 +206,7 @@ static AsVal str_ctor(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
     AsStr *s = argc ? as_tostr(vm, argv[0]) : vm->empty;
     if (this_.t == V_OBJ && this_.o->type == OBJ_PLAIN && this_.o->proto == vm->string_proto) {
         this_.o->type = OBJ_BOXED;
+        as_wb(as_strv(s));
         this_.o->boxed = as_strv(s);
         return this_;
     }
@@ -515,6 +516,7 @@ static AsVal mc_setmask(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
     AsMc *mask = argc && argv[0].t == V_OBJ ? as_mc_resolve_target(vm, mc, argv[0]) : NULL;
     if (mask == mc) mask = NULL;
     if (mc->mask) mc->mask->is_mask = 0;
+    if (mask) as_wbo(&mask->obj);
     mc->mask = mask;
     if (mask) mask->is_mask = 1;
     return as_bool(1);
@@ -587,6 +589,7 @@ static AsVal color_ctor(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
     if (this_.t != V_OBJ) return as_undef();
     this_.o->type = OBJ_COLOR;
     this_.o->bound_mc = argc ? as_mc_resolve_target(vm, NULL, argv[0]) : NULL;
+    if (this_.o->bound_mc) as_wbo(&this_.o->bound_mc->obj);
     return this_;
 }
 static AsMc *color_mc(AsVal this_) { return this_.t == V_OBJ && this_.o->type == OBJ_COLOR ? this_.o->bound_mc : NULL; }
@@ -641,6 +644,7 @@ static AsVal sound_ctor(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
     if (this_.t == V_OBJ) {
         this_.o->type = OBJ_SOUND;
         this_.o->bound_mc = argc ? as_mc_resolve_target(vm, NULL, argv[0]) : NULL;
+        if (this_.o->bound_mc) as_wbo(&this_.o->bound_mc->obj);
     }
     return this_;
 }
@@ -652,7 +656,7 @@ static double sound_num(AsObj *o, AsStr *key, double dflt) {
 
 static void sound_set(AsVm *vm, AsObj *o, AsStr *key, AsVal v) {
     AsProp *p = as_own(o, key);
-    if (p) { p->v = v; return; }
+    if (p) { as_wb(v); p->v = v; return; }
     as_set(vm, as_objv(o), key, v);
     p = as_own(o, key);
     if (p) p->flags |= PROP_DONTENUM;

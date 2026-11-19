@@ -46,6 +46,7 @@ struct AsGc {
     uint8_t kind;              // GC_STR, GC_OBJ, GC_SCOPE
     uint8_t mark;
     uint8_t permanent;         // atoms and pools: never collected
+    uint8_t vmark;             // AS_GCVERIFY's own mark (PC tests)
 };
 
 struct AsStr {
@@ -258,6 +259,15 @@ static inline AsVal as_bool(int b) { AsVal v; v.t = V_BOOL; v.n = 0; v.b = b != 
 static inline AsVal as_num(double n) { AsVal v; v.t = V_NUM; v.n = n; return v; }
 static inline AsVal as_strv(AsStr *s) { AsVal v; v.t = V_STR; v.n = 0; v.s = s; return v; }
 static inline AsVal as_objv(AsObj *o) { AsVal v; v.n = 0; if (o) { v.t = V_OBJ; v.o = o; } else v.t = V_NULL; return v; }
+
+// The collector's marking is spread over frames (as_gc). While it runs, a value stored into an
+// object (a property, an array item, a clip's parent or display list...) must be passed to
+// as_wb, so a clip or object moved from a part not yet looked at into one already looked at
+// isn't missed and freed.
+extern AsVm *as_gc_marking;
+void as_gc_shade(AsVal v);
+static inline void as_wb(AsVal v) { if (__builtin_expect(as_gc_marking != NULL, 0)) as_gc_shade(v); }
+static inline void as_wbo(AsObj *o) { if (__builtin_expect(as_gc_marking != NULL, 0) && o) as_gc_shade(as_objv(o)); }
 
 AsStr *as_str(AsVm *vm, const char *s);              // a GC'd string
 AsStr *as_strn(AsVm *vm, const char *s, size_t n);

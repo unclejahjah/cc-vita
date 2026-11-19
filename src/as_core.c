@@ -14,12 +14,15 @@ enum { GC_STR, GC_OBJ, GC_SCOPE };
 
 // ---- heap -------------------------------------------------------------------------
 
+static void gc_gray(AsGc *g);
+
 static void *gc_alloc(AsVm *vm, size_t size, int kind) {
     AsGc *g = calloc(1, size);
     g->kind = kind;
     g->next = vm->heap;
     vm->heap = g;
     vm->heap_count++;
+    if (as_gc_marking == vm) gc_gray(g);   // made while marking: kept, and looked at before the end
     return g;
 }
 
@@ -41,10 +44,15 @@ static void call_keep(AsVm *vm, AsGc *g) {   // captured: from now on the collec
     g->next = vm->heap;
     vm->heap = g;
     vm->heap_count++;
+    if (as_gc_marking == vm) gc_gray(g);
 }
 
 static void call_release(AsGc **pool, AsGc *g) {
-    if (g->kind == GC_OBJ) free(((AsObj *)g)->props.slots);
+    if (g->kind == GC_OBJ) {   // (emptied: a collection may still have it to look at)
+        AsObj *o = (AsObj *)g;
+        free(o->props.slots);
+        memset(&o->props, 0, sizeof o->props);
+    }
     g->next = *pool;
     *pool = g;
 }
@@ -307,6 +315,7 @@ static void array_resize(AsObj *a, int n) {
 void as_array_push(AsVm *vm, AsObj *a, AsVal v) {
     (void)vm;
     array_resize(a, a->nitems + 1);
+    as_wb(v);
     a->items[a->nitems - 1] = v;
 }
 
@@ -318,6 +327,7 @@ AsObj *as_native(AsVm *vm, AsNative fn) {
 
 void as_def(AsVm *vm, AsObj *o, const char *name, AsVal v) {
     AsProp *p = props_insert(&o->props, as_atom(vm, name));
+    as_wb(v);
     p->v = v;
     p->flags = PROP_DONTENUM;
 }
@@ -377,6 +387,7 @@ void as_set(AsVm *vm, AsVal v, AsStr *key, AsVal val) {
     if (v.t != V_OBJ) return;   // setting on primitives is lost
     AsObj *o = v.o;
     AsStr *atom = as_intern(vm, key);
+    as_wb(val);
     if (atom == A_proto) { o->proto = val.t == V_OBJ ? val.o : NULL; return; }
     if (o->type == OBJ_ARRAY) {
         if (atom == A_length) { int n = as_toint32(vm, val); array_resize(o, n < 0 ? 0 : n); return; }
@@ -1243,37 +1254,79 @@ void as_run_block(AsVm *vm, const Movie *m, uint32_t off, uint32_t len, AsMc *ta
 }
 
 // ---- GC ---------------------------------------------------------------------------
+//
+// Incremental mark and sweep. A collection marks a few milliseconds' worth of objects per
+// frame (between frames, never while a script runs): marking the whole heap at once took
+// 18-24 ms on the Vita with Refracted's scripts, a dropped frame about once a second. Marked
+// objects not yet looked at wait on the gray list. While marking runs, a value stored into an
+// object is marked too (as_wb: the insertion barrier), objects made are marked, and the roots
+// (stack, registers, loads, queue) are looked at again at the end. Then the sweep frees the
+// unmarked ones, also a part per frame.
 
-static void mark_gc(AsGc *g) { g->mark = 1; }
+AsVm *as_gc_marking;             // the VM being marked, NULL when no marking is under way
+static AsGc **g_gray;            // marked, their references not yet looked at
+static size_t g_ngray, g_capgray;
 
-static void mark_scope(AsVm *vm, AsScope *s) {
-    for (; s && !s->gc.mark; s = s->parent) {
-        s->gc.mark = 1;
-        if (s->obj) as_mark_obj(vm, s->obj);
+static void gc_gray(AsGc *g) {
+    if (g->mark) return;
+    g->mark = 1;
+    if (g->kind == GC_STR) return;   // no references
+    if (g_ngray == g_capgray) {
+        g_capgray = g_capgray ? g_capgray * 2 : 4096;
+        g_gray = realloc(g_gray, g_capgray * sizeof *g_gray);
     }
+    g_gray[g_ngray++] = g;
 }
 
-void as_mark_val(AsVm *vm, AsVal v) {
-    if (v.t == V_STR) mark_gc(&v.s->gc);
-    else if (v.t == V_OBJ) as_mark_obj(vm, v.o);
+void as_gc_shade(AsVal v) {
+    if (v.t == V_STR) v.s->gc.mark = 1;
+    else if (v.t == V_OBJ && v.o) gc_gray(&v.o->gc);
 }
 
-void as_mark_obj(AsVm *vm, AsObj *o) {
-    if (!o || o->gc.mark) return;
-    o->gc.mark = 1;
-    if (o->proto) as_mark_obj(vm, o->proto);
+void as_mark_val(AsVm *vm, AsVal v) { (void)vm; as_gc_shade(v); }
+void as_mark_obj(AsVm *vm, AsObj *o) { (void)vm; if (o) gc_gray(&o->gc); }
+
+// an object's references: marked and gray. Returns roughly how much it looked at.
+static int gc_scan(AsVm *vm, AsGc *g) {
+    if (g->kind == GC_SCOPE) {
+        AsScope *sc = (AsScope *)g;
+        if (sc->obj) gc_gray(&sc->obj->gc);
+        if (sc->parent) gc_gray(&sc->parent->gc);
+        return 1;
+    }
+    AsObj *o = (AsObj *)g;
+    if (o->proto) gc_gray(&o->proto->gc);
     for (int i = 0; i < o->props.cap; i++) {
         AsProp *p = &o->props.slots[i];
-        if (p->key && p->key != DELETED) as_mark_val(vm, p->v);
+        if (p->key && p->key != DELETED) as_gc_shade(p->v);
     }
-    for (int i = 0; i < o->nitems; i++) as_mark_val(vm, o->items[i]);
+    for (int i = 0; i < o->nitems; i++) as_gc_shade(o->items[i]);
     if (o->type == OBJ_FUNC) {
-        mark_scope(vm, o->scope);
-        if (o->target) as_mark_obj(vm, &o->target->obj);
+        if (o->scope) gc_gray(&o->scope->gc);
+        if (o->target) gc_gray(&o->target->obj.gc);
     }
-    if (o->type == OBJ_BOXED) as_mark_val(vm, o->boxed);
-    if (o->bound_mc) as_mark_obj(vm, &o->bound_mc->obj);
-    if (o->type == OBJ_MC) as_mc_mark(vm, (AsMc *)o);
+    if (o->type == OBJ_BOXED) as_gc_shade(o->boxed);
+    if (o->bound_mc) gc_gray(&o->bound_mc->obj.gc);
+    int work = 1 + o->props.cap + o->nitems;
+    if (o->type == OBJ_MC) {
+        as_mc_mark(vm, (AsMc *)o);
+        work += ((AsMc *)o)->ndisp;
+    }
+    return work;
+}
+
+static void gc_roots(AsVm *vm) {
+    gc_gray(&vm->global->gc);
+    if (vm->root) gc_gray(&vm->root->obj.gc);
+    AsObj *protos[] = {vm->object_proto, vm->function_proto, vm->array_proto, vm->string_proto, vm->number_proto,
+                       vm->boolean_proto, vm->mc_proto, vm->color_proto, vm->sound_proto};
+    for (size_t i = 0; i < sizeof protos / sizeof *protos; i++)
+        if (protos[i]) gc_gray(&protos[i]->gc);
+    for (int i = 0; i < 4; i++) as_gc_shade(vm->global_regs[i]);
+    for (int i = 0; i < vm->sp; i++) as_gc_shade(vm->stack[i]);
+    for (AsLoad *l = vm->loads; l; l = l->next) gc_gray(&l->target->obj.gc);
+    for (int i = 0; i < vm->nqueue; i++) gc_gray(&vm->queue[i]->obj.gc);
+    vm->empty->gc.mark = 1;
 }
 
 static void free_gc(AsGc *g) {
@@ -1314,27 +1367,105 @@ static void sweep_some(AsVm *vm, size_t n) {
     }
 }
 
-void as_gc(AsVm *vm) {
-    if (g_sweep) { sweep_some(vm, SWEEP_STEP); return; }
-    if (vm->heap_count < vm->gc_threshold) return;
-    extern double as_time_ms(void);
-    double t0 = AS_ENV("AS_GCTIME") ? as_time_ms() : 0;
-    as_mark_obj(vm, vm->global);
-    if (vm->root) as_mark_obj(vm, &vm->root->obj);
+// PC tests (AS_GCVERIFY): everything reachable now must have been marked by the increments.
+// A miss is a store without as_wb: that object would be freed while still in use.
+static void gc_verify(AsVm *vm) {
+    size_t n = 0, cap = 4096, missed = 0;
+    AsGc **st = malloc(cap * sizeof *st);
+#define VPUSH(G) do { AsGc *g_ = (G); if (g_ && !g_->vmark) { g_->vmark = 1; \
+        if (!g_->mark && !g_->permanent && missed++ < 5) as_warn(vm, "GC VERIFY: reachable %s not marked (kind %d type %d)", \
+            g_->kind == GC_STR ? ((AsStr *)g_)->s : "", g_->kind, g_->kind == GC_OBJ ? ((AsObj *)g_)->type : -1); \
+        if (g_->kind != GC_STR) { if (n == cap) st = realloc(st, (cap *= 2) * sizeof *st); st[n++] = g_; } } } while (0)
+#define VVAL(V) do { AsVal v_ = (V); if (v_.t == V_STR) VPUSH(&v_.s->gc); else if (v_.t == V_OBJ && v_.o) VPUSH(&v_.o->gc); } while (0)
+    VPUSH(&vm->global->gc);
+    if (vm->root) VPUSH(&vm->root->obj.gc);
     AsObj *protos[] = {vm->object_proto, vm->function_proto, vm->array_proto, vm->string_proto, vm->number_proto,
                        vm->boolean_proto, vm->mc_proto, vm->color_proto, vm->sound_proto};
-    for (size_t i = 0; i < sizeof protos / sizeof *protos; i++) as_mark_obj(vm, protos[i]);
-    for (int i = 0; i < 4; i++) as_mark_val(vm, vm->global_regs[i]);
-    for (int i = 0; i < vm->sp; i++) as_mark_val(vm, vm->stack[i]);
-    for (AsLoad *l = vm->loads; l; l = l->next) as_mark_obj(vm, &l->target->obj);
-    for (int i = 0; i < vm->nqueue; i++) as_mark_obj(vm, &vm->queue[i]->obj);
-    mark_gc(&vm->empty->gc);
-    if (t0) as_warn(vm, "gc mark %.2f ms", as_time_ms() - t0);
+    for (size_t i = 0; i < sizeof protos / sizeof *protos; i++) if (protos[i]) VPUSH(&protos[i]->gc);
+    for (int i = 0; i < 4; i++) VVAL(vm->global_regs[i]);
+    for (int i = 0; i < vm->sp; i++) VVAL(vm->stack[i]);
+    for (AsLoad *l = vm->loads; l; l = l->next) VPUSH(&l->target->obj.gc);
+    for (int i = 0; i < vm->nqueue; i++) VPUSH(&vm->queue[i]->obj.gc);
+    while (n) {
+        AsGc *g = st[--n];
+        if (g->kind == GC_SCOPE) {
+            AsScope *sc = (AsScope *)g;
+            if (sc->obj) VPUSH(&sc->obj->gc);
+            if (sc->parent) VPUSH(&sc->parent->gc);
+            continue;
+        }
+        AsObj *o = (AsObj *)g;
+        if (o->proto) VPUSH(&o->proto->gc);
+        for (int i = 0; i < o->props.cap; i++) {
+            AsProp *p = &o->props.slots[i];
+            if (p->key && p->key != DELETED) VVAL(p->v);
+        }
+        for (int i = 0; i < o->nitems; i++) VVAL(o->items[i]);
+        if (o->type == OBJ_FUNC) {
+            if (o->scope) VPUSH(&o->scope->gc);
+            if (o->target) VPUSH(&o->target->obj.gc);
+        }
+        if (o->type == OBJ_BOXED) VVAL(o->boxed);
+        if (o->bound_mc) VPUSH(&o->bound_mc->obj.gc);
+        if (o->type == OBJ_MC) {
+            AsMc *mc = (AsMc *)o;
+            if (mc->parent) VPUSH(&mc->parent->obj.gc);
+            if (mc->mask) VPUSH(&mc->mask->obj.gc);
+            for (int i = 0; i < mc->ndisp; i++) if (mc->disp[i].mc) VPUSH(&mc->disp[i].mc->obj.gc);
+        }
+    }
+#undef VPUSH
+#undef VVAL
+    free(st);
+    for (AsGc *g = vm->heap; g; g = g->next) g->vmark = 0;
+    // (atoms and other objects off the heap list keep their vmark: they're permanent)
+    static size_t checks;
+    if (missed) as_warn(vm, "GC VERIFY: %u reachable objects were not marked", (unsigned)missed);
+    else if (++checks % 20 == 1) as_warn(vm, "GC VERIFY: collection %u ok", (unsigned)checks);
+}
+
+static double g_mark_ms;   // this collection's marking so far (AS_GCTIME)
+static int g_mark_slices;  // frames it has taken so far
+
+void as_gc(AsVm *vm) {
+    extern double as_time_ms(void);
+    if (g_sweep) { sweep_some(vm, SWEEP_STEP); return; }
+    if (as_gc_marking && as_gc_marking != vm) return;   // another VM's collection is under way
+    if (!as_gc_marking) {
+        if (vm->heap_count < vm->gc_threshold) return;
+        as_gc_marking = vm;   // (from here on stores are marked: as_wb)
+        vm->gc_threshold = (size_t)-1;   // no new collection until this one's sweep is done
+        g_ngray = 0;
+        g_mark_ms = 0;
+        g_mark_slices = 0;
+        gc_roots(vm);
+    }
+    // a slice of marking: a few ms on the Vita (AS_GCSTEP=units: a fixed amount, for PC tests)
+    double t0 = as_time_ms();
+    const char *step = AS_ENV("AS_GCSTEP");
+    long budget = step ? atol(step) : 0;
+    // (should the scripts make objects faster than the slices look at them: the rest at once)
+    if (++g_mark_slices > 30) budget = -1;
+    long work = 0;
+    int finished = 0;
+    for (int k = 0;; k++) {
+        if (!g_ngray) {
+            gc_roots(vm);   // the roots again: what the frames since gave them
+            if (!g_ngray) { finished = 1; break; }
+        }
+        work += gc_scan(vm, g_gray[--g_ngray]);
+        if (budget < 0) continue;
+        if (budget ? work >= budget : (k & 63) == 63 && as_time_ms() - t0 >= 3.0) break;
+    }
+    g_mark_ms += as_time_ms() - t0;
+    if (!finished) return;
+    if (AS_ENV("AS_GCTIME")) as_warn(vm, "gc mark %.2f ms in %d frames, tick %u heap %u", g_mark_ms, g_mark_slices, vm->tick, (unsigned)vm->heap_count);
+    if (AS_ENV("AS_GCVERIFY")) gc_verify(vm);
+    as_gc_marking = NULL;
     // survivors are counted back in as the sweep keeps them
     g_sweep = vm->heap;
     vm->heap = NULL;
     vm->heap_count = 0;
-    vm->gc_threshold = (size_t)-1;   // no new collection until this sweep is done
     g_sweep_live = 0;
     sweep_some(vm, SWEEP_STEP);
 }
@@ -1398,6 +1529,10 @@ AsVm *as_new(AsLoader loader) {
 }
 
 void as_free(AsVm *vm) {
+    if (as_gc_marking == vm) {   // a collection under way: its marks don't matter now
+        as_gc_marking = NULL;
+        g_ngray = 0;
+    }
     while (g_sweep) {
         AsGc *g = g_sweep;
         g_sweep = g->next;

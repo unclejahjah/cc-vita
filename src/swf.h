@@ -69,7 +69,7 @@ typedef struct {
     Mesh mesh;
 } BitmapFill;
 
-typedef struct {
+typedef struct Shape {
     uint16_t id;
     int nfills, nlines;
     ShapeFill *fills;
@@ -174,6 +174,10 @@ typedef struct {
     int truncated;             // file shorter than its header says
     int is_level;              // came from the levels folder (the loader sets it)
     int is_player;             // PLAYER.swf (custom characters paint its part clips)
+    // every shape of the file, font glyphs included, in one list (render.c builds it on first
+    // use): walking the 65536 character slots of 30 files took ~90 ms on the Vita
+    struct Shape **all_shapes;
+    int nall_shapes, all_shapes_built;
     uint8_t bg[3];             // SetBackgroundColor
     int nnames;                // instance names; names[0] is ""
     char **names;

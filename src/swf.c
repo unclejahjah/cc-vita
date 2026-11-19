@@ -947,6 +947,7 @@ void swf_free(Movie *m) {
     for (int i = 0; i < m->nnames; i++) free(m->names[i]);
     free(m->names);
     free(m->init);
+    free(m->all_shapes);
     free(m->data);
     free(m);
 }

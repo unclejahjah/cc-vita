@@ -129,6 +129,7 @@ static void tessellate_line(const ShapeLine *sl, MeshBuf *mb) {
 
 // One tessellator per thread (files also load on a second one): render_thread_slot says which.
 int (*render_thread_slot)(void);
+size_t render_tessellated_bytes;
 static TESStesselator *g_tessellators[2];
 
 static void grow_bounds(float bb[4], const float *xy, int n) {
@@ -203,18 +204,38 @@ static void tessellate_shape(Shape *s) {
     }
     s->tessellated = 1;
     render_stats.shapes_tessellated++;
+    size_t bytes = mb.n * sizeof(Vertex);
+    for (int i = 0; i < s->nbfills; i++) bytes += s->bfills[i].mesh.nverts * sizeof(TexVertex);
+    __atomic_add_fetch(&render_tessellated_bytes, bytes, __ATOMIC_RELAXED);
 }
 
-// Every shape of a movie, font glyphs included: calls fn(shape, ctx).
+// Every shape of a movie, font glyphs included: calls fn(shape, ctx). The list is made once
+// (Movie.all_shapes): the 65536 character slots of every file kept, walked each time the
+// lazily tessellated shapes were looked for, cost Refracted a ~90 ms hitch a second.
 static void each_shape(Movie *m, void (*fn)(Shape *s, void *ctx), void *ctx) {
-    for (int i = 0; i < 65536; i++) {
-        if (m->chars[i].type == CHAR_SHAPE) fn(m->chars[i].ptr, ctx);
-        else if (m->chars[i].type == CHAR_FONT) {
-            Font *f = m->chars[i].ptr;
-            for (int k = 0; k < f->nglyphs; k++)
-                if (f->glyphs[k]) fn(f->glyphs[k], ctx);
+    if (!m->all_shapes_built) {
+        int n = 0, cap = 0;
+        Shape **list = NULL;
+        for (int i = 0; i < 65536; i++) {
+            int add = 0;
+            Font *f = NULL;
+            if (m->chars[i].type == CHAR_SHAPE) add = 1;
+            else if (m->chars[i].type == CHAR_FONT) { f = m->chars[i].ptr; add = f->nglyphs; }
+            if (!add) continue;
+            if (n + add > cap) {
+                cap = (n + add) * 2 + 64;
+                list = realloc(list, cap * sizeof *list);
+            }
+            if (!f) list[n++] = m->chars[i].ptr;
+            else
+                for (int k = 0; k < f->nglyphs; k++)
+                    if (f->glyphs[k]) list[n++] = f->glyphs[k];
         }
+        m->all_shapes = list;
+        m->nall_shapes = n;
+        m->all_shapes_built = 1;
     }
+    for (int i = 0; i < m->nall_shapes; i++) fn(m->all_shapes[i], ctx);
 }
 
 static void tessellate_cb(Shape *s, void *ctx) { (void)ctx; tessellate_shape(s); }

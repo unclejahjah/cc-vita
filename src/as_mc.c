@@ -163,6 +163,7 @@ AsMc *as_mc_new(AsVm *vm, const Movie *m, const Sprite *def, AsMc *parent, int d
     AsMc *mc = (AsMc *)as_obj_new(vm, OBJ_MC, vm->mc_proto);
     mc->movie = m;
     mc->def = def;
+    if (parent) as_wbo(&parent->obj);
     mc->parent = parent;
     mc->depth = depth;
     mc->playing = 1;
@@ -200,6 +201,7 @@ static AsMc *place(AsVm *vm, AsMc *parent, const Place *p, int depth) {
         tf->frame = 0;
         tf->playing = 0;
         as_set(vm, as_objv(&tf->obj), as_atom(vm, "text"), as_strv(as_str(vm, tf->text->text)));
+        as_wbo(&tf->obj);
         e->mc = tf;
         return tf;
     }
@@ -214,6 +216,7 @@ static AsMc *place(AsVm *vm, AsMc *parent, const Place *p, int depth) {
     mc->name = p->name ? as_atom(vm, parent->movie->names[p->name]) : NULL;
     mc->events_off = p->events_off;
     mc->events_len = p->events_len;
+    as_wbo(&mc->obj);
     e->mc = mc;
     // first frame, then onClipEvent(load), then the children's first frames
     int mark = qn;
@@ -247,6 +250,7 @@ AsMc *as_mc_place_foreign(AsVm *vm, AsMc *parent, const Movie *m, int cid, Mat m
     mc->m = mat;
     decompose(mc);
     mc->name = name ? as_atom(vm, name) : NULL;
+    as_wbo(&mc->obj);
     e->mc = mc;
     as_mc_goto(vm, mc, 0, 1);
     return mc;
@@ -405,6 +409,7 @@ AsMc *as_mc_create_empty(AsVm *vm, AsMc *parent, AsStr *name, int depth) {
     AsMc *mc = as_mc_new(vm, parent->movie, NULL, parent, depth);
     mc->name = as_intern(vm, name);
     mc->frame = 0;
+    as_wbo(&mc->obj);
     e->mc = mc;
     return mc;
 }
@@ -431,6 +436,7 @@ AsMc *as_mc_duplicate(AsVm *vm, AsMc *mc, AsStr *name, int depth) {
     c->events_off = mc->events_off;
     c->events_len = mc->events_len;
     c->name = as_intern(vm, name);
+    as_wbo(&c->obj);
     e->mc = c;
     int mark = qn;
     as_mc_goto(vm, c, 0, 1);

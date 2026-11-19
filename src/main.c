@@ -150,21 +150,31 @@ static void gpu_free(GpuBlock *blk) {
 // A file's meshes, in blocks of up to RENDER_CHUNK (render_upload): each one in video memory
 // when there's a hole for it, so the free video memory is usable however it's cut up.
 #define MESH_CHUNKS 96
-typedef struct { GpuBlock b[MESH_CHUNKS]; int n; } Meshes;
+typedef struct { GpuBlock b[MESH_CHUNKS]; int n; size_t tail; } Meshes;   // tail: bytes used of b[n-1]
 
+// A block's rest is used by the next upload: a lazily tessellated file (Refracted) uploads a
+// few new shapes every two seconds, and a 256 KB block for each of those used up the file's
+// 96 blocks within minutes (everything after that drawn by the CPU) and wasted video memory.
 static void *meshes_alloc(size_t bytes, void *ctx) {
     Meshes *ms = ctx;
+    bytes = (bytes + 15) & ~(size_t)15;
+    if (ms->n && ms->b[ms->n - 1].uid >= 0 && ms->b[ms->n - 1].size - ms->tail >= bytes) {
+        void *p = (uint8_t *)ms->b[ms->n - 1].addr + ms->tail;
+        ms->tail += bytes;
+        return p;
+    }
     if (ms->n == MESH_CHUNKS) return NULL;
     GpuBlock *b = &ms->b[ms->n];
     b->uid = -1;
     void *p = mesh_alloc(bytes, b);
-    if (p) ms->n++;
+    if (p) { ms->n++; ms->tail = bytes; }
     return p;
 }
 
 static void meshes_free(Meshes *ms) {
     for (int i = 0; i < ms->n; i++) gpu_free(&ms->b[i]);
     ms->n = 0;
+    ms->tail = 0;
 }
 
 // its bytes in video memory (cdram) or main memory
@@ -573,6 +583,7 @@ static Movie *register_movie(const char *base, const char *path, Movie *m) {
     log_flush();   // loads and frees go to the writer at once: a crash right after keeps them
     Meshes *ms = &g_movies[g_nmovies].gpu;
     ms->n = 0;
+    ms->tail = 0;
     g_mesh_in_main = 0;
     if (render_upload(m, meshes_alloc, ms)) render_release_cpu(m);
     size_t pending = render_pending_bytes(m);
@@ -880,15 +891,10 @@ static int game_meshes_to_video(RecolourCache *cache, void *cache_mem, size_t ca
         Movie *m = g_movies[i].m;
         size_t pending = render_pending_bytes(m);
         if (!pending) continue;
-        vita2d_wait_rendering_done();
-        recolour_cache_free(cache);
-        recolour_cache_init(cache, cache_mem, cache_bytes);
-        int n0 = g_movies[i].gpu.n;
+        // (no wait for the GPU or new recolour cache: see upload_drawn_meshes)
         render_upload(m, meshes_alloc, &g_movies[i].gpu);
-        if (g_movies[i].gpu.n > n0) {
-            render_release_cpu(m);
-            moved++;
-        }
+        render_release_cpu(m);
+        if (render_pending_bytes(m) < pending) moved++;
         log_line("%s: %u KB of meshes uploaded, %u KB still not (video memory %d MB free)", g_movies[i].name,
                  (unsigned)((pending - render_pending_bytes(m)) >> 10), (unsigned)(render_pending_bytes(m) >> 10),
                  cdram_free_mb());
@@ -1863,21 +1869,27 @@ static void vignette_rt_draw(AsMc *vignettes, Mat m, RecolourCache *cache) {
     vita2d_wait_rendering_done();   // the texture is read by the next scene (as the heat haze's)
 }
 
-// in a game: the lazily tessellated shapes drawn so far go up (to video memory, else main)
+// in a game: the lazily tessellated shapes drawn so far go up (to video memory, else main).
+// Only once enough new ones were made (render_tessellated_bytes): the files were searched every
+// two seconds, a ~90 ms hitch each time. The recolour cache stays: it's keyed by the mesh and
+// holds its colours, which an upload doesn't change (starting it over cost a ~200 ms frame of
+// recolouring), and the GPU doesn't read what an upload writes or frees (positions not yet
+// uploaded are copied into each frame's own memory).
+static size_t g_lazy_seen;
 static int upload_drawn_meshes(RecolourCache *cache, void *cache_mem, size_t cache_bytes) {
+    (void)cache; (void)cache_mem; (void)cache_bytes;
+    size_t made = __atomic_load_n(&render_tessellated_bytes, __ATOMIC_RELAXED);
+    if (made - g_lazy_seen < 64 * 1024) return 0;   // a few small shapes: drawn from their CPU copy for now
     size_t total = 0;
-    for (int i = 0; i < g_nmovies; i++) total += render_pending_bytes(g_movies[i].m);
-    if (total < 64 * 1024) return 0;   // a few small shapes: drawn from their CPU copy for now
-    vita2d_wait_rendering_done();
-    recolour_cache_free(cache);
-    recolour_cache_init(cache, cache_mem, cache_bytes);
     for (int i = 0; i < g_nmovies; i++) {
         Movie *m = g_movies[i].m;
-        if (!render_pending_bytes(m)) continue;
-        int n0 = g_movies[i].gpu.n;
+        size_t pending = render_pending_bytes(m);
+        if (!pending) continue;
         render_upload(m, meshes_alloc, &g_movies[i].gpu);
-        if (g_movies[i].gpu.n > n0) render_release_cpu(m);
+        render_release_cpu(m);   // (only what went up)
+        total += render_pending_bytes(m);   // no room for these: counted again next time
     }
+    g_lazy_seen = made - total;
     return 1;
 }
 
@@ -1888,12 +1900,9 @@ static void title_upload_menu(RecolourCache *cache, void *cache_mem, size_t cach
         Movie *m = g_movies[i].m;
         size_t pending = render_pending_bytes(m);
         if (!pending) return;
-        vita2d_wait_rendering_done();
-        recolour_cache_free(cache);
-        recolour_cache_init(cache, cache_mem, cache_bytes);
-        int n0 = g_movies[i].gpu.n;
+        // (the recolour cache and the GPU's work stay, as in upload_drawn_meshes)
         render_upload(m, meshes_alloc, &g_movies[i].gpu);
-        if (g_movies[i].gpu.n > n0) render_release_cpu(m);
+        render_release_cpu(m);
         log_line("MENU.swf: %u KB of meshes uploaded (video memory %d MB free)",
                  (unsigned)((pending - render_pending_bytes(m)) >> 10), cdram_free_mb());
         return;
