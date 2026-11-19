@@ -482,12 +482,16 @@ static AsVal native_get_button_art(AsVm *vm, AsVal this_, int argc, AsVal *argv)
 // MENU.swf's "buttonchoices" panel as the Vita shows it: Local Game, Help & Options and Quit
 // (the online, download, leaderboard and store buttons are hidden), evenly spaced in the
 // panel's own top three slots. Buttons by timeline depth; labels in panel.txtClip.
-static const int MENU_DEPTH[CC_MENU_ITEMS] = {9, 13, 17, 11};
+static const int MENU_DEPTH_ORIG[CC_MENU_ITEMS] = {9, 13, 17, 11};
+// Refracted's own panel (the mod redrew it): Play, Play Online, Painter Boss Paradise, Help &
+// Settings (the green wrench), leaderboards, merch, and its own power button for Quit
+static const int MENU_DEPTH_REF[CC_MENU_ITEMS] = {26, 30, 34, 28};
+#define MENU_DEPTH (cc_mod_refracted ? MENU_DEPTH_REF : MENU_DEPTH_ORIG)
 int cc_menu_wifi;   // the co-op build: the online button comes back as Wi-Fi Game, in the 2nd slot
 #define MENU_SCALE 125     // the panel, larger than the original's
 // per item: its width (_xscale) and where it sits (_x)
 static float item_w[CC_MENU_ITEMS] = {100, 100, 100, 100}, item_x[CC_MENU_ITEMS];
-#define HIGHLIGHT_DEPTH 21   // the chosen button's glowing frame and its button icon
+#define HIGHLIGHT_DEPTH (cc_mod_refracted ? 38 : 21)   // the chosen button's glowing frame and its button icon
 static float hl_pad[4];      // how far it reaches past a button: left, top, right, bottom (twips)
 
 static AsMc *panel_child(AsMc *panel, int depth) {
@@ -506,6 +510,57 @@ static AsMc *panel_path(AsVm *vm, AsMc *panel, const char *path) {
     return found && v.t == V_OBJ && v.o->type == OBJ_MC ? (AsMc *)v.o : NULL;
 }
 
+// Refracted's panel stays as the mod laid it out (its buttons, drips and power button where
+// the mod put them); only what needs Steam goes (the news feed, leaderboards, merch, and
+// Play Online in a build without Wi-Fi). Scaled to fit under the logo, bottom left.
+static AsMc *menu_attach_refracted(AsVm *vm, AsMc *panel) {
+    static const int hide[] = {7, 9, 11, 15, 24, 45};   // news feed, merch, leaderboards (+ icon)
+    for (size_t i = 0; i < sizeof hide / sizeof *hide; i++) {
+        AsMc *b = panel_child(panel, hide[i]);
+        if (b) b->visible = 0;
+    }
+    AsMc *tm = panel_path(vm, panel, "txtClip.textMerch");
+    if (tm) tm->visible = 0;
+    if (!cc_menu_wifi) {
+        AsMc *b = panel_child(panel, 28), *t = panel_path(vm, panel, "txtClip.textMultiplayer");
+        if (b) b->visible = 0;
+        if (t) t->visible = 0;
+    }
+    AsMc *hl = panel_child(panel, HIGHLIGHT_DEPTH), *lg = panel_child(panel, MENU_DEPTH_REF[CC_MENU_PLAY]);
+    for (int i = 0; hl && i < hl->ndisp; i++)   // its FRESH sticker (the newer look isn't in this app)
+        if (hl->disp[i].depth == 4 - 16384 && hl->disp[i].mc) hl->disp[i].mc->visible = 0;
+    if (hl && lg) {   // how far the frame reaches past Play, to fit it round whichever is chosen
+        float hb[4], gb[4];
+        render_mc_shape_bounds(hl, hl->m, hb);
+        render_mc_bounds(lg, lg->m, gb);
+        float p[4] = {gb[0] - hb[0], gb[1] - hb[1], hb[2] - gb[2], hb[3] - gb[3]};
+        memcpy(hl_pad, p, sizeof p);
+    }
+    static const int shown[] = {26, 28, 32, 30, 34};
+    float bb[4] = {1e30f, 1e30f, -1e30f, -1e30f};
+    for (size_t i = 0; i < sizeof shown / sizeof *shown; i++) {
+        AsMc *b = panel_child(panel, shown[i]);
+        if (!b || !b->visible) continue;
+        float ib[4];
+        render_mc_bounds(b, b->m, ib);
+        if (ib[2] <= ib[0]) continue;
+        if (ib[0] < bb[0]) bb[0] = ib[0];
+        if (ib[1] < bb[1]) bb[1] = ib[1];
+        if (ib[2] > bb[2]) bb[2] = ib[2];
+        if (ib[3] > bb[3]) bb[3] = ib[3];
+    }
+    if (bb[2] > bb[0] && vm->root->movie) {
+        float sh = vm->root->movie->stage_h, margin = sh * 0.05f, top = sh * 0.2f;
+        float k = (sh - margin - top) / ((bb[3] - bb[1]) / 20);
+        if (k > MENU_SCALE / 100.0f) k = MENU_SCALE / 100.0f;
+        set_num(vm, panel, "_xscale", 100 * k);
+        set_num(vm, panel, "_yscale", 100 * k);
+        set_num(vm, panel, "_x", margin - bb[0] / 20 * k);
+        set_num(vm, panel, "_y", sh - margin - bb[3] / 20 * k);
+    }
+    return panel;
+}
+
 AsMc *cc_menu_attach(AsVm *vm, float x, float y) {
     for (int i = 0; i < CC_MENU_ITEMS; i++) item_w[i] = 100;
     AsVal args[3] = {as_strv(as_str(vm, "buttonchoices")), as_strv(as_str(vm, "menupanel")), as_num(5000)};
@@ -520,6 +575,7 @@ AsMc *cc_menu_attach(AsVm *vm, float x, float y) {
         AsVal news = as_resolve_path(vm, vm->root, news_box[i], &found);
         if (found) as_set(vm, news, as_atom(vm, "_visible"), as_bool(0));
     }
+    if (cc_mod_refracted) return menu_attach_refracted(vm, panel);
     AsVal body = as_resolve_path(vm, vm->root, "body", &found);   // and its unnamed frame (depth 63)
     if (found && body.t == V_OBJ && body.o->type == OBJ_MC) {
         AsMc *frame = panel_child((AsMc *)body.o, 63);
@@ -739,7 +795,7 @@ static AsMc *place_art(AsVm *vm, AsMc *menu, const char *export, const char *nam
 // stays clear of the longer "Local Game" label
 #define FRESH_DEPTH 9001   // a timeline depth over everything on the panel
 AsMc *cc_menu_fresh(AsVm *vm, AsMc *panel, int on) {
-    if (!panel) return NULL;
+    if (!panel || cc_mod_refracted) return NULL;
     AsMc *st = panel_child(panel, FRESH_DEPTH);
     if (!st && on) {
         static int missing;
@@ -1009,6 +1065,27 @@ void cc_menu_highlight(AsVm *vm, AsMc *panel, int item) {
     if (!hl || !b) return;
     hl_item = item;
     float r[4], pr[4], nb[4];
+    if (cc_mod_refracted) {   // the mod's own frame, fitted round the whole button, Cross on its corner
+        render_mc_bounds(b, b->m, r);
+        r[0] -= hl_pad[0]; r[1] -= hl_pad[1]; r[2] += hl_pad[2]; r[3] += hl_pad[3];
+        render_mc_shape_bounds(hl, (Mat){1, 0, 0, 1, 0, 0}, nb);
+        if (nb[2] <= nb[0] || nb[3] <= nb[1] || r[2] <= r[0]) return;
+        float sx = (r[2] - r[0]) / (nb[2] - nb[0]), sy = (r[3] - r[1]) / (nb[3] - nb[1]);
+        set_num(vm, hl, "_xscale", sx * 100);
+        set_num(vm, hl, "_yscale", sy * 100);
+        set_num(vm, hl, "_x", (r[0] - nb[0] * sx) / 20);
+        set_num(vm, hl, "_y", (r[1] - nb[1] * sy) / 20);
+        for (int i = 0; i < hl->ndisp; i++) {   // the icon keeps its size and shape, and shows Cross
+            AsMc *icon = hl->disp[i].mc;
+            if (!icon || hl->disp[i].depth != 2 - 16384) continue;
+            set_num(vm, icon, "_xscale", 100 / sx);
+            set_num(vm, icon, "_yscale", 100 / sy);
+            for (int j = 0; j < icon->ndisp; j++)   // (the frames are on the clip inside it)
+                if (icon->disp[j].kind == DISP_MC && icon->disp[j].mc)
+                    as_mc_goto(vm, icon->disp[j].mc, button_frame(16) - 1, 0);
+        }
+        return;
+    }
     if (!power_rect(panel, pr)) return;
     if (item == CC_MENU_QUIT) memcpy(r, pr, sizeof r);
     else render_mc_bounds(b, b->m, r);
@@ -1093,6 +1170,7 @@ static void stroke(Tris *t, float x0, float y0, float x1, float y1, float w, con
 }
 
 int cc_menu_power_button(AsMc *panel, Mat screen, CcVert *out, int max) {
+    if (cc_mod_refracted) return 0;   // the mod has its own power button
     int lit = hl_item == CC_MENU_QUIT;
     float pr[4];
     if (!power_rect(panel, pr)) return 0;
