@@ -529,6 +529,25 @@ static int find_file(const char *base, char *path, size_t n, int *is_level) {
     return 0;
 }
 
+// Refracted's MENU.swf holds every menu page of the mod (838 shapes, 47 MB of meshes against the
+// original's 11): with them all in video memory the title crashed the Vita. Its shapes are
+// tessellated when first drawn instead, and only those go up to video memory (title_upload_menu).
+static int lazy_meshes(const char *path) {
+#ifdef CC_MOD_REFRACTED
+    const char *base = strrchr(path, '/');
+    return !strcasecmp(base ? base + 1 : path, "MENU.swf");
+#else
+    (void)path;
+    return 0;
+#endif
+}
+
+#ifdef CC_MOD_REFRACTED
+#define TITLE_TRACE(...) EXIT_TRACE(__VA_ARGS__)   // step by step, each line on the card at once
+#else
+#define TITLE_TRACE(...) do {} while (0)
+#endif
+
 // the CPU side of a load: parse, repair, PlayStation buttons, tessellate (no GPU work but the
 // bitmaps' textures, which swf_bitmap_loaded makes as they are decoded)
 static Movie *prepare_movie(const char *path, int is_level, char *err, size_t n) {
@@ -539,7 +558,7 @@ static Movie *prepare_movie(const char *path, int is_level, char *err, size_t n)
     cc_buttons_playstation(m, CC_BTN_STYLE_GREY);   // the game's button art as PlayStation buttons
     cc_menu_vita_badge(m);                              // "Vita Edition" on the title
     if (CC_BETA_STICKER) cc_menu_beta_sticker_build(m);  // and "BETA" on Multiplayer
-    render_tessellate_all(m);
+    if (!lazy_meshes(path)) render_tessellate_all(m);
     return m;
 }
 
@@ -1840,6 +1859,25 @@ static void vignette_rt_draw(AsMc *vignettes, Mat m, RecolourCache *cache) {
     vita2d_wait_rendering_done();   // the texture is read by the next scene (as the heat haze's)
 }
 
+// the lazily tessellated MENU.swf's shapes drawn so far go up to video memory (lazy_meshes)
+static void title_upload_menu(RecolourCache *cache, void *cache_mem, size_t cache_bytes) {
+    for (int i = 0; i < g_nmovies; i++) {
+        if (strcasecmp(g_movies[i].name, "MENU.swf")) continue;
+        Movie *m = g_movies[i].m;
+        size_t pending = render_pending_bytes(m);
+        if (!pending) return;
+        vita2d_wait_rendering_done();
+        recolour_cache_free(cache);
+        recolour_cache_init(cache, cache_mem, cache_bytes);
+        int n0 = g_movies[i].gpu.n;
+        render_upload(m, meshes_alloc, &g_movies[i].gpu);
+        if (g_movies[i].gpu.n > n0) render_release_cpu(m);
+        log_line("MENU.swf: %u KB of meshes uploaded (video memory %d MB free)",
+                 (unsigned)((pending - render_pending_bytes(m)) >> 10), cdram_free_mb());
+        return;
+    }
+}
+
 // 1: a Wi-Fi game was started (net.state NET_PLAYING), 0: Local Game
 // from_game: back from Exit to Main Menu, under the loading screen, which then goes out over it
 static int title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, size_t cache_bytes, int from_game) {
@@ -1848,8 +1886,10 @@ static int title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, siz
     char art_path[256];
     int art_level;
     if (from_game && find_file("MENU_VIGNETTES.swf", art_path, sizeof art_path, &art_level)) vignette_rt_make();
+    TITLE_TRACE("title: start (video memory %d MB free)", cdram_free_mb());
     Movie *m = vita_loader(NULL, "MENU.swf");
     if (!m) return 0;
+    TITLE_TRACE("title: MENU.swf ready");
     // the mode book's borrowed pictures, now rather than when Local Game opens it (a hitch)
     if (find_file("MODEART.swf", art_path, sizeof art_path, &art_level)) host_movie("MODEART.swf");
     // and the FRESH sticker's (FRESHLOGO.swf), else the menu's first frame hitched loading it
@@ -1865,8 +1905,10 @@ static int title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, siz
     t->warn = vita_warn;
     cc_host_init(t);
     as_render_init(t);
+    TITLE_TRACE("title: script machine made");
     t->root = as_mc_new(t, m, &m->root, NULL, 0);
     cc_native_root_functions(t, &t->root->obj);
+    TITLE_TRACE("title: MENU root made");
     // the PC's moving scenes behind the menu, when its MENU_VIGNETTES.swf is there (read during
     // the intro; back from a game, under the loading screen)
     // the PC's moving scenes behind the menu, when its MENU_VIGNETTES.swf is there: read in the
@@ -1890,6 +1932,7 @@ static int title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, siz
         cc_loading_reveal(t);
         cc_loading_hold = 1;
     }
+    TITLE_TRACE("title: loading screen set up");
     int hold_frames = 0;
     const char *prompt = strtab_number(1);   // the game's "Press START"
     if (!prompt) prompt = "Press START";
@@ -1907,9 +1950,14 @@ static int title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, siz
     SceUInt64 prev = sceKernelGetProcessTimeWide(), acc = from_game ? tick_us : 0;   // (no black first frame)
     unsigned frame = 0;
     for (;;) {
+        if (frame < 4 || frame % 60 == 0 && frame <= 600) TITLE_TRACE("title: frame %u (video memory %d MB free)", frame, cdram_free_mb());
+        if (lazy_meshes("MENU.swf") && frame % 30 == 15) title_upload_menu(cache, cache_mem, cache_bytes);
         preload_step(PRELOAD_TITLE);
-        if (vignette_file && !vignettes && cached_movie_peek("MENU_VIGNETTES.swf"))   // read: it's cached now
+        if (vignette_file && !vignettes && cached_movie_peek("MENU_VIGNETTES.swf")) {   // read: it's cached now
+            TITLE_TRACE("title: scenes read");
             vignettes = cc_title_vignettes(t, vita_loader(NULL, "MENU_VIGNETTES.swf"));
+            TITLE_TRACE("title: scenes in");
+        }
         // the loading screen lets go once they're in (or after 20 s: not read, the heap too full)
         if (cc_loading_hold && (vignettes || ++hold_frames > 60 * 20)) cc_loading_hold = 0;
         sceCtrlPeekBufferPositive(0, &pad, 1);
