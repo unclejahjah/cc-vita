@@ -8,6 +8,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+extern int cc_mod_refracted;   // cc_host.c: the Refracted build
+
 #define ARG(i) ((i) < argc ? argv[i] : as_undef())
 #define THIS_OBJ (this_.t == V_OBJ ? this_.o : NULL)
 
@@ -252,6 +254,10 @@ static AsVal str_substr(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
     if (st < 0) st = 0;
     if (st > n) st = n;
     int len = argc > 1 && argv[1].t != V_UNDEF ? as_toint32(vm, argv[1]) : n - st;
+    // Refracted's option rows read their number with this._name.substr(6, -1) ("option12" -> "12"):
+    // castle.exe counts a negative length back from the end, as it does a negative start.
+    // (Ruffle returns "" there, which left every row as option 0: no names, no highlight.)
+    if (len < 0 && cc_mod_refracted) len = n + len + 1 - st;
     if (len < 0) len = 0;
     if (st + len > n) len = n - st;
     return as_strv(as_strn(vm, s->s + st, len));

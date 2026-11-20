@@ -308,6 +308,49 @@ static AsMc *child_mc(AsVm *vm, AsMc *mc, const char *name) {
     return v.t == V_OBJ && v.o->type == OBJ_MC ? (AsMc *)v.o : NULL;
 }
 
+// Refracted's MOD OPTIONS page (MAP_NEW.swf, frame "modOptions"): two columns of optionBox
+// rows, each a 16 px name (txtName over its black shadow txtNameBg, right-aligned against
+// the box), a 14 px value (txtStatus) and a selectbox (the dark box with the tan frame) that
+// f_OptionBoxEveryframe shows on the chosen row. Made for a 1280x720 window, so at 960x544
+// the words are tiny: here names are drawn 1.35 times bigger and values 1.2 (names still end
+// at the box, values still start in it), the columns 24 px further apart so long names clear the
+// left column's box, and the chosen row's name pulses yellow as the pause menu's pick does.
+#define MODOPT_NAME_SCALE 1.35f
+#define MODOPT_VALUE_SCALE 1.2f   // "Element-Colored" must still clear the right column's names
+#define MODOPT_COL_SHIFT 24.0f
+static void modopt_scale_field(AsVm *vm, AsMc *f, int right_edge) {
+    if (!f) return;
+    float x = f->m.tx / 20, y = f->m.ty / 20, s = right_edge ? MODOPT_NAME_SCALE : MODOPT_VALUE_SCALE;
+    // the fields span -2..293.4 x -2..19.9 px: keep the right edge (or the left) and the middle
+    as_set(vm, as_objv(&f->obj), as_atom(vm, "_xscale"), as_num(s * 100));
+    as_set(vm, as_objv(&f->obj), as_atom(vm, "_yscale"), as_num(s * 100));
+    if (right_edge) as_set(vm, as_objv(&f->obj), as_atom(vm, "_x"), as_num(x + 293.4f * (1 - s)));
+    as_set(vm, as_objv(&f->obj), as_atom(vm, "_y"), as_num(y + 8.95f * (1 - s)));
+}
+static AsVal option_box_everyframe(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
+    AsVal r = as_call_script(vm, this_, argc, argv);
+    AsMc *box = argc >= 1 && argv[0].t == V_OBJ && argv[0].o->type == OBJ_MC ? (AsMc *)argv[0].o : NULL;
+    if (!box) return r;
+    AsMc *name = child_mc(vm, box, "txtName"), *sel = child_mc(vm, box, "selectbox");
+    if (!as_tobool(vm, get_member(vm, as_objv(&box->obj), "cc_big")) && name) {
+        as_set(vm, as_objv(&box->obj), as_atom(vm, "cc_big"), as_bool(1));
+        modopt_scale_field(vm, name, 1);
+        modopt_scale_field(vm, child_mc(vm, box, "txtNameBg"), 1);
+        modopt_scale_field(vm, child_mc(vm, box, "txtStatus"), 0);
+        int id = as_toint32(vm, get_member(vm, as_objv(&box->obj), "optionId"));
+        if (id > 0)   // odd rows are the left column, even the right
+            as_set(vm, as_objv(&box->obj), as_atom(vm, "_x"),
+                   as_num(box->m.tx / 20 + (id % 2 ? -MODOPT_COL_SHIFT : MODOPT_COL_SHIFT)));
+    }
+    if (name) {   // white words, so the colour transform makes them (v, v, 0)
+        int on = sel && sel->visible;
+        float k = on ? (sinf(vm->tick / 30.0f * 10) * 34 + 221) / 255 : 1;
+        name->cx.mul[0] = name->cx.mul[1] = k;
+        name->cx.mul[2] = on ? 0 : 1;
+    }
+    return r;
+}
+
 // the joining screen's prompt: a sprite with a "pressstart" text field and the Abutton
 static int quaff_press_sprite(const Movie *m) {
     static const Movie *seen;
@@ -1346,6 +1389,7 @@ void cc_host_init(AsVm *vm) {
         as_def_fn(vm, g, "ResetControllerLEDs", ret_undef);
         as_def_fn(vm, g, "GetHostPort", ret_one);   // Volleyball's menu (console_version): player 1 hosts
         as_override(vm, "f_ShowValSpecific", show_val_specific);
+        as_override(vm, "f_OptionBoxEveryframe", option_box_everyframe);   // the MOD OPTIONS page
     }
     as_def_fn(vm, g, "RichPresence", ret_undef);       // platform presence text
     as_def_fn(vm, g, "UnlockAchievement", unlock_achievement);
