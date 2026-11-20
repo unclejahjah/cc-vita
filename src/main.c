@@ -549,10 +549,21 @@ static int find_file(const char *base, char *path, size_t n, int *is_level) {
 // and later the game ran out of memory leaving a level (Jah 2026-11-19). Every file's shapes
 // are tessellated when first drawn instead, and only those go up to video memory
 // (title_upload_menu, upload_drawn_meshes).
+// Only the big shared files, though: a level's and its enemies' art tessellated as it first
+// showed stalled the game there (Barbarian Boss at 11 fps the first time, Jah 2026-11-20);
+// those are done while the file loads, on the loading thread, as in the original game's build.
 static int lazy_meshes(const char *path) {
 #ifdef CC_MOD_REFRACTED
-    (void)path;
-    return 1;
+    static const char *const big[] = {"MAIN.swf", "MENU.swf", "lobby.swf", "fx.swf", "player.swf", "player_new.swf",
+                                      "PAUSE.swf", "map.swf", "map_new.swf", "MMENU.swf", "PDAGAMES.swf", "VMENU.swf",
+                                      "MODSAVES.swf", "LOADING.swf", "MENU_VIGNETTES.swf"};
+    const char *base = strrchr(path, '/');
+    base = base ? base + 1 : path;
+    for (size_t i = 0; i < sizeof big / sizeof *big; i++)
+        if (!strcasecmp(base, big[i])) return 1;
+    // (and with the heap already three quarters full, lazily after all: running out of memory with
+    // every file tessellated whole is what made them lazy)
+    return mallinfo().uordblks > (size_t)_newlib_heap_size_user / 4 * 3;
 #else
     (void)path;
     return 0;
