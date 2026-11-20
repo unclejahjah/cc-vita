@@ -60,6 +60,8 @@ typedef struct {
     float *uv;                 // bitmap meshes: texture coordinates per vertex
     float bounds[4];           // min x, min y, max x, max y of xy
     void *gpu;                 // uploaded copy: render Vertex records (TexVertex for bitmap meshes)
+    uint32_t miss_frame;       // render.c: the last frame its recolour wasn't in the cache
+    uint8_t miss_run;          // and how many frames in a row that happened (an animated tint)
 } Mesh;
 
 // The part of a shape filled with a bitmap, drawn textured.

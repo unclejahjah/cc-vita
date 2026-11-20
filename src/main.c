@@ -2265,7 +2265,17 @@ int main(void) {
     scePowerSetBusClockFrequency(222);
     scePowerSetGpuClockFrequency(222);
     scePowerSetGpuXbarClockFrequency(166);
-    vita2d_init_advanced_with_msaa(16 * 1024 * 1024, SCE_GXM_MULTISAMPLE_4X);
+    // anti-aliasing: 4x, unless msaa.txt says 2 or 0 (a test of how much of the GPU's time in the
+    // heaviest scenes it costs: Barbarian Boss ~177k triangles, ~55 ms a frame, 2026-11-20)
+    SceGxmMultisampleMode msaa = SCE_GXM_MULTISAMPLE_4X;
+    {
+        FILE *f = fopen(DATA_DIR "msaa.txt", "r");
+        int v = 4;
+        if (f) { if (fscanf(f, "%d", &v) != 1) v = 4; fclose(f); }
+        if (v == 2) msaa = SCE_GXM_MULTISAMPLE_2X;
+        else if (v == 0) msaa = SCE_GXM_MULTISAMPLE_NONE;
+    }
+    vita2d_init_advanced_with_msaa(16 * 1024 * 1024, msaa);
     swf_bitmap_loaded = bitmap_to_texture;
     vita2d_set_vblank_wait(1);
     g_font = vita2d_load_default_pgf();
