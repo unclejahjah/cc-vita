@@ -377,7 +377,10 @@ static void set_cmd(DrawList *dl, int ref, int op) {
     dl->cmd[dl->ncmd++] = (DrawCmd){dl->n, 0, ref, op};
 }
 
+static uint32_t g_render_frame = 1;   // frames begun (render_begin), for cache_get
+
 void render_begin(DrawList *out) {
+    g_render_frame++;
     out->n = 0;
     out->ncv = 0;
     out->ncmd = 0;
@@ -488,6 +491,16 @@ static const uint32_t *cache_get(RecolourCache *rc, const Mesh *mesh, const CXfo
         if (e->mesh == mesh && !memcmp(&e->cx, cx, sizeof(CXform))) return e->v;
         i = (i + 1) & (rc->table_size - 1);
     }
+    // A colour transform that changes every frame (character select's tinted backgrounds:
+    // 21k vertices) filled the cache with recolours used once, and it started over every two
+    // seconds: such a mesh is recoloured in the frame's own list instead.
+    Mesh *mm = (Mesh *)mesh;
+    if (mm->miss_frame != g_render_frame) {
+        // (render_begin runs for a few lists a frame: "in a row" is within a few of them)
+        mm->miss_run = mm->miss_frame + 6 >= g_render_frame && mm->miss_run < 255 ? mm->miss_run + 1 : 1;
+        mm->miss_frame = g_render_frame;
+    }
+    if (mm->miss_run >= 3) return NULL;
     // keep the table under 3/4 full so probing stays short
     if (rc->used + mesh->nverts > rc->cap || rc->entries * 4 >= rc->table_size * 3) return NULL;
     struct RecolourEntry *e = &rc->table[i];
