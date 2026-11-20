@@ -295,14 +295,17 @@ static void draw_list_range(const DrawList *dl, int from, int to) {
             }
             const Mesh *mesh = it->mesh;
             const uint32_t *colours = it->col ? it->col : it->cv >= 0 && cv ? cv + it->cv : NULL;
-            const Vertex *v = it->vp;
+            // (a list drawn again without being built again, as the title's between its frames,
+            // may hold a shape uploaded since: its CPU copy is gone, the uploaded one is used)
+            const Vertex *v = it->vp ? it->vp : (const Vertex *)mesh->gpu;
+            if (!v && !mesh->xy) continue;
             if (!v || (colours && !g_split_vp)) {
                 // not uploaded (or no split program): whole vertices for this frame
                 Vertex *t = vita2d_pool_memalign(mesh->nverts * sizeof(Vertex), sizeof(Vertex));
                 if (!t) continue;
                 for (int i = 0; i < mesh->nverts; i++) {
                     if (mesh->xy) { t[i].x = mesh->xy[i * 2]; t[i].y = mesh->xy[i * 2 + 1]; }
-                    else { t[i].x = it->vp[i].x; t[i].y = it->vp[i].y; }
+                    else { t[i].x = v[i].x; t[i].y = v[i].y; }
                     t[i].z = 0.5f;
                     if (colours) t[i].color = colours[i];
                     else memcpy(&t[i].color, mesh->rgba + i * 4, 4);
@@ -1979,13 +1982,9 @@ static int title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, siz
     sceCtrlPeekBufferPositive(0, &old, 1);
     const SceUInt64 tick_us = 1000000 / 30;
     SceUInt64 prev = sceKernelGetProcessTimeWide(), acc = from_game ? tick_us : 0;   // (no black first frame)
-    unsigned frame = 0;
+    unsigned frame = 0, title_ticks = 0;
     for (;;) {
         if (frame < 4 || frame % 60 == 0 && frame <= 600) TITLE_TRACE("title: frame %u (video memory %d MB free)", frame, cdram_free_mb());
-        if (lazy_meshes("MENU.swf") && frame % 30 == 15) {
-            title_upload_menu(cache, cache_mem, cache_bytes);
-            upload_drawn_meshes(cache, cache_mem, cache_bytes);   // the title scene's other files
-        }
         preload_step(PRELOAD_TITLE);
         if (vignette_file && !vignettes && cached_movie_peek("MENU_VIGNETTES.swf")) {   // read: it's cached now
             TITLE_TRACE("title: scenes read");
@@ -2142,6 +2141,13 @@ static int title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, siz
             ticked = 1;
         }
         if (ticked) {
+            // the lazily tessellated shapes drawn so far go up, only right before the list is
+            // built again: the list is drawn every vblank, and an older one still pointed at the
+            // CPU copies an upload frees (the crash at the title, 2026-11-20)
+            if (lazy_meshes("MENU.swf") && ++title_ticks % 30 == 15) {
+                title_upload_menu(cache, cache_mem, cache_bytes);
+                upload_drawn_meshes(cache, cache_mem, cache_bytes);   // the title scene's other files
+            }
             if (cache->used > cache->cap * 9 / 10 || cache->entries * 4 >= cache->table_size * 3) {
                 vita2d_wait_rendering_done();
                 recolour_cache_free(cache);
